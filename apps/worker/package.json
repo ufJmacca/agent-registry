@@ -1,0 +1,9 @@
+{
+  "name": "@agent-registry/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --experimental-strip-types src/worker.ts"
+  }
+}
