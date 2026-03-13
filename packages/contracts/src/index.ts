@@ -90,11 +90,119 @@ export interface DraftEnvironmentPublicationResponse {
   publicationId: string;
 }
 
+export type ApprovalState = "draft" | "pending_review" | "approved" | "rejected";
+
 export interface DraftAgentRegistrationResponse {
   agentId: string;
   approvalState: "draft";
   cardProfileId: string;
   publications: DraftEnvironmentPublicationResponse[];
   versionId: string;
+  versionSequence: number;
+}
+
+export interface RejectAgentVersionRequest {
+  reason: string;
+}
+
+export interface VersionReviewMetadata {
+  approvedAt: string | null;
+  approvedBy: string | null;
+  rejectedAt: string | null;
+  rejectedBy: string | null;
+  rejectedReason: string | null;
+  submittedAt: string | null;
+  submittedBy: string | null;
+}
+
+export interface VersionLifecycleResponse {
+  activeVersionId: string | null;
+  agentId: string;
+  approvalState: ApprovalState;
+  versionId: string;
+}
+
+export interface TenantPolicyOverlay {
+  agentId: string;
+  deprecated: boolean;
+  disabled: boolean;
+  environmentKey: string | null;
+  requiredRoles: string[];
+  requiredScopes: string[];
+}
+
+export interface TenantPolicyOverlayResponse {
+  overlay: TenantPolicyOverlay;
+}
+
+export interface AdminDetailPublicationSummary {
+  environmentKey: string;
+  healthEndpointUrl: string;
+  healthStatus: string | null;
+  publicationId: string;
+}
+
+export interface AgentAdminVersionSummary {
+  approvalState: ApprovalState;
+  versionId: string;
+  versionSequence: number;
+}
+
+export interface AgentAdminActiveVersion {
+  approvalState: ApprovalState;
+  publications: AdminDetailPublicationSummary[];
+  review: VersionReviewMetadata;
+  versionId: string;
+  versionSequence: number;
+}
+
+export interface AgentAdminDetailResponse {
+  activeVersion: AgentAdminActiveVersion | null;
+  activeVersionId: string | null;
+  agentId: string;
+  overlay: {
+    agent: {
+      deprecated: boolean;
+      disabled: boolean;
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+    environments: Array<{
+      deprecated: boolean;
+      disabled: boolean;
+      environmentKey: string;
+      requiredRoles: string[];
+      requiredScopes: string[];
+    }>;
+  };
+  versions: AgentAdminVersionSummary[];
+}
+
+export interface VersionAdminDetailPublication {
+  environmentKey: string;
+  healthEndpointUrl: string;
+  healthStatus: string | null;
+  invocationEndpoint: string | null;
+  normalizedMetadata: unknown;
+  publicationId: string;
+  rawCard: string;
+}
+
+export interface VersionAdminDetailResponse {
+  active: boolean;
+  agentId: string;
+  approvalState: ApprovalState;
+  cardProfileId: string;
+  contextContract: unknown[];
+  displayName: string;
+  headerContract: unknown[];
+  publications: VersionAdminDetailPublication[];
+  requiredRoles: string[];
+  requiredScopes: string[];
+  review: VersionReviewMetadata;
+  summary: string;
+  tags: string[];
+  versionId: string;
+  versionLabel: string;
   versionSequence: number;
 }
