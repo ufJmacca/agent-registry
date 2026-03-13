@@ -1,6 +1,7 @@
 import { createServiceRuntimeConfig } from "@agent-registry/config";
 import type { ServiceManifest } from "@agent-registry/contracts";
 
+export { createApiRequestListener } from "./http.js";
 export { initializeApiRuntime } from "./main.js";
 
 const apiManifest: ServiceManifest = {
