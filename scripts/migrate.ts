@@ -1,5 +1,23 @@
-import { buildDatabaseUrl, defaultDatabaseConfig } from "@agent-registry/db";
+import { loadRegistryConfig } from "@agent-registry/config";
+import {
+  createKyselyDb,
+  destroyKyselyDb,
+  migrateToLatest,
+} from "@agent-registry/db";
 
-const databaseUrl = process.env.DATABASE_URL ?? buildDatabaseUrl(defaultDatabaseConfig);
+const config = loadRegistryConfig(process.env, {
+  requireBootstrapFile: false,
+});
+const db = createKyselyDb(config.databaseUrl);
 
-console.log(`Scaffold migrate placeholder against ${databaseUrl}`);
+try {
+  const results = await migrateToLatest(db);
+
+  console.log(`Migrated ${config.databaseUrl}`);
+
+  for (const result of results) {
+    console.log(`${result.migrationName}: ${result.status}`);
+  }
+} finally {
+  await destroyKyselyDb(db);
+}
