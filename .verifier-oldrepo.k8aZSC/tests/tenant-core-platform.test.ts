@@ -24,20 +24,12 @@ const { Pool } = pg;
 
 const integrationDatabaseUrl =
   process.env.DATABASE_URL ?? "postgres://registry:registry@postgres:5432/agent_registry";
-const defaultCardProfileId = "a2a-default";
-const alternateCardProfileId = "a2a-v1";
 
 interface FreshRegistryDatabase {
   cleanup(): Promise<void>;
   databaseUrl: string;
   db: AgentRegistryDb;
   migrationResults: Awaited<ReturnType<typeof migrateToLatest>>;
-}
-
-interface IsolatedRegistryDatabase {
-  cleanup(): Promise<void>;
-  databaseUrl: string;
-  db: AgentRegistryDb;
 }
 
 function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
@@ -89,21 +81,6 @@ function formatMigrationResults(results: Awaited<ReturnType<typeof migrateToLate
   }));
 }
 
-const expectedMigrationResults = [
-  {
-    migrationName: "001_initial_registry_schema",
-    status: "Success",
-  },
-  {
-    migrationName: "002_tenant_default_card_profiles",
-    status: "Success",
-  },
-  {
-    migrationName: "003_agent_version_profiles_and_sequence_uniqueness",
-    status: "Success",
-  },
-];
-
 async function listPublicTables(db: AgentRegistryDb): Promise<string[]> {
   const result = await sql<{ table_name: string }>`
     select table_name
@@ -112,102 +89,6 @@ async function listPublicTables(db: AgentRegistryDb): Promise<string[]> {
   `.execute(db);
 
   return result.rows.map((row) => row.table_name).sort();
-}
-
-async function createAr03RegistryDatabase(): Promise<IsolatedRegistryDatabase> {
-  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
-  const adminPool = new Pool({
-    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
-  });
-
-  await adminPool.query(`create database "${databaseName}" template template0`);
-
-  const databaseUrl = createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName);
-  const db = createKyselyDb(databaseUrl);
-
-  try {
-    await sql`
-      create table tenants (
-        tenant_id text primary key,
-        deployment_mode text not null,
-        display_name text not null,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now()
-      )
-    `.execute(db);
-    await sql`
-      create table agents (
-        tenant_id text not null references tenants(tenant_id) on delete cascade,
-        agent_id text not null,
-        display_name text not null,
-        summary text not null,
-        disabled boolean not null default false,
-        deprecated boolean not null default false,
-        active_version_id text,
-        created_at timestamptz not null default now(),
-        updated_at timestamptz not null default now(),
-        primary key (tenant_id, agent_id)
-      )
-    `.execute(db);
-    await sql`
-      create table agent_versions (
-        tenant_id text not null,
-        agent_id text not null,
-        version_id text not null,
-        version_sequence integer not null,
-        version_label text not null,
-        summary text not null,
-        capabilities text[] not null default '{}'::text[],
-        tags text[] not null default '{}'::text[],
-        required_roles text[] not null default '{}'::text[],
-        required_scopes text[] not null default '{}'::text[],
-        header_contract jsonb not null default '[]'::jsonb,
-        context_contract jsonb not null default '[]'::jsonb,
-        approval_state text not null,
-        submitted_at timestamptz,
-        rejected_reason text,
-        created_at timestamptz not null default now(),
-        primary key (tenant_id, agent_id, version_id),
-        constraint agent_versions_agent_fk
-          foreign key (tenant_id, agent_id)
-          references agents(tenant_id, agent_id)
-          on delete cascade
-      )
-    `.execute(db);
-    await sql`
-      create index agent_versions_sequence_idx
-      on agent_versions (tenant_id, agent_id, version_sequence)
-    `.execute(db);
-    await sql`
-      create table kysely_migration (
-        name text primary key,
-        timestamp text not null
-      )
-    `.execute(db);
-    await sql`
-      insert into kysely_migration (name, timestamp)
-      values ('001_initial_registry_schema', ${Date.now().toString()})
-    `.execute(db);
-
-    return {
-      async cleanup() {
-        await destroyKyselyDb(db);
-        await adminPool.query(
-          "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
-          [databaseName],
-        );
-        await adminPool.query(`drop database if exists "${databaseName}"`);
-        await adminPool.end();
-      },
-      databaseUrl,
-      db,
-    };
-  } catch (error) {
-    await destroyKyselyDb(db);
-    await adminPool.query(`drop database if exists "${databaseName}"`);
-    await adminPool.end();
-    throw error;
-  }
 }
 
 test("loadRegistryConfig loads hosted defaults and bootstrap input", async () => {
@@ -279,7 +160,6 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
     await database.db
       .insertInto("tenants")
       .values({
-        default_card_profile_id: alternateCardProfileId,
         deployment_mode: "hosted",
         display_name: "Schema Tenant",
         tenant_id: "tenant-schema",
@@ -402,7 +282,7 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
     const tables = await listPublicTables(database.db);
     const tenant = await database.db
       .selectFrom("tenants")
-      .select(["tenant_id", "display_name", "deployment_mode", "default_card_profile_id"])
+      .select(["tenant_id", "display_name", "deployment_mode"])
       .where("tenant_id", "=", "tenant-schema")
       .executeTakeFirstOrThrow();
     const membership = await database.db
@@ -500,10 +380,14 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       .executeTakeFirstOrThrow();
 
     // Assert
-    assert.deepEqual(formatMigrationResults(database.migrationResults), expectedMigrationResults);
+    assert.deepEqual(formatMigrationResults(database.migrationResults), [
+      {
+        migrationName: "001_initial_registry_schema",
+        status: "Success",
+      },
+    ]);
     assert.deepEqual(tables.filter((tableName) => requiredTables.includes(tableName)), requiredTables);
     assert.deepEqual(tenant, {
-      default_card_profile_id: alternateCardProfileId,
       deployment_mode: "hosted",
       display_name: "Schema Tenant",
       tenant_id: "tenant-schema",
@@ -602,7 +486,7 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       formatMigrationResults((rollbackAttempt.results ?? []) as Awaited<ReturnType<typeof migrateToLatest>>),
       [
         {
-          migrationName: "003_agent_version_profiles_and_sequence_uniqueness",
+          migrationName: "001_initial_registry_schema",
           status: "Error",
         },
       ],
@@ -611,108 +495,6 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       environment_key: "prod",
       publication_id: "publication-1",
     });
-  } finally {
-    await database.cleanup();
-  }
-});
-
-test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registration", async () => {
-  // Arrange
-  const database = await createAr03RegistryDatabase();
-
-  try {
-    await database.db
-      .insertInto("tenants")
-      .values({
-        deployment_mode: "hosted",
-        display_name: "Legacy Tenant",
-        tenant_id: "tenant-legacy",
-      })
-      .execute();
-    await database.db
-      .insertInto("agents")
-      .values({
-        active_version_id: "version-legacy",
-        agent_id: "agent-legacy",
-        display_name: "Legacy Agent",
-        summary: "Agent created before draft registration",
-        tenant_id: "tenant-legacy",
-      })
-      .execute();
-    await database.db
-      .insertInto("agent_versions")
-      .values({
-        agent_id: "agent-legacy",
-        approval_state: "approved",
-        capabilities: ["search"],
-        context_contract: JSON.stringify([]),
-        header_contract: JSON.stringify([]),
-        required_roles: [],
-        required_scopes: [],
-        summary: "Legacy schema version",
-        tags: ["legacy"],
-        tenant_id: "tenant-legacy",
-        version_id: "version-legacy",
-        version_label: "0.9.0",
-        version_sequence: 1,
-      })
-      .execute();
-    const migrationResults = await migrateToLatest(database.db);
-
-    // Act
-    const version = await database.db
-      .selectFrom("agent_versions")
-      .select(["card_profile_id", "display_name", "version_sequence"])
-      .where("tenant_id", "=", "tenant-legacy")
-      .where("agent_id", "=", "agent-legacy")
-      .where("version_id", "=", "version-legacy")
-      .executeTakeFirstOrThrow();
-    const tenant = await database.db
-      .selectFrom("tenants")
-      .select(["default_card_profile_id"])
-      .where("tenant_id", "=", "tenant-legacy")
-      .executeTakeFirstOrThrow();
-    const duplicateInsert = database.db
-      .insertInto("agent_versions")
-      .values({
-        agent_id: "agent-legacy",
-        approval_state: "draft",
-        capabilities: [],
-        card_profile_id: defaultCardProfileId,
-        context_contract: JSON.stringify([]),
-        display_name: "Legacy Agent",
-        header_contract: JSON.stringify([]),
-        required_roles: [],
-        required_scopes: [],
-        summary: "Duplicate sequence should fail",
-        tags: [],
-        tenant_id: "tenant-legacy",
-        version_id: "version-duplicate",
-        version_label: "0.9.1",
-        version_sequence: 1,
-      })
-      .execute();
-
-    // Assert
-    assert.deepEqual(formatMigrationResults(migrationResults), [
-      {
-        migrationName: "002_tenant_default_card_profiles",
-        status: "Success",
-      },
-      {
-        migrationName: "003_agent_version_profiles_and_sequence_uniqueness",
-        status: "Success",
-      },
-    ]);
-    assert.deepEqual(tenant, {
-      default_card_profile_id: defaultCardProfileId,
-    });
-    assert.deepEqual(version, {
-      card_profile_id: defaultCardProfileId,
-      display_name: "Legacy Agent",
-      version_sequence: 1,
-    });
-    await assert.rejects(duplicateInsert, /agent_versions_sequence_idx/);
   } finally {
     await database.cleanup();
   }
@@ -732,7 +514,6 @@ test("bootstrapFromConfig migrates and upserts hosted tenants, environments, mem
         "tenants:",
         "  - tenantId: tenant-alpha",
         "    displayName: Tenant Alpha",
-        `    defaultCardProfileId: ${alternateCardProfileId}`,
         "    environments: [dev, prod]",
         "    memberships:",
         "      - subjectId: user-123",
@@ -754,7 +535,6 @@ test("bootstrapFromConfig migrates and upserts hosted tenants, environments, mem
         "tenants:",
         "  - tenantId: tenant-alpha",
         "    displayName: Tenant Alpha Updated",
-        `    defaultCardProfileId: ${defaultCardProfileId}`,
         "    environments: [prod, staging]",
         "    memberships:",
         "      - subjectId: user-123",
@@ -788,7 +568,7 @@ test("bootstrapFromConfig migrates and upserts hosted tenants, environments, mem
     const updatedSummary = await bootstrapFromConfig(updatedConfig, repository);
     const tenants = await database.db
       .selectFrom("tenants")
-      .select(["tenant_id", "display_name", "deployment_mode", "default_card_profile_id"])
+      .select(["tenant_id", "display_name", "deployment_mode"])
       .orderBy("tenant_id")
       .execute();
     const environments = await database.db
@@ -821,7 +601,12 @@ test("bootstrapFromConfig migrates and upserts hosted tenants, environments, mem
     });
 
     // Assert
-    assert.deepEqual(formatMigrationResults(database.migrationResults), expectedMigrationResults);
+    assert.deepEqual(formatMigrationResults(database.migrationResults), [
+      {
+        migrationName: "001_initial_registry_schema",
+        status: "Success",
+      },
+    ]);
     assert.deepEqual(initialSummary, {
       membershipCount: 1,
       tenantCount: 2,
@@ -832,13 +617,11 @@ test("bootstrapFromConfig migrates and upserts hosted tenants, environments, mem
     });
     assert.deepEqual(tenants, [
       {
-        default_card_profile_id: defaultCardProfileId,
         deployment_mode: "hosted",
         display_name: "Tenant Alpha Updated",
         tenant_id: "tenant-alpha",
       },
       {
-        default_card_profile_id: defaultCardProfileId,
         deployment_mode: "hosted",
         display_name: "Tenant Beta",
         tenant_id: "tenant-beta",
@@ -923,7 +706,7 @@ test("bootstrapFromConfig initializes self-hosted mode from SELF_HOSTED_BOOTSTRA
     const summary = await bootstrapFromConfig(config, repository);
     const tenants = await database.db
       .selectFrom("tenants")
-      .select(["tenant_id", "display_name", "deployment_mode", "default_card_profile_id"])
+      .select(["tenant_id", "display_name", "deployment_mode"])
       .execute();
     const environments = await database.db
       .selectFrom("tenant_environments")
@@ -943,14 +726,18 @@ test("bootstrapFromConfig initializes self-hosted mode from SELF_HOSTED_BOOTSTRA
       .execute();
 
     // Assert
-    assert.deepEqual(formatMigrationResults(database.migrationResults), expectedMigrationResults);
+    assert.deepEqual(formatMigrationResults(database.migrationResults), [
+      {
+        migrationName: "001_initial_registry_schema",
+        status: "Success",
+      },
+    ]);
     assert.deepEqual(summary, {
       membershipCount: 1,
       tenantCount: 1,
     });
     assert.deepEqual(tenants, [
       {
-        default_card_profile_id: defaultCardProfileId,
         deployment_mode: "self-hosted",
         display_name: "Self Hosted Tenant",
         tenant_id: "tenant-self-hosted",
@@ -1028,7 +815,12 @@ test("bootstrapFromConfig rejects multi-tenant manifests in self-hosted mode wit
       .execute();
 
     // Assert
-    assert.deepEqual(formatMigrationResults(database.migrationResults), expectedMigrationResults);
+    assert.deepEqual(formatMigrationResults(database.migrationResults), [
+      {
+        migrationName: "001_initial_registry_schema",
+        status: "Success",
+      },
+    ]);
     assert.deepEqual(tenants, []);
     assert.deepEqual(environments, []);
     assert.deepEqual(memberships, []);

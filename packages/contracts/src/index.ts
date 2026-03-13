@@ -36,3 +36,65 @@ export interface CreateTenantEnvironmentResponse {
 export function isValidTenantEnvironmentKey(value: string): boolean {
   return tenantEnvironmentKeyPattern.test(value);
 }
+
+export const contextContractTypes = [
+  "string",
+  "number",
+  "boolean",
+  "object",
+  "array",
+] as const;
+
+export type ContextContractType = (typeof contextContractTypes)[number];
+
+export interface HeaderContractEntry {
+  description: string;
+  name: string;
+  required: boolean;
+  source: string;
+}
+
+export interface ContextContractEntry {
+  description: string;
+  example?: unknown;
+  key: string;
+  required: boolean;
+  type: ContextContractType;
+}
+
+export interface DraftEnvironmentPublicationRequest {
+  environmentKey: string;
+  healthEndpointUrl: string;
+  invocationEndpoint?: string;
+  rawCard: string;
+}
+
+export interface CreateDraftAgentRequest {
+  capabilities: string[];
+  cardProfileId?: string;
+  contextContract: ContextContractEntry[];
+  displayName: string;
+  headerContract: HeaderContractEntry[];
+  publications: DraftEnvironmentPublicationRequest[];
+  requiredRoles: string[];
+  requiredScopes: string[];
+  summary: string;
+  tags: string[];
+  versionLabel: string;
+}
+
+export interface CreateDraftVersionRequest extends CreateDraftAgentRequest {}
+
+export interface DraftEnvironmentPublicationResponse {
+  environmentKey: string;
+  publicationId: string;
+}
+
+export interface DraftAgentRegistrationResponse {
+  agentId: string;
+  approvalState: "draft";
+  cardProfileId: string;
+  publications: DraftEnvironmentPublicationResponse[];
+  versionId: string;
+  versionSequence: number;
+}
