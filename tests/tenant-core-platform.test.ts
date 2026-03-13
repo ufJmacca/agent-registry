@@ -106,6 +106,10 @@ const expectedMigrationResults = [
     migrationName: "004_version_review_metadata",
     status: "Success",
   },
+  {
+    migrationName: "005_publication_probe_history",
+    status: "Success",
+  },
 ];
 
 async function listPublicTables(db: AgentRegistryDb): Promise<string[]> {
@@ -175,6 +179,24 @@ async function createAr03RegistryDatabase(): Promise<IsolatedRegistryDatabase> {
         constraint agent_versions_agent_fk
           foreign key (tenant_id, agent_id)
           references agents(tenant_id, agent_id)
+          on delete cascade
+      )
+    `.execute(db);
+    await sql`
+      create table environment_publications (
+        publication_id text primary key,
+        tenant_id text not null,
+        agent_id text not null,
+        version_id text not null,
+        environment_key text not null,
+        raw_card text not null,
+        invocation_endpoint text,
+        normalized_metadata jsonb not null default '{}'::jsonb,
+        health_endpoint_url text not null,
+        created_at timestamptz not null default now(),
+        constraint environment_publications_version_fk
+          foreign key (tenant_id, agent_id, version_id)
+          references agent_versions(tenant_id, agent_id, version_id)
           on delete cascade
       )
     `.execute(db);
@@ -272,6 +294,7 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       "agents",
       "environment_publications",
       "publication_health",
+      "publication_probe_history",
       "publication_telemetry",
       "tenant_environments",
       "tenant_memberships",
@@ -389,6 +412,16 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       })
       .execute();
     await database.db
+      .insertInto("publication_probe_history")
+      .values({
+        checked_at: "2026-03-12T00:03:00Z",
+        error: null,
+        ok: true,
+        publication_id: "publication-1",
+        status_code: 200,
+      })
+      .execute();
+    await database.db
       .insertInto("publication_telemetry")
       .values({
         error_count: 1,
@@ -496,6 +529,11 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       .where("tenant_id", "=", "tenant-schema")
       .where("publication_id", "=", "publication-1")
       .executeTakeFirstOrThrow();
+    const probeHistory = await database.db
+      .selectFrom("publication_probe_history")
+      .select(["publication_id", "checked_at", "ok", "status_code", "error"])
+      .where("publication_id", "=", "publication-1")
+      .executeTakeFirstOrThrow();
     const rollbackAttempt = await createRegistryMigrator(database.db).migrateDown();
     const publicationAfterRollbackAttempt = await database.db
       .selectFrom("environment_publications")
@@ -600,13 +638,26 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       success_count: 9,
       tenant_id: "tenant-schema",
     });
+    assert.deepEqual(
+      {
+        ...probeHistory,
+        checked_at: new Date(probeHistory.checked_at).toISOString(),
+      },
+      {
+        checked_at: "2026-03-12T00:03:00.000Z",
+        error: null,
+        ok: true,
+        publication_id: "publication-1",
+        status_code: 200,
+      },
+    );
     assert.ok(rollbackAttempt.error instanceof Error);
     assert.match(rollbackAttempt.error.message, /forward-only/);
     assert.deepEqual(
       formatMigrationResults((rollbackAttempt.results ?? []) as Awaited<ReturnType<typeof migrateToLatest>>),
       [
         {
-          migrationName: "004_version_review_metadata",
+          migrationName: "005_publication_probe_history",
           status: "Error",
         },
       ],
@@ -709,6 +760,10 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
       },
       {
         migrationName: "004_version_review_metadata",
+        status: "Success",
+      },
+      {
+        migrationName: "005_publication_probe_history",
         status: "Success",
       },
     ]);

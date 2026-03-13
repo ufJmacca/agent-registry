@@ -135,6 +135,15 @@ export interface PublicationHealthTable {
   updated_at: Generated<string>;
 }
 
+export interface PublicationProbeHistoryTable {
+  checked_at: string;
+  error: string | null;
+  ok: boolean;
+  probe_id: Generated<number>;
+  publication_id: string;
+  status_code: number | null;
+}
+
 export interface PublicationTelemetryTable {
   error_count: number;
   invocation_count: number;
@@ -154,6 +163,7 @@ export interface AgentRegistryDatabase {
   agents: AgentsTable;
   environment_publications: EnvironmentPublicationsTable;
   publication_health: PublicationHealthTable;
+  publication_probe_history: PublicationProbeHistoryTable;
   publication_telemetry: PublicationTelemetryTable;
   tenant_environments: TenantEnvironmentsTable;
   tenant_memberships: TenantMembershipsTable;
@@ -572,6 +582,30 @@ const migrationDefinitions: MigrationDefinition[] = [
         alter table agent_versions
         add column if not exists rejected_by text
       `.execute(db);
+    },
+  },
+  {
+    name: "005_publication_probe_history",
+    async up(db) {
+      await db.schema
+        .createTable("publication_probe_history")
+        .ifNotExists()
+        .addColumn("probe_id", "bigserial", (column) => column.primaryKey())
+        .addColumn("publication_id", "text", (column) =>
+          column.notNull().references("environment_publications.publication_id").onDelete("cascade"),
+        )
+        .addColumn("checked_at", "timestamptz", (column) => column.notNull())
+        .addColumn("ok", "boolean", (column) => column.notNull())
+        .addColumn("status_code", "integer")
+        .addColumn("error", "text")
+        .execute();
+
+      await db.schema
+        .createIndex("publication_probe_history_publication_checked_idx")
+        .ifNotExists()
+        .on("publication_probe_history")
+        .columns(["publication_id", "checked_at"])
+        .execute();
     },
   },
 ];

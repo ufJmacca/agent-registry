@@ -5,6 +5,7 @@ import {
   KyselyAgentAdminDetailRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
+  KyselyHealthRepository,
   KyselyTenantEnvironmentRepository,
   KyselyTenantPolicyOverlayRepository,
   KyselyTenantRepository,
@@ -17,6 +18,11 @@ import {
   handleAgentAdminDetailRequest,
   matchAgentAdminDetailRoute,
 } from "./modules/admin-detail/index.js";
+import {
+  AgentPublicationHealthService,
+  handleAgentPublicationHealthRequest,
+  matchAgentPublicationHealthRoute,
+} from "./modules/health/index.js";
 import {
   AgentDraftRegistrationService,
   handleAgentDraftRequest,
@@ -77,6 +83,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     {
       allowPrivateTargets: config.healthProbe.allowPrivateTargets,
       deploymentMode: config.deploymentMode,
+      requireHttps: config.healthProbe.requireHttps,
       ...options.reviewServiceOptions,
     },
   );
@@ -86,12 +93,16 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
+  const healthService = new AgentPublicationHealthService(
+    new KyselyHealthRepository(options.db),
+  );
 
   return async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const adminDetailRoute = matchAgentAdminDetailRoute(url.pathname);
     const agentDraftRoute = matchAgentDraftRoute(url.pathname);
     const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
+    const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
     const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
 
@@ -99,6 +110,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       await handleAgentVersionReviewRequest(request, response, reviewRoute, {
         principalResolver,
         service: reviewService,
+      });
+      return;
+    }
+
+    if (healthRoute !== null) {
+      await handleAgentPublicationHealthRequest(request, response, healthRoute, {
+        principalResolver,
+        service: healthService,
       });
       return;
     }

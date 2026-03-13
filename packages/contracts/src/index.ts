@@ -206,3 +206,26 @@ export interface VersionAdminDetailResponse {
   versionLabel: string;
   versionSequence: number;
 }
+
+export type HealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
+
+export interface PublicationHealthHistoryEntry {
+  checkedAt: string;
+  error: string | null;
+  ok: boolean;
+  statusCode: number | null;
+}
+
+export interface PublicationHealthDetailResponse {
+  current: {
+    consecutiveFailures: number;
+    healthStatus: HealthStatus;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+    lastSuccessAt: string | null;
+    recentFailures: number;
+  };
+  environmentKey: string;
+  history: PublicationHealthHistoryEntry[];
+  publicationId: string;
+}
