@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 
-import { defaultCardProfileId } from "@agent-registry/agent-card";
 import type { DeploymentMode, RegistryConfig } from "@agent-registry/config";
 import type {
   BootstrapMembershipRecord,
@@ -17,7 +16,6 @@ export interface BootstrapMembershipManifest {
 }
 
 export interface BootstrapTenantManifest {
-  defaultCardProfileId: string;
   displayName: string;
   environments: string[];
   memberships?: BootstrapMembershipManifest[];
@@ -126,9 +124,6 @@ export async function loadBootstrapManifest(manifestPath: string): Promise<Boots
     }
 
     return {
-      defaultCardProfileId: tenant.defaultCardProfileId === undefined
-        ? defaultCardProfileId
-        : expectString(tenant.defaultCardProfileId, `tenants[${index}].defaultCardProfileId`),
       displayName: expectString(tenant.displayName, `tenants[${index}].displayName`),
       environments,
       memberships: readMemberships(tenant.memberships),
@@ -157,7 +152,6 @@ export class OperatorBootstrapService {
 
     for (const tenant of manifest.tenants) {
       await this.repository.upsertTenant({
-        defaultCardProfileId: tenant.defaultCardProfileId,
         deploymentMode: options.deploymentMode,
         displayName: tenant.displayName,
         tenantId: tenant.tenantId,

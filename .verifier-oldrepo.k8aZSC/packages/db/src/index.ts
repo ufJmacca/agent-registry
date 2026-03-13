@@ -36,7 +36,6 @@ export type HealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
 
 export interface TenantsTable {
   created_at: Generated<string>;
-  default_card_profile_id: Generated<string>;
   deployment_mode: DeploymentMode;
   display_name: string;
   tenant_id: string;
@@ -74,10 +73,8 @@ export interface AgentsTable {
 
 export interface AgentVersionsTable {
   approval_state: string;
-  card_profile_id: Generated<string>;
   context_contract: JSONColumnType<unknown[]>;
   created_at: Generated<string>;
-  display_name: Generated<string>;
   header_contract: JSONColumnType<unknown[]>;
   rejected_reason: string | null;
   required_roles: string[];
@@ -159,7 +156,6 @@ export interface AgentRegistryDatabase {
 export type AgentRegistryDb = Kysely<AgentRegistryDatabase>;
 
 export interface BootstrapTenantRecord {
-  defaultCardProfileId: string;
   deploymentMode: DeploymentMode;
   displayName: string;
   tenantId: string;
@@ -465,80 +461,6 @@ const migrationDefinitions: MigrationDefinition[] = [
         .execute();
     },
   },
-  {
-    name: "002_tenant_default_card_profiles",
-    async up(db) {
-      await db.schema
-        .alterTable("tenants")
-        .addColumn("default_card_profile_id", "text", (column) =>
-          column.notNull().defaultTo("a2a-default"),
-        )
-        .execute();
-    },
-  },
-  {
-    name: "003_agent_version_profiles_and_sequence_uniqueness",
-    async up(db) {
-      await sql`
-        alter table agent_versions
-        add column if not exists card_profile_id text
-      `.execute(db);
-      await sql`
-        alter table agent_versions
-        add column if not exists display_name text
-      `.execute(db);
-      await sql`
-        update agent_versions as versions
-        set card_profile_id = tenants.default_card_profile_id
-        from tenants
-        where versions.tenant_id = tenants.tenant_id
-          and versions.card_profile_id is null
-      `.execute(db);
-      await sql`
-        update agent_versions as versions
-        set display_name = agents.display_name
-        from agents
-        where versions.tenant_id = agents.tenant_id
-          and versions.agent_id = agents.agent_id
-          and versions.display_name is null
-      `.execute(db);
-      await sql`
-        alter table agent_versions
-        alter column card_profile_id set default 'a2a-default'
-      `.execute(db);
-      await sql`
-        alter table agent_versions
-        alter column display_name set default ''
-      `.execute(db);
-      await sql`
-        update agent_versions
-        set card_profile_id = 'a2a-default'
-        where card_profile_id is null
-      `.execute(db);
-      await sql`
-        update agent_versions
-        set display_name = ''
-        where display_name is null
-      `.execute(db);
-      await sql`
-        alter table agent_versions
-        alter column card_profile_id set not null
-      `.execute(db);
-      await sql`
-        alter table agent_versions
-        alter column display_name set not null
-      `.execute(db);
-      await sql`
-        drop index if exists agent_versions_sequence_idx
-      `.execute(db);
-      await db.schema
-        .createIndex("agent_versions_sequence_idx")
-        .on("agent_versions")
-        .columns(["tenant_id", "agent_id", "version_sequence"])
-        .unique()
-        .execute();
-    },
-  },
 ];
 
 class ForwardOnlyMigrationProvider implements MigrationProvider {
@@ -623,14 +545,12 @@ export class KyselyBootstrapRepository {
     await this.db
       .insertInto("tenants")
       .values({
-        default_card_profile_id: tenant.defaultCardProfileId,
         deployment_mode: tenant.deploymentMode,
         display_name: tenant.displayName,
         tenant_id: tenant.tenantId,
       })
       .onConflict((conflict) =>
         conflict.column("tenant_id").doUpdateSet({
-          default_card_profile_id: tenant.defaultCardProfileId,
           deployment_mode: tenant.deploymentMode,
           display_name: tenant.displayName,
           updated_at: sql<string>`now()`,

@@ -1,0 +1,9 @@
+{
+  "name": "@agent-registry/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --experimental-strip-types src/server.ts"
+  }
+}
