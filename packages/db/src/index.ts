@@ -73,16 +73,21 @@ export interface AgentsTable {
 }
 
 export interface AgentVersionsTable {
+  approved_at: string | null;
+  approved_by: string | null;
   approval_state: string;
   card_profile_id: Generated<string>;
   context_contract: JSONColumnType<unknown[]>;
   created_at: Generated<string>;
   display_name: Generated<string>;
   header_contract: JSONColumnType<unknown[]>;
+  rejected_at: string | null;
+  rejected_by: string | null;
   rejected_reason: string | null;
   required_roles: string[];
   required_scopes: string[];
   submitted_at: string | null;
+  submitted_by: string | null;
   summary: string;
   tags: string[];
   capabilities: string[];
@@ -314,6 +319,11 @@ const migrationDefinitions: MigrationDefinition[] = [
         )
         .addColumn("approval_state", "text", (column) => column.notNull())
         .addColumn("submitted_at", "timestamptz")
+        .addColumn("submitted_by", "text")
+        .addColumn("approved_at", "timestamptz")
+        .addColumn("approved_by", "text")
+        .addColumn("rejected_at", "timestamptz")
+        .addColumn("rejected_by", "text")
         .addColumn("rejected_reason", "text")
         .addColumn("created_at", "timestamptz", (column) =>
           column.notNull().defaultTo(sql`now()`),
@@ -537,6 +547,31 @@ const migrationDefinitions: MigrationDefinition[] = [
         .columns(["tenant_id", "agent_id", "version_sequence"])
         .unique()
         .execute();
+    },
+  },
+  {
+    name: "004_version_review_metadata",
+    async up(db) {
+      await sql`
+        alter table agent_versions
+        add column if not exists submitted_by text
+      `.execute(db);
+      await sql`
+        alter table agent_versions
+        add column if not exists approved_at timestamptz
+      `.execute(db);
+      await sql`
+        alter table agent_versions
+        add column if not exists approved_by text
+      `.execute(db);
+      await sql`
+        alter table agent_versions
+        add column if not exists rejected_at timestamptz
+      `.execute(db);
+      await sql`
+        alter table agent_versions
+        add column if not exists rejected_by text
+      `.execute(db);
     },
   },
 ];
