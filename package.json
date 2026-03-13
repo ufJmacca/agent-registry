@@ -13,7 +13,7 @@
     "lint": "tsc -b --pretty false",
     "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit",
     "test:inner": "bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit",
-    "test:unit": "tsx --test tests/tenant-core-platform.test.ts",
+    "test:unit": "tsx --test tests/*.test.ts",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts"
   },

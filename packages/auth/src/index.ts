@@ -27,6 +27,24 @@ export interface TenantMembershipLookup {
   getMembership(tenantId: string, subjectId: string): Promise<TenantMembership | null>;
 }
 
+export class MissingSubjectIdError extends Error {
+  constructor() {
+    super("Authenticated request is missing a subjectId");
+  }
+}
+
+export class MissingTenantMembershipError extends Error {
+  readonly subjectId: string;
+
+  readonly tenantId: string;
+
+  constructor(subjectId: string, tenantId: string) {
+    super(`Authenticated subject '${subjectId}' does not have tenant membership for '${tenantId}'`);
+    this.subjectId = subjectId;
+    this.tenantId = tenantId;
+  }
+}
+
 export class PrincipalResolver {
   private readonly membershipLookup: TenantMembershipLookup;
 
@@ -38,15 +56,13 @@ export class PrincipalResolver {
     const subjectId = request.auth?.subjectId?.trim();
 
     if (!subjectId) {
-      throw new Error("Authenticated request is missing a subjectId");
+      throw new MissingSubjectIdError();
     }
 
     const membership = await this.membershipLookup.getMembership(request.tenantId, subjectId);
 
     if (membership === null) {
-      throw new Error(
-        `Authenticated subject '${subjectId}' does not have tenant membership for '${request.tenantId}'`,
-      );
+      throw new MissingTenantMembershipError(subjectId, request.tenantId);
     }
 
     return {
