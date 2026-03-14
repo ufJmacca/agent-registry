@@ -3,6 +3,7 @@ import http from "node:http";
 import { loadRegistryConfig, type RegistryConfig } from "@agent-registry/config";
 import {
   KyselyAgentAdminDetailRepository,
+  KyselyAgentDiscoveryRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
   KyselyTenantEnvironmentRepository,
@@ -12,6 +13,11 @@ import {
 } from "@agent-registry/db";
 
 import { createPrincipalResolver } from "./auth/index.js";
+import {
+  AgentDiscoveryService,
+  handleDiscoveryRequest,
+  matchDiscoveryRoute,
+} from "./modules/discovery/index.js";
 import {
   AgentAdminDetailService,
   handleAgentAdminDetailRequest,
@@ -32,6 +38,10 @@ import {
   matchTenantPolicyOverlayRoute,
   TenantPolicyOverlayService,
 } from "./modules/overlays/index.js";
+import {
+  handleSearchRequest,
+  matchSearchRoute,
+} from "./modules/search/index.js";
 import {
   type AgentVersionReviewServiceOptions,
   AgentVersionReviewService,
@@ -80,6 +90,12 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       ...options.reviewServiceOptions,
     },
   );
+  const discoveryService = new AgentDiscoveryService(
+    new KyselyAgentDiscoveryRepository(options.db),
+    {
+      rawCardByteLimit: config.rawCardByteLimit,
+    },
+  );
   const overlayService = new TenantPolicyOverlayService(
     new KyselyTenantPolicyOverlayRepository(options.db),
   );
@@ -90,10 +106,12 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   return async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const adminDetailRoute = matchAgentAdminDetailRoute(url.pathname);
+    const discoveryRoute = matchDiscoveryRoute(url.pathname);
     const agentDraftRoute = matchAgentDraftRoute(url.pathname);
     const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
     const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
+    const searchRoute = matchSearchRoute(url.pathname);
 
     if (reviewRoute !== null) {
       await handleAgentVersionReviewRequest(request, response, reviewRoute, {
@@ -107,6 +125,22 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       await handleTenantPolicyOverlayRequest(request, response, overlayRoute, {
         principalResolver,
         service: overlayService,
+      });
+      return;
+    }
+
+    if (searchRoute !== null) {
+      await handleSearchRequest(request, response, searchRoute, {
+        principalResolver,
+        service: discoveryService,
+      });
+      return;
+    }
+
+    if (discoveryRoute !== null) {
+      await handleDiscoveryRequest(request, response, discoveryRoute, {
+        principalResolver,
+        service: discoveryService,
       });
       return;
     }

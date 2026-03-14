@@ -13,6 +13,7 @@ import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
+  KyselyTenantPolicyOverlayRepository,
   createRegistryMigrator,
   createKyselyDb,
   destroyKyselyDb,
@@ -104,6 +105,10 @@ const expectedMigrationResults = [
   },
   {
     migrationName: "004_version_review_metadata",
+    status: "Success",
+  },
+  {
+    migrationName: "005_agent_version_publishers",
     status: "Success",
   },
 ];
@@ -606,7 +611,7 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       formatMigrationResults((rollbackAttempt.results ?? []) as Awaited<ReturnType<typeof migrateToLatest>>),
       [
         {
-          migrationName: "004_version_review_metadata",
+          migrationName: "005_agent_version_publishers",
           status: "Error",
         },
       ],
@@ -709,6 +714,10 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
       },
       {
         migrationName: "004_version_review_metadata",
+        status: "Success",
+      },
+      {
+        migrationName: "005_agent_version_publishers",
         status: "Success",
       },
     ]);
@@ -1042,6 +1051,76 @@ test("bootstrapFromConfig rejects multi-tenant manifests in self-hosted mode wit
     assert.deepEqual(memberships, []);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
+test("tenant policy overlay role updates stay monotonic for narrowing any-of clauses", async () => {
+  // Arrange
+  const database = await createFreshRegistryDatabase();
+
+  try {
+    await database.db
+      .insertInto("tenants")
+      .values({
+        deployment_mode: "hosted",
+        display_name: "Tenant Alpha",
+        tenant_id: "tenant-alpha",
+      })
+      .execute();
+    await database.db
+      .insertInto("agents")
+      .values({
+        active_version_id: null,
+        agent_id: "agent-alpha",
+        deprecated: false,
+        disabled: false,
+        display_name: "Agent Alpha",
+        summary: "Overlay narrowing regression fixture",
+        tenant_id: "tenant-alpha",
+      })
+      .execute();
+    const repository = new KyselyTenantPolicyOverlayRepository(database.db);
+
+    // Act
+    await repository.upsertNarrowingOverlay({
+      agentId: "agent-alpha",
+      environmentKey: null,
+      requiredRoles: ["case-manager", "support-agent"],
+      requiredScopes: ["tickets.read"],
+      tenantId: "tenant-alpha",
+    });
+    const overlay = await repository.upsertNarrowingOverlay({
+      agentId: "agent-alpha",
+      environmentKey: null,
+      requiredRoles: ["case-manager", "region-analyst"],
+      requiredScopes: ["tickets.write"],
+      tenantId: "tenant-alpha",
+    });
+
+    // Assert
+    assert.deepEqual(overlay, {
+      agentId: "agent-alpha",
+      deprecated: false,
+      disabled: false,
+      environmentKey: null,
+      requiredRoles: ["case-manager"],
+      requiredScopes: ["tickets.read", "tickets.write"],
+    });
+    assert.deepEqual(
+      await database.db
+        .selectFrom("tenant_policy_overlays")
+        .select(["required_roles", "required_scopes"])
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", "agent-alpha")
+        .where("environment_key", "is", null)
+        .executeTakeFirstOrThrow(),
+      {
+        required_roles: ["case-manager"],
+        required_scopes: ["tickets.read", "tickets.write"],
+      },
+    );
+  } finally {
     await database.cleanup();
   }
 });
