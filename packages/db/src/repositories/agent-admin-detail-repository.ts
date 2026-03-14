@@ -6,6 +6,17 @@ import {
 
 type ApprovalState = "draft" | "pending_review" | "approved" | "rejected";
 
+export interface PublicationTelemetrySummaryRecord {
+  errorCount: number;
+  invocationCount: number;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  recordedAt: string;
+  successCount: number;
+  windowEndedAt: string;
+  windowStartedAt: string;
+}
+
 export interface VersionReviewMetadataRecord {
   approvedAt: string | null;
   approvedBy: string | null;
@@ -24,6 +35,7 @@ export interface AgentAdminDetailRecord {
       healthEndpointUrl: string;
       healthStatus: string | null;
       publicationId: string;
+      telemetry: PublicationTelemetrySummaryRecord[];
     }>;
     review: VersionReviewMetadataRecord;
     versionId: string;
@@ -69,6 +81,7 @@ export interface VersionAdminDetailRecord {
     normalizedMetadata: unknown;
     publicationId: string;
     rawCard: string;
+    telemetry: PublicationTelemetrySummaryRecord[];
   }>;
   requiredRoles: string[];
   requiredScopes: string[];
@@ -114,6 +127,53 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
 
   constructor(db: AgentRegistryDb) {
     this.db = db;
+  }
+
+  private async getTelemetryByPublicationIds(
+    tenantId: string,
+    publicationIds: string[],
+  ): Promise<Map<string, PublicationTelemetrySummaryRecord[]>> {
+    if (publicationIds.length === 0) {
+      return new Map();
+    }
+
+    const telemetryRows = await this.db
+      .selectFrom("publication_telemetry")
+      .select([
+        "error_count",
+        "invocation_count",
+        "p50_latency_ms",
+        "p95_latency_ms",
+        "publication_id",
+        "recorded_at",
+        "success_count",
+        "window_ended_at",
+        "window_started_at",
+      ])
+      .where("tenant_id", "=", tenantId)
+      .where("publication_id", "in", publicationIds)
+      .orderBy("publication_id")
+      .orderBy("window_started_at", "desc")
+      .execute();
+
+    const telemetryByPublication = new Map<string, PublicationTelemetrySummaryRecord[]>();
+
+    for (const row of telemetryRows) {
+      const publicationTelemetry = telemetryByPublication.get(row.publication_id) ?? [];
+      publicationTelemetry.push({
+        errorCount: row.error_count,
+        invocationCount: row.invocation_count,
+        p50LatencyMs: row.p50_latency_ms,
+        p95LatencyMs: row.p95_latency_ms,
+        recordedAt: row.recorded_at,
+        successCount: row.success_count,
+        windowEndedAt: row.window_ended_at,
+        windowStartedAt: row.window_started_at,
+      });
+      telemetryByPublication.set(row.publication_id, publicationTelemetry);
+    }
+
+    return telemetryByPublication;
   }
 
   async getAgentDetail(tenantId: string, agentId: string): Promise<AgentAdminDetailRecord> {
@@ -202,6 +262,10 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
           .where("environment_publications.version_id", "=", agent.active_version_id)
           .orderBy("environment_publications.environment_key")
           .execute();
+        const telemetryByPublication = await this.getTelemetryByPublicationIds(
+          tenantId,
+          publications.map((publication) => publication.publication_id),
+        );
 
         activeVersion = {
           approvalState: activeVersionRecord.approval_state as ApprovalState,
@@ -210,6 +274,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
             healthEndpointUrl: publication.health_endpoint_url,
             healthStatus: publication.health_status,
             publicationId: publication.publication_id,
+            telemetry: telemetryByPublication.get(publication.publication_id) ?? [],
           })),
           review: mapReviewMetadata(activeVersionRecord),
           versionId: activeVersionRecord.version_id,
@@ -308,6 +373,10 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
       .where("environment_publications.version_id", "=", versionId)
       .orderBy("environment_publications.environment_key")
       .execute();
+    const telemetryByPublication = await this.getTelemetryByPublicationIds(
+      tenantId,
+      publications.map((publication) => publication.publication_id),
+    );
 
     return {
       active: agent.active_version_id === versionId,
@@ -325,6 +394,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
         normalizedMetadata: publication.normalized_metadata,
         publicationId: publication.publication_id,
         rawCard: publication.raw_card,
+        telemetry: telemetryByPublication.get(publication.publication_id) ?? [],
       })),
       requiredRoles: version.required_roles,
       requiredScopes: version.required_scopes,

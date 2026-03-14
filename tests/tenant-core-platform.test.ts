@@ -115,6 +115,10 @@ const expectedMigrationResults = [
     migrationName: "006_publication_probe_history",
     status: "Success",
   },
+  {
+    migrationName: "007_publication_telemetry_unique_windows",
+    status: "Success",
+  },
 ];
 
 async function listPublicTables(db: AgentRegistryDb): Promise<string[]> {
@@ -662,7 +666,7 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       formatMigrationResults((rollbackAttempt.results ?? []) as Awaited<ReturnType<typeof migrateToLatest>>),
       [
         {
-          migrationName: "006_publication_probe_history",
+          migrationName: "007_publication_telemetry_unique_windows",
           status: "Error",
         },
       ],
@@ -773,6 +777,10 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
       },
       {
         migrationName: "006_publication_probe_history",
+        status: "Success",
+      },
+      {
+        migrationName: "007_publication_telemetry_unique_windows",
         status: "Success",
       },
     ]);

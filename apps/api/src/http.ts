@@ -7,6 +7,7 @@ import {
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
   KyselyHealthRepository,
+  KyselyPublicationTelemetryRepository,
   KyselyTenantEnvironmentRepository,
   KyselyTenantPolicyOverlayRepository,
   KyselyTenantRepository,
@@ -58,6 +59,11 @@ import {
   handleAgentPublicationPreflightRequest,
   matchAgentPublicationPreflightRoute,
 } from "./modules/preflight/index.js";
+import {
+  handlePublicationTelemetryRequest,
+  matchPublicationTelemetryRoute,
+  PublicationTelemetryService,
+} from "./modules/telemetry/index.js";
 import {
   type AgentVersionReviewServiceOptions,
   AgentVersionReviewService,
@@ -117,6 +123,9 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const overlayService = new TenantPolicyOverlayService(
     new KyselyTenantPolicyOverlayRepository(options.db),
   );
+  const telemetryService = new PublicationTelemetryService(
+    new KyselyPublicationTelemetryRepository(options.db),
+  );
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
@@ -136,6 +145,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
     const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
     const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
+    const telemetryRoute = matchPublicationTelemetryRoute(url.pathname);
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
     const searchRoute = matchSearchRoute(url.pathname);
 
@@ -192,6 +202,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         adminDetailService,
         principalResolver,
         service: detailService,
+      });
+      return;
+    }
+
+    if (telemetryRoute !== null) {
+      await handlePublicationTelemetryRequest(request, response, telemetryRoute, {
+        principalResolver,
+        service: telemetryService,
       });
       return;
     }
