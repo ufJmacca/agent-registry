@@ -184,11 +184,37 @@ export interface TenantPolicyOverlayResponse {
   overlay: TenantPolicyOverlay;
 }
 
+export interface PublicationTelemetrySummary {
+  errorCount: number;
+  invocationCount: number;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  recordedAt: string;
+  successCount: number;
+  windowEndedAt: string;
+  windowStartedAt: string;
+}
+
+export interface UpsertPublicationTelemetryRequest {
+  errorCount: number;
+  invocationCount: number;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  successCount: number;
+  windowEndedAt: string;
+  windowStartedAt: string;
+}
+
+export interface UpsertPublicationTelemetryResponse {
+  telemetry: PublicationTelemetrySummary;
+}
+
 export interface AdminDetailPublicationSummary {
   environmentKey: string;
   healthEndpointUrl: string;
   healthStatus: string | null;
   publicationId: string;
+  telemetry: PublicationTelemetrySummary[];
 }
 
 export interface AgentAdminVersionSummary {
@@ -235,6 +261,7 @@ export interface VersionAdminDetailPublication {
   normalizedMetadata: unknown;
   publicationId: string;
   rawCard: string;
+  telemetry: PublicationTelemetrySummary[];
 }
 
 export interface VersionAdminDetailResponse {

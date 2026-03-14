@@ -637,6 +637,67 @@ const migrationDefinitions: MigrationDefinition[] = [
         .execute();
     },
   },
+  {
+    name: "007_publication_telemetry_unique_windows",
+    async up(db) {
+      const telemetryTableResult = await sql<{ exists: boolean }>`
+        select to_regclass('public.publication_telemetry') is not null as exists
+      `.execute(db);
+      const telemetryTableExists = telemetryTableResult.rows[0]?.exists ?? false;
+
+      if (!telemetryTableExists) {
+        const publicationTableResult = await sql<{ exists: boolean }>`
+          select to_regclass('public.environment_publications') is not null as exists
+        `.execute(db);
+        const publicationTableExists = publicationTableResult.rows[0]?.exists ?? false;
+
+        if (!publicationTableExists) {
+          return;
+        }
+
+        await db.schema
+          .createTable("publication_telemetry")
+          .ifNotExists()
+          .addColumn("telemetry_id", "bigserial", (column) => column.primaryKey())
+          .addColumn("tenant_id", "text", (column) =>
+            column.notNull().references("tenants.tenant_id").onDelete("cascade"),
+          )
+          .addColumn("publication_id", "text", (column) =>
+            column.notNull().references("environment_publications.publication_id").onDelete("cascade"),
+          )
+          .addColumn("invocation_count", "integer", (column) => column.notNull())
+          .addColumn("success_count", "integer", (column) => column.notNull())
+          .addColumn("error_count", "integer", (column) => column.notNull())
+          .addColumn("p50_latency_ms", "integer")
+          .addColumn("p95_latency_ms", "integer")
+          .addColumn("window_started_at", "timestamptz", (column) => column.notNull())
+          .addColumn("window_ended_at", "timestamptz", (column) => column.notNull())
+          .addColumn("recorded_at", "timestamptz", (column) =>
+            column.notNull().defaultTo(sql`now()`),
+          )
+          .execute();
+      }
+
+      await sql`
+        delete from publication_telemetry as older
+        using publication_telemetry as newer
+        where older.tenant_id = newer.tenant_id
+          and older.publication_id = newer.publication_id
+          and older.window_started_at = newer.window_started_at
+          and older.window_ended_at = newer.window_ended_at
+          and older.telemetry_id < newer.telemetry_id
+      `.execute(db);
+      await sql`
+        drop index if exists publication_telemetry_window_idx
+      `.execute(db);
+      await db.schema
+        .createIndex("publication_telemetry_window_idx")
+        .on("publication_telemetry")
+        .columns(["tenant_id", "publication_id", "window_started_at", "window_ended_at"])
+        .unique()
+        .execute();
+    },
+  },
 ];
 
 class ForwardOnlyMigrationProvider implements MigrationProvider {
