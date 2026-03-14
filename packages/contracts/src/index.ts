@@ -62,6 +62,55 @@ export interface ContextContractEntry {
   type: ContextContractType;
 }
 
+function isContractObjectEntry(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function normalizeHeaderContract(contract: unknown): HeaderContractEntry[] {
+  if (!Array.isArray(contract)) {
+    return [];
+  }
+
+  return contract
+    .filter(isContractObjectEntry)
+    .filter(
+      (entry) =>
+        typeof entry.description === "string" &&
+        typeof entry.name === "string" &&
+        typeof entry.required === "boolean" &&
+        typeof entry.source === "string",
+    )
+    .map((entry) => ({
+      description: entry.description as string,
+      name: entry.name as string,
+      required: entry.required as boolean,
+      source: entry.source as string,
+    }));
+}
+
+export function normalizeContextContract(contract: unknown): ContextContractEntry[] {
+  if (!Array.isArray(contract)) {
+    return [];
+  }
+
+  return contract
+    .filter(isContractObjectEntry)
+    .filter(
+      (entry) =>
+        typeof entry.description === "string" &&
+        typeof entry.key === "string" &&
+        typeof entry.required === "boolean" &&
+        typeof entry.type === "string",
+    )
+    .map((entry) => ({
+      description: entry.description as string,
+      example: entry.example,
+      key: entry.key as string,
+      required: entry.required as boolean,
+      type: entry.type as ContextContractType,
+    }));
+}
+
 export interface DraftEnvironmentPublicationRequest {
   environmentKey: string;
   healthEndpointUrl: string;
@@ -242,4 +291,29 @@ export interface DiscoveryPublicationListResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface AgentPublicationDetailResponse {
+  activeVersionId: string;
+  agentId: string;
+  publication: DiscoveryPublication;
+}
+
+export interface AgentPublicationPreflightRequest {
+  context?: Record<string, unknown>;
+  includeRawCard?: boolean;
+}
+
+export interface AgentPublicationPreflightResponse {
+  activeVersionId: string;
+  agentId: string;
+  authorized: boolean;
+  deprecated: boolean;
+  environmentKey: string;
+  healthStatus: DiscoveryHealthStatus;
+  missingRequiredContextKeys: string[];
+  rawCard?: string;
+  rawCardAvailable: boolean;
+  ready: boolean;
+  unresolvedRequiredHeaderSources: string[];
 }

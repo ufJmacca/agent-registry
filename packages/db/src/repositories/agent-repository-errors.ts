@@ -41,3 +41,17 @@ export class AgentEnvironmentPublicationNotFoundError extends Error {
     this.tenantId = tenantId;
   }
 }
+
+export class ActiveAgentPublicationNotFoundError extends Error {
+  readonly agentId: string;
+
+  readonly tenantId: string;
+
+  constructor(tenantId: string, agentId: string) {
+    super(
+      `No accessible active approved publication exists for agent '${agentId}' in tenant '${tenantId}'.`,
+    );
+    this.agentId = agentId;
+    this.tenantId = tenantId;
+  }
+}

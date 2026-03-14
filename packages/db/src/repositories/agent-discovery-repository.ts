@@ -31,7 +31,16 @@ export interface ActiveApprovedPublicationRecord {
 }
 
 export interface AgentDiscoveryRepository {
+  getActiveApprovedPublication(
+    tenantId: string,
+    agentId: string,
+    environmentKey: string,
+  ): Promise<ActiveApprovedPublicationRecord | null>;
   listActiveApprovedPublications(tenantId: string): Promise<ActiveApprovedPublicationRecord[]>;
+  listActiveApprovedPublicationsForAgent(
+    tenantId: string,
+    agentId: string,
+  ): Promise<ActiveApprovedPublicationRecord[]>;
 }
 
 interface OverlayRow {
@@ -61,10 +70,40 @@ export class KyselyAgentDiscoveryRepository implements AgentDiscoveryRepository 
     this.db = db;
   }
 
+  async getActiveApprovedPublication(
+    tenantId: string,
+    agentId: string,
+    environmentKey: string,
+  ): Promise<ActiveApprovedPublicationRecord | null> {
+    const records = await this.loadActiveApprovedPublications(tenantId, {
+      agentId,
+      environmentKey,
+    });
+
+    return records[0] ?? null;
+  }
+
   async listActiveApprovedPublications(
     tenantId: string,
   ): Promise<ActiveApprovedPublicationRecord[]> {
-    const publications = await this.db
+    return this.loadActiveApprovedPublications(tenantId);
+  }
+
+  async listActiveApprovedPublicationsForAgent(
+    tenantId: string,
+    agentId: string,
+  ): Promise<ActiveApprovedPublicationRecord[]> {
+    return this.loadActiveApprovedPublications(tenantId, { agentId });
+  }
+
+  private async loadActiveApprovedPublications(
+    tenantId: string,
+    filter: {
+      agentId?: string;
+      environmentKey?: string;
+    } = {},
+  ): Promise<ActiveApprovedPublicationRecord[]> {
+    let query = this.db
       .selectFrom("agents")
       .innerJoin("agent_versions", (join) =>
         join
@@ -105,8 +144,17 @@ export class KyselyAgentDiscoveryRepository implements AgentDiscoveryRepository 
         "publication_health.health_status",
       ])
       .where("agents.tenant_id", "=", tenantId)
-      .where("agent_versions.approval_state", "=", "approved")
-      .execute();
+      .where("agent_versions.approval_state", "=", "approved");
+
+    if (filter.agentId !== undefined) {
+      query = query.where("agents.agent_id", "=", filter.agentId);
+    }
+
+    if (filter.environmentKey !== undefined) {
+      query = query.where("environment_publications.environment_key", "=", filter.environmentKey);
+    }
+
+    const publications = await query.execute();
 
     const overlays = await this.db
       .selectFrom("tenant_policy_overlays")
