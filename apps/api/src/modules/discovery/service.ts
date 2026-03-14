@@ -1,4 +1,12 @@
-import type { ResolvedPrincipal } from "@agent-registry/auth";
+import {
+  satisfiesAccessClauses,
+  type AccessRequirementClause,
+  type ResolvedPrincipal,
+} from "@agent-registry/auth";
+import {
+  normalizeContextContract,
+  normalizeHeaderContract,
+} from "@agent-registry/contracts";
 import type {
   ContextContractEntry,
   DiscoveryHealthStatus,
@@ -36,53 +44,6 @@ function sortUniqueStrings(...values: string[][]): string[] {
   return [...new Set(values.flat())].sort();
 }
 
-function hasAnyRole(callerRoles: string[], requiredRoles: string[]): boolean {
-  return requiredRoles.length === 0 || requiredRoles.some((role) => callerRoles.includes(role));
-}
-
-function hasAllScopes(callerScopes: string[], requiredScopes: string[]): boolean {
-  return requiredScopes.every((scope) => callerScopes.includes(scope));
-}
-
-function normalizeHeaderContract(contract: unknown[]): HeaderContractEntry[] {
-  return contract
-    .filter((entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry))
-    .map((entry) => entry as Record<string, unknown>)
-    .filter(
-      (entry) =>
-        typeof entry.description === "string" &&
-        typeof entry.name === "string" &&
-        typeof entry.required === "boolean" &&
-        typeof entry.source === "string",
-    )
-    .map((entry) => ({
-      description: entry.description as string,
-      name: entry.name as string,
-      required: entry.required as boolean,
-      source: entry.source as string,
-    }));
-}
-
-function normalizeContextContract(contract: unknown[]): ContextContractEntry[] {
-  return contract
-    .filter((entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry))
-    .map((entry) => entry as Record<string, unknown>)
-    .filter(
-      (entry) =>
-        typeof entry.description === "string" &&
-        typeof entry.key === "string" &&
-        typeof entry.required === "boolean" &&
-        typeof entry.type === "string",
-    )
-    .map((entry) => ({
-      description: entry.description as string,
-      example: entry.example,
-      key: entry.key as string,
-      required: entry.required as boolean,
-      type: entry.type as ContextContractEntry["type"],
-    }));
-}
-
 function getHealthStatus(record: ActiveApprovedPublicationRecord): DiscoveryHealthStatus {
   return record.healthStatus ?? "unknown";
 }
@@ -109,22 +70,22 @@ function getOverlayRequiredScopes(record: ActiveApprovedPublicationRecord): stri
 }
 
 function isAuthorized(record: ActiveApprovedPublicationRecord, principal: ResolvedPrincipal): boolean {
-  const publisherRolePass = hasAnyRole(principal.roles, record.requiredRoles);
-  const overlayAgentRolePass = hasAnyRole(principal.roles, record.overlayAgentRequiredRoles);
-  const overlayEnvironmentRolePass = hasAnyRole(
-    principal.roles,
-    record.overlayEnvironmentRequiredRoles,
-  );
-  const publisherScopePass = hasAllScopes(principal.scopes, record.requiredScopes);
-  const overlayScopePass = hasAllScopes(principal.scopes, getOverlayRequiredScopes(record));
+  const clauses: AccessRequirementClause[] = [
+    {
+      requiredRoles: record.requiredRoles,
+      requiredScopes: record.requiredScopes,
+    },
+    {
+      requiredRoles: record.overlayAgentRequiredRoles,
+      requiredScopes: record.overlayAgentRequiredScopes,
+    },
+    {
+      requiredRoles: record.overlayEnvironmentRequiredRoles,
+      requiredScopes: record.overlayEnvironmentRequiredScopes,
+    },
+  ];
 
-  return (
-    publisherRolePass &&
-    overlayAgentRolePass &&
-    overlayEnvironmentRolePass &&
-    publisherScopePass &&
-    overlayScopePass
-  );
+  return satisfiesAccessClauses(principal, clauses);
 }
 
 function hasRequiredScopes(

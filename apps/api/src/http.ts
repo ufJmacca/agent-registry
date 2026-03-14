@@ -19,6 +19,11 @@ import {
   matchDiscoveryRoute,
 } from "./modules/discovery/index.js";
 import {
+  AgentPublicationDetailService,
+  handleAgentDetailRequest,
+  matchAgentDetailRoute,
+} from "./modules/detail/index.js";
+import {
   AgentAdminDetailService,
   handleAgentAdminDetailRequest,
   matchAgentAdminDetailRoute,
@@ -42,6 +47,11 @@ import {
   handleSearchRequest,
   matchSearchRoute,
 } from "./modules/search/index.js";
+import {
+  AgentPublicationPreflightService,
+  handleAgentPublicationPreflightRequest,
+  matchAgentPublicationPreflightRoute,
+} from "./modules/preflight/index.js";
 import {
   type AgentVersionReviewServiceOptions,
   AgentVersionReviewService,
@@ -71,6 +81,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const principalResolver = createPrincipalResolver(options.db);
   const environmentRepository = new KyselyTenantEnvironmentRepository(options.db);
   const tenantRepository = new KyselyTenantRepository(options.db);
+  const publicationRepository = new KyselyAgentDiscoveryRepository(options.db);
   const environmentService = new TenantEnvironmentCatalogService(environmentRepository);
   const agentDraftService = new AgentDraftRegistrationService(
     new KyselyAgentDraftRegistrationRepository(options.db),
@@ -91,7 +102,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     },
   );
   const discoveryService = new AgentDiscoveryService(
-    new KyselyAgentDiscoveryRepository(options.db),
+    publicationRepository,
     {
       rawCardByteLimit: config.rawCardByteLimit,
     },
@@ -102,14 +113,18 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
+  const detailService = new AgentPublicationDetailService(publicationRepository);
+  const preflightService = new AgentPublicationPreflightService(publicationRepository);
 
   return async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const adminDetailRoute = matchAgentAdminDetailRoute(url.pathname);
+    const detailRoute = matchAgentDetailRoute(url.pathname);
     const discoveryRoute = matchDiscoveryRoute(url.pathname);
     const agentDraftRoute = matchAgentDraftRoute(url.pathname);
     const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
     const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
+    const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
     const searchRoute = matchSearchRoute(url.pathname);
 
@@ -117,6 +132,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       await handleAgentVersionReviewRequest(request, response, reviewRoute, {
         principalResolver,
         service: reviewService,
+      });
+      return;
+    }
+
+    if (preflightRoute !== null) {
+      await handleAgentPublicationPreflightRequest(request, response, preflightRoute, {
+        principalResolver,
+        service: preflightService,
       });
       return;
     }
@@ -141,6 +164,15 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       await handleDiscoveryRequest(request, response, discoveryRoute, {
         principalResolver,
         service: discoveryService,
+      });
+      return;
+    }
+
+    if (detailRoute !== null) {
+      await handleAgentDetailRequest(request, response, detailRoute, {
+        adminDetailService,
+        principalResolver,
+        service: detailService,
       });
       return;
     }
