@@ -1,4 +1,5 @@
 export * from "./agent-admin-detail-repository.js";
+export * from "./agent-discovery-repository.js";
 export * from "./agent-repository-errors.js";
 export * from "./agent-review-repository.js";
 export * from "./agent-draft-registration-repository.js";

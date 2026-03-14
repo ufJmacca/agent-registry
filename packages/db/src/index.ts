@@ -81,6 +81,7 @@ export interface AgentVersionsTable {
   created_at: Generated<string>;
   display_name: Generated<string>;
   header_contract: JSONColumnType<unknown[]>;
+  publisher_id: Generated<string>;
   rejected_at: string | null;
   rejected_by: string | null;
   rejected_reason: string | null;
@@ -572,6 +573,34 @@ const migrationDefinitions: MigrationDefinition[] = [
         alter table agent_versions
         add column if not exists rejected_by text
       `.execute(db);
+    },
+  },
+  {
+    name: "005_agent_version_publishers",
+    async up(db) {
+      await sql`
+        alter table agent_versions
+        add column if not exists publisher_id text
+      `.execute(db);
+      await sql`
+        update agent_versions
+        set publisher_id = coalesce(submitted_by, '')
+        where publisher_id is null
+      `.execute(db);
+      await sql`
+        alter table agent_versions
+        alter column publisher_id set default ''
+      `.execute(db);
+      await sql`
+        alter table agent_versions
+        alter column publisher_id set not null
+      `.execute(db);
+      await db.schema
+        .createIndex("agent_versions_publisher_idx")
+        .ifNotExists()
+        .on("agent_versions")
+        .columns(["tenant_id", "publisher_id"])
+        .execute();
     },
   },
 ];
