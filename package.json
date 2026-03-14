@@ -23,5 +23,8 @@
     "tsx": "^4.20.5",
     "typescript": "^5.8.2",
     "yaml": "^2.8.1"
+  },
+  "dependencies": {
+    "pg-boss": "^12.14.0"
   }
 }

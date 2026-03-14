@@ -193,6 +193,25 @@ interface VersionAdminDetailResponse {
   versionSequence: number;
 }
 
+interface PublicationHealthDetailResponse {
+  current: {
+    consecutiveFailures: number;
+    healthStatus: "degraded" | "healthy" | "unknown" | "unreachable";
+    lastCheckedAt: string | null;
+    lastError: string | null;
+    lastSuccessAt: string | null;
+    recentFailures: number;
+  };
+  environmentKey: string;
+  history: Array<{
+    checkedAt: string;
+    error: string | null;
+    ok: boolean;
+    statusCode: number | null;
+  }>;
+  publicationId: string;
+}
+
 function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
   const url = new URL(baseUrl);
   url.pathname = `/${databaseName}`;
@@ -446,6 +465,70 @@ async function approveVersion(
     path: `/tenants/tenant-alpha/agents/${agentId}/versions/${versionId}:approve`,
     subjectId: "admin-alpha",
   });
+}
+
+async function seedPendingReviewVersion(
+  context: ApiTestContext,
+  input: {
+    agentId: string;
+    environmentKey?: string;
+    healthEndpointUrl: string;
+    publicationId: string;
+    versionId: string;
+  },
+): Promise<void> {
+  await context.db
+    .insertInto("agents")
+    .values({
+      active_version_id: null,
+      agent_id: input.agentId,
+      display_name: "Seeded Case Resolver",
+      summary: "Seeded summary",
+      tenant_id: "tenant-alpha",
+    })
+    .execute();
+
+  await context.db
+    .insertInto("agent_versions")
+    .values({
+      agent_id: input.agentId,
+      approval_state: "pending_review",
+      capabilities: ["search"],
+      card_profile_id: "a2a-default",
+      context_contract: [],
+      display_name: "Seeded Case Resolver",
+      header_contract: [],
+      required_roles: [],
+      required_scopes: [],
+      submitted_at: "2026-03-13T00:00:00.000Z",
+      submitted_by: "publisher-alpha",
+      summary: "Seeded summary",
+      tags: ["seeded"],
+      tenant_id: "tenant-alpha",
+      version_id: input.versionId,
+      version_label: input.versionId,
+      version_sequence: 1,
+    })
+    .execute();
+
+  await context.db
+    .insertInto("environment_publications")
+    .values({
+      agent_id: input.agentId,
+      environment_key: input.environmentKey ?? "dev",
+      health_endpoint_url: input.healthEndpointUrl,
+      invocation_endpoint: "https://seeded.agent.example.com/invoke",
+      normalized_metadata: {
+        displayName: "Seeded Case Resolver",
+      },
+      publication_id: input.publicationId,
+      raw_card: createRawCard({
+        invocationEndpoint: "https://seeded.agent.example.com/invoke",
+      }),
+      tenant_id: "tenant-alpha",
+      version_id: input.versionId,
+    })
+    .execute();
 }
 
 async function rejectVersion(
@@ -989,6 +1072,58 @@ test("approval rejects hosted private probe targets and initializes unknown heal
   }
 });
 
+test("approval rejects seeded hosted non-HTTPS probe targets before transitioning a pending version", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+  const agentId = "agent-http-policy";
+  const versionId = "version-http-policy";
+  const healthEndpointUrl = "http://public-probe.example.test/health";
+
+  try {
+    await seedPendingReviewVersion(context, {
+      agentId,
+      healthEndpointUrl,
+      publicationId: "publication-http-policy",
+      versionId,
+    });
+
+    // Act
+    const approveResponse = await approveVersion(context, agentId, versionId);
+    const storedVersion = await context.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", agentId)
+      .where("version_id", "=", versionId)
+      .executeTakeFirstOrThrow();
+    const storedHealthRows = await context.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", agentId)
+      .where("environment_publications.version_id", "=", versionId)
+      .execute();
+
+    // Assert
+    assert.equal(approveResponse.status, 400);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: `Hosted deployments require HTTPS health endpoints; received '${healthEndpointUrl}'.`,
+      },
+    });
+    assert.equal(storedVersion.approval_state, "pending_review");
+    assert.deepEqual(storedHealthRows, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test("approval rejects hosted probe targets whose hostname resolves to a private address", async () => {
   // Arrange
   const resolveProbeHostname = async (hostname: string): Promise<string[]> => {
@@ -1096,5 +1231,156 @@ test("approval rejects hosted probe targets whose hostname resolves to a private
   } finally {
     await hostedContext.close();
     await selfHostedContext.close();
+  }
+});
+
+test("approved publication health endpoint returns current status and recent probe history", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    const draft = await createDraftVersion(context, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://dev.agent.example.com/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+    await submitVersion(context, draft.agentId, draft.versionId);
+    await approveVersion(context, draft.agentId, draft.versionId);
+
+    const publication = await context.db
+      .selectFrom("environment_publications")
+      .select("publication_id")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .where("environment_key", "=", "dev")
+      .executeTakeFirstOrThrow();
+
+    await context.db
+      .updateTable("publication_health")
+      .set({
+        consecutive_failures: 1,
+        health_status: "degraded",
+        last_checked_at: "2026-03-13T00:02:00.000Z",
+        last_error: "received 503 from health endpoint",
+        last_success_at: "2026-03-13T00:01:00.000Z",
+        recent_failures: 1,
+      })
+      .where("publication_id", "=", publication.publication_id)
+      .execute();
+    await context.db
+      .insertInto("publication_probe_history")
+      .values([
+        {
+          checked_at: "2026-03-13T00:02:00.000Z",
+          error: "received 503 from health endpoint",
+          ok: false,
+          publication_id: publication.publication_id,
+          status_code: 503,
+        },
+        {
+          checked_at: "2026-03-13T00:01:00.000Z",
+          error: null,
+          ok: true,
+          publication_id: publication.publication_id,
+          status_code: 204,
+        },
+        {
+          checked_at: "2026-03-13T00:00:00.000Z",
+          error: null,
+          ok: true,
+          publication_id: publication.publication_id,
+          status_code: 200,
+        },
+      ])
+      .execute();
+
+    // Act
+    const response = await requestJson<PublicationHealthDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${draft.agentId}/versions/${draft.versionId}/environments/dev/health`,
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      current: {
+        consecutiveFailures: 1,
+        healthStatus: "degraded",
+        lastCheckedAt: "2026-03-13T00:02:00.000Z",
+        lastError: "received 503 from health endpoint",
+        lastSuccessAt: "2026-03-13T00:01:00.000Z",
+        recentFailures: 1,
+      },
+      environmentKey: "dev",
+      history: [
+        {
+          checkedAt: "2026-03-13T00:02:00.000Z",
+          error: "received 503 from health endpoint",
+          ok: false,
+          statusCode: 503,
+        },
+        {
+          checkedAt: "2026-03-13T00:01:00.000Z",
+          error: null,
+          ok: true,
+          statusCode: 204,
+        },
+        {
+          checkedAt: "2026-03-13T00:00:00.000Z",
+          error: null,
+          ok: true,
+          statusCode: 200,
+        },
+      ],
+      publicationId: publication.publication_id,
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("publication health endpoint returns 404 for unapproved versions", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    const draft = await createDraftVersion(context, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://dev.agent.example.com/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+
+    // Act
+    const response = await requestJson<ErrorResponseBody>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${draft.agentId}/versions/${draft.versionId}/environments/dev/health`,
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, {
+      error: {
+        code: "publication_health_not_found",
+        message:
+          `Approved publication health was not found for tenant 'tenant-alpha', agent '${draft.agentId}', version '${draft.versionId}', environment 'dev'.`,
+      },
+    });
+  } finally {
+    await context.close();
   }
 });

@@ -256,6 +256,8 @@ export interface VersionAdminDetailResponse {
   versionSequence: number;
 }
 
+export type HealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
+
 export type DiscoveryPublicationStatus =
   | "approved_active"
   | "approved_inactive"
@@ -263,7 +265,7 @@ export type DiscoveryPublicationStatus =
   | "pending_review"
   | "rejected";
 
-export type DiscoveryHealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
+export type DiscoveryHealthStatus = HealthStatus;
 
 export interface DiscoveryPublication {
   activeVersionId: string;
@@ -316,4 +318,25 @@ export interface AgentPublicationPreflightResponse {
   rawCardAvailable: boolean;
   ready: boolean;
   unresolvedRequiredHeaderSources: string[];
+}
+
+export interface PublicationHealthHistoryEntry {
+  checkedAt: string;
+  error: string | null;
+  ok: boolean;
+  statusCode: number | null;
+}
+
+export interface PublicationHealthDetailResponse {
+  current: {
+    consecutiveFailures: number;
+    healthStatus: HealthStatus;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+    lastSuccessAt: string | null;
+    recentFailures: number;
+  };
+  environmentKey: string;
+  history: PublicationHealthHistoryEntry[];
+  publicationId: string;
 }

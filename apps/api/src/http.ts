@@ -6,6 +6,7 @@ import {
   KyselyAgentDiscoveryRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
+  KyselyHealthRepository,
   KyselyTenantEnvironmentRepository,
   KyselyTenantPolicyOverlayRepository,
   KyselyTenantRepository,
@@ -28,6 +29,11 @@ import {
   handleAgentAdminDetailRequest,
   matchAgentAdminDetailRoute,
 } from "./modules/admin-detail/index.js";
+import {
+  AgentPublicationHealthService,
+  handleAgentPublicationHealthRequest,
+  matchAgentPublicationHealthRoute,
+} from "./modules/health/index.js";
 import {
   AgentDraftRegistrationService,
   handleAgentDraftRequest,
@@ -98,6 +104,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     {
       allowPrivateTargets: config.healthProbe.allowPrivateTargets,
       deploymentMode: config.deploymentMode,
+      requireHttps: config.healthProbe.requireHttps,
       ...options.reviewServiceOptions,
     },
   );
@@ -115,6 +122,9 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   );
   const detailService = new AgentPublicationDetailService(publicationRepository);
   const preflightService = new AgentPublicationPreflightService(publicationRepository);
+  const healthService = new AgentPublicationHealthService(
+    new KyselyHealthRepository(options.db),
+  );
 
   return async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -123,6 +133,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     const discoveryRoute = matchDiscoveryRoute(url.pathname);
     const agentDraftRoute = matchAgentDraftRoute(url.pathname);
     const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
+    const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
     const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
     const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
@@ -140,6 +151,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       await handleAgentPublicationPreflightRequest(request, response, preflightRoute, {
         principalResolver,
         service: preflightService,
+      });
+      return;
+    }
+
+    if (healthRoute !== null) {
+      await handleAgentPublicationHealthRequest(request, response, healthRoute, {
+        principalResolver,
+        service: healthService,
       });
       return;
     }
