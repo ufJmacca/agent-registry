@@ -5,6 +5,7 @@ import {
   KyselyAgentAdminDetailRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
+  KyselyPublicationTelemetryRepository,
   KyselyTenantEnvironmentRepository,
   KyselyTenantPolicyOverlayRepository,
   KyselyTenantRepository,
@@ -32,6 +33,11 @@ import {
   matchTenantPolicyOverlayRoute,
   TenantPolicyOverlayService,
 } from "./modules/overlays/index.js";
+import {
+  handlePublicationTelemetryRequest,
+  matchPublicationTelemetryRoute,
+  PublicationTelemetryService,
+} from "./modules/telemetry/index.js";
 import {
   type AgentVersionReviewServiceOptions,
   AgentVersionReviewService,
@@ -83,6 +89,9 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const overlayService = new TenantPolicyOverlayService(
     new KyselyTenantPolicyOverlayRepository(options.db),
   );
+  const telemetryService = new PublicationTelemetryService(
+    new KyselyPublicationTelemetryRepository(options.db),
+  );
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
@@ -93,6 +102,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     const agentDraftRoute = matchAgentDraftRoute(url.pathname);
     const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
     const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
+    const telemetryRoute = matchPublicationTelemetryRoute(url.pathname);
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
 
     if (reviewRoute !== null) {
@@ -107,6 +117,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       await handleTenantPolicyOverlayRequest(request, response, overlayRoute, {
         principalResolver,
         service: overlayService,
+      });
+      return;
+    }
+
+    if (telemetryRoute !== null) {
+      await handlePublicationTelemetryRequest(request, response, telemetryRoute, {
+        principalResolver,
+        service: telemetryService,
       });
       return;
     }
