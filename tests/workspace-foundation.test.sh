@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="outer"
+SUITE="full"
 TEST_TMP_DIR=""
 LAST_STDOUT_FILE=""
 LAST_STDERR_FILE=""
@@ -23,8 +24,6 @@ cleanup() {
     ) || true
   fi
 
-  rm -f "${WORKSPACE_TEST_REQUEST_PATH}"
-
   if [[ -n "${TEST_TMP_DIR}" ]]; then
     rm -rf "${TEST_TMP_DIR}"
   fi
@@ -32,18 +31,28 @@ cleanup() {
 
 trap cleanup EXIT
 
-parse_mode() {
-  case "${1:-}" in
-    "" | "--mode=outer")
-      MODE="outer"
-      ;;
-    "--mode=inner")
-      MODE="inner"
-      ;;
-    *)
-      fail "unsupported mode '${1}'"
-      ;;
-  esac
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --mode=outer)
+        MODE="outer"
+        ;;
+      --mode=inner)
+        MODE="inner"
+        ;;
+      --suite=automation)
+        SUITE="automation"
+        ;;
+      --suite=full)
+        SUITE="full"
+        ;;
+      *)
+        fail "unsupported argument '$1'"
+        ;;
+    esac
+
+    shift
+  done
 }
 
 run_command_in_dir() {
@@ -204,11 +213,30 @@ assert_compose_exec_output_contains() {
   assert_output_contains "${LAST_STDOUT_FILE}" "${pattern}"
 }
 
+assert_compose_exec_output_equals() {
+  local service_name="$1"
+  local expected="$2"
+  shift 2
+
+  run_command_in_dir "${ROOT_DIR}" "docker compose exec should succeed for ${service_name}" docker compose exec -T "${service_name}" "$@"
+
+  local actual_output
+  actual_output="$(tr -d '\r' < "${LAST_STDOUT_FILE}")"
+  actual_output="${actual_output%$'\n'}"
+
+  [[ "${actual_output}" == "${expected}" ]] || fail "expected output to equal '${expected}', got '${actual_output}'"
+  echo "ok: output equals ${expected}"
+}
+
 clear_workspace_test_proof() {
   run_command_in_dir \
     "${ROOT_DIR}" \
     "docker compose exec should remove the make test proof before verification" \
     docker compose exec -T workspace rm -f "${WORKSPACE_TEST_PROOF_PATH}"
+}
+
+clear_workspace_test_request() {
+  rm -f "${WORKSPACE_TEST_REQUEST_PATH}"
 }
 
 write_workspace_test_request() {
@@ -319,8 +347,45 @@ test_make_up() {
   # Assert: real compose services are running and reachable.
   assert_running_services postgres api worker web
   assert_compose_exec_output_contains postgres "accepting connections" pg_isready -U registry -d agent_registry
-  assert_compose_exec_output_contains api "\"service\":\"api\"" curl -fsS http://127.0.0.1:4000
-  assert_compose_exec_output_contains web "<h1>Agent Registry</h1>" curl -fsS http://127.0.0.1:3000
+  run_command_in_dir "${ROOT_DIR}" "docker compose exec should expose the API root after startup" docker compose exec -T api sh -lc "for attempt in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:4000 && exit 0; sleep 1; done; exit 1"
+  assert_output_contains "${LAST_STDOUT_FILE}" "\"service\":\"api\""
+  run_command_in_dir "${ROOT_DIR}" "docker compose exec should expose the web root after startup" docker compose exec -T web sh -lc "for attempt in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:3000 && exit 0; sleep 1; done; exit 1"
+  assert_output_contains "${LAST_STDOUT_FILE}" "Agent Registry Console"
+}
+
+test_make_seed() {
+  # Arrange: reset the compose volumes so seed has to build the demo dataset from scratch.
+  run_command_in_dir "${ROOT_DIR}" "docker compose down should reset scaffold state before seed" docker compose down --remove-orphans --volumes
+
+  # Act: bootstrap the demo tenant through the public seed target.
+  run_command_in_dir "${ROOT_DIR}" "make seed should bootstrap demo data through the containerized path" make seed
+
+  # Assert: the seed workflow reported success and persisted the expected demo catalog records.
+  assert_last_output_contains "Seeded demo tenant 'tenant-demo'"
+  assert_compose_exec_output_contains postgres "tenant-demo|self-hosted" psql -U registry -d agent_registry -Atc "select tenant_id || '|' || deployment_mode from tenants order by tenant_id"
+  assert_compose_exec_output_contains postgres "demo-admin,demo-caller,demo-publisher" psql -U registry -d agent_registry -Atc "select string_agg(subject_id, ',' order by subject_id) from tenant_memberships where tenant_id = 'tenant-demo'"
+  assert_compose_exec_output_contains postgres "dev,prod" psql -U registry -d agent_registry -Atc "select string_agg(environment_key, ',' order by environment_key) from tenant_environments where tenant_id = 'tenant-demo'"
+  assert_compose_exec_output_contains postgres "2" psql -U registry -d agent_registry -Atc "select count(*) from agents where tenant_id = 'tenant-demo'"
+  assert_compose_exec_output_contains postgres "7" psql -U registry -d agent_registry -Atc "select count(*) from publication_probe_history"
+  assert_compose_exec_output_contains postgres "2" psql -U registry -d agent_registry -Atc "select count(*) from publication_telemetry"
+}
+
+test_make_migrate() {
+  # Arrange: reset the compose volumes so the public migrate target must rebuild the schema from scratch.
+  run_command_in_dir "${ROOT_DIR}" "docker compose down should reset scaffold state before migrate" docker compose down --remove-orphans --volumes
+
+  # Act: apply the public migration workflow end to end through make.
+  run_command_in_dir "${ROOT_DIR}" "make migrate should apply the registry schema through the containerized path" make migrate
+
+  # Assert: the migration command reported the forward-only ledger and persisted it in Postgres.
+  assert_last_output_contains "001_initial_registry_schema: Success"
+  assert_last_output_contains "007_publication_telemetry_unique_windows: Success"
+  assert_compose_exec_output_equals postgres \
+    "001_initial_registry_schema,002_tenant_default_card_profiles,003_agent_version_profiles_and_sequence_uniqueness,004_version_review_metadata,005_agent_version_publishers,006_publication_probe_history,007_publication_telemetry_unique_windows" \
+    psql -U registry -d agent_registry -Atc "select string_agg(name, ',' order by name) from kysely_migration"
+  assert_compose_exec_output_equals postgres \
+    "environment_publications" \
+    psql -U registry -d agent_registry -Atc "select to_regclass('public.environment_publications')"
 }
 
 test_make_lint() {
@@ -353,17 +418,22 @@ EOF
 test_make_test() {
   local request_token=""
 
+  trap clear_workspace_test_request RETURN
+
   # Arrange: remove any stale proof so only the current make test run can satisfy the assertion.
   clear_workspace_test_proof
+  clear_workspace_test_request
   request_token="$(write_workspace_test_request)"
 
   # Act: run the public test target with a timeout so recursion fails fast.
   run_command_with_timeout_in_dir "${ROOT_DIR}" 180 "make test should complete through the containerized workspace path" make test
 
-  # Assert: the inner suite completed inside the workspace container and left a container-only proof behind.
+  # Assert: the public host workflow proof ran before the inner suite completed inside the workspace container.
+  assert_output_contains "${LAST_STDOUT_FILE}" "ok: make migrate should apply the registry schema through the containerized path"
+  assert_output_contains "${LAST_STDOUT_FILE}" "ok: make seed should bootstrap demo data through the containerized path"
   assert_output_contains "${LAST_STDOUT_FILE}" "ok: inner compose validation should succeed"
   assert_output_contains "${LAST_STDOUT_FILE}" "ok: inner migrate placeholder should succeed"
-  assert_output_contains "${LAST_STDOUT_FILE}" "ok: inner seed placeholder should succeed"
+  assert_output_contains "${LAST_STDOUT_FILE}" "ok: inner seed workflow should succeed"
   assert_workspace_test_proof "${request_token}"
 }
 
@@ -384,9 +454,17 @@ run_outer_suite() {
   test_compose_config
   test_make_targets_require_docker
   test_make_up
+  test_make_migrate
+  test_make_seed
   test_make_lint
   test_make_test
   test_devcontainer_verify
+}
+
+run_automation_suite() {
+  setup_outer_environment
+  test_make_migrate
+  test_make_seed
 }
 
 run_inner_suite() {
@@ -396,18 +474,22 @@ run_inner_suite() {
   # Act: validate the compose file and the placeholder workspace scripts that make test exercises.
   run_command_in_dir "${ROOT_DIR}" "inner compose validation should succeed" node scripts/validate-compose.mjs
   run_command_in_dir "${ROOT_DIR}" "inner migrate placeholder should succeed" npm run migrate
-  run_command_in_dir "${ROOT_DIR}" "inner seed placeholder should succeed" npm run seed
+  run_command_in_dir "${ROOT_DIR}" "inner seed workflow should succeed" npm run seed
   write_workspace_test_proof
 
-  # Assert: the placeholder scripts emitted the expected scaffold message.
-  assert_output_contains "${LAST_STDOUT_FILE}" "Scaffold seed placeholder with 4 default environments"
+  # Assert: the seed workflow emitted the expected demo summary.
+  assert_output_contains "${LAST_STDOUT_FILE}" "Seeded demo tenant 'tenant-demo'"
 }
 
 main() {
-  parse_mode "${1:-}"
+  parse_args "$@"
 
   if [[ "${MODE}" == "outer" ]]; then
-    run_outer_suite
+    if [[ "${SUITE}" == "automation" ]]; then
+      run_automation_suite
+    else
+      run_outer_suite
+    fi
   else
     run_inner_suite
   fi

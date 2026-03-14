@@ -9,7 +9,9 @@ x-workspace-service: &workspace-service
   user: vscode
   environment:
     DATABASE_URL: postgres://registry:registry@postgres:5432/agent_registry
+    DEPLOYMENT_MODE: self-hosted
     NPM_CONFIG_CACHE: /home/vscode/.npm
+    SELF_HOSTED_BOOTSTRAP_FILE: /workspace/apps/api/src/seed/self-hosted-bootstrap.yaml
   volumes:
     - workspace-data:/workspace
     - npm-cache:/home/vscode/.npm

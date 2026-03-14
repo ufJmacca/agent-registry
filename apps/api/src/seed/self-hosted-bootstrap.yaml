@@ -1,0 +1,22 @@
+tenants:
+  - tenantId: tenant-demo
+    displayName: Demo Tenant
+    environments: [dev, prod]
+    memberships:
+      - subjectId: demo-admin
+        roles: [tenant-admin]
+        userContext:
+          id: demo-admin
+          email: demo-admin@example.com
+      - subjectId: demo-publisher
+        roles: [publisher]
+        userContext:
+          id: demo-publisher
+          email: demo-publisher@example.com
+      - subjectId: demo-caller
+        roles: [support-agent]
+        scopes: [cases.read, cases.write]
+        userContext:
+          id: demo-caller
+          email: demo-caller@example.com
+          department: support
