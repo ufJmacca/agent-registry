@@ -1,25 +1,17 @@
 import http from "node:http";
 
-const port = 3000;
-const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Agent Registry</title>
-  </head>
-  <body>
-    <main>
-      <h1>Agent Registry</h1>
-      <p>Web console placeholder for tenant admins and publishers.</p>
-    </main>
-  </body>
-</html>`;
+import { createWebRequestListener } from "./http.js";
+import { webService } from "./index.js";
+import { initializeWebRuntime } from "./main.js";
 
-http
-  .createServer((_request, response) => {
-    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(html);
-  })
-  .listen(port, () => {
-    console.log(`web placeholder listening on http://0.0.0.0:${port}`);
-  });
+const runtime = await initializeWebRuntime();
+const server = http.createServer(
+  createWebRequestListener({
+    config: runtime.config,
+    db: runtime.db,
+  }),
+);
+
+server.listen(webService.port, () => {
+  console.log(`web console listening on http://0.0.0.0:${webService.port}`);
+});
