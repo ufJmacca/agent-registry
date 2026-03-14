@@ -17,6 +17,10 @@ define sync_workspace
 		-cf - . | $(COMPOSE) exec -T workspace bash -lc "find /workspace -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar -xf - -C /workspace"
 endef
 
+define wait_for_postgres
+	@$(COMPOSE) exec -T postgres sh -lc "until pg_isready -U registry -d agent_registry >/dev/null 2>&1; do sleep 1; done"
+endef
+
 install:
 	$(call require_docker,install)
 	@$(COMPOSE) up -d workspace
@@ -26,8 +30,9 @@ install:
 up:
 	$(call require_docker,make up)
 	@$(COMPOSE) up -d workspace postgres
+	$(call wait_for_postgres)
 	$(call sync_workspace)
-	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh"
+	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run migrate"
 	@$(COMPOSE) up -d api worker web
 
 down:
@@ -46,19 +51,23 @@ lint:
 
 test:
 	$(call require_docker,make test)
+	@bash tests/workspace-foundation.test.sh --mode=outer --suite=automation
 	@$(COMPOSE) up -d workspace postgres
+	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run test:inner"
 
 migrate:
 	$(call require_docker,make migrate)
 	@$(COMPOSE) up -d workspace postgres
+	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run migrate"
 
 seed:
 	$(call require_docker,make seed)
-	@$(COMPOSE) up -d workspace
+	@$(COMPOSE) up -d workspace postgres
+	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run seed"
 

@@ -167,6 +167,7 @@ async function createDraftRegistrationApiContext(options: {
 
     const server = http.createServer(
       createApiRequestListener({
+        config,
         db: database.db,
       }),
     );

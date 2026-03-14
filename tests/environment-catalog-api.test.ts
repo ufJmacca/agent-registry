@@ -122,17 +122,17 @@ async function createEnvironmentApiContext(): Promise<ApiTestContext> {
       "utf8",
     );
 
-    await bootstrapFromConfig(
-      loadRegistryConfig({
-        DATABASE_URL: database.databaseUrl,
-        DEPLOYMENT_MODE: "hosted",
-        HOSTED_BOOTSTRAP_FILE: manifestPath,
-      }),
-      new KyselyBootstrapRepository(database.db),
-    );
+    const config = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "hosted",
+      HOSTED_BOOTSTRAP_FILE: manifestPath,
+    });
+
+    await bootstrapFromConfig(config, new KyselyBootstrapRepository(database.db));
 
     const server = http.createServer(
       createApiRequestListener({
+        config,
         db: database.db,
       }),
     );
