@@ -1,0 +1,66 @@
+name: agent-registry
+
+x-workspace-service: &workspace-service
+  image: agent-registry-workspace
+  build:
+    context: .
+    dockerfile: Dockerfile.workspace
+  working_dir: /workspace
+  user: vscode
+  environment:
+    DATABASE_URL: postgres://registry:registry@postgres:5432/agent_registry
+    NPM_CONFIG_CACHE: /home/vscode/.npm
+  volumes:
+    - workspace-data:/workspace
+    - npm-cache:/home/vscode/.npm
+
+services:
+  workspace:
+    <<: *workspace-service
+    command: sleep infinity
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agent_registry
+      POSTGRES_PASSWORD: registry
+      POSTGRES_USER: registry
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U registry -d agent_registry"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  api:
+    <<: *workspace-service
+    command: npm run start --workspace @agent-registry/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+
+  worker:
+    <<: *workspace-service
+    command: npm run start --workspace @agent-registry/worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *workspace-service
+    command: npm run start --workspace @agent-registry/web
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "3000:3000"
+
+volumes:
+  workspace-data:
+  npm-cache:
+  postgres-data:
