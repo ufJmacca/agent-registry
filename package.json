@@ -13,6 +13,7 @@
     "lint": "tsc -b --pretty false",
     "test": "bash tests/workspace-foundation.test.sh --mode=outer",
     "test:inner": "bash tests/workspace-foundation.test.sh --mode=inner",
+    "verify:devcontainer": "bash .devcontainer/scripts/post-create.sh --verify-only",
     "migrate": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/migrate.ts",
     "seed": "node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/seed.ts"
   },
