@@ -353,6 +353,10 @@ const migrationDefinitions: MigrationDefinition[] = [
           ["tenant_id", "agent_id", "version_id"],
           (constraint) => constraint.onDelete("cascade"),
         )
+        .addUniqueConstraint("environment_publications_tenant_publication_key", [
+          "tenant_id",
+          "publication_id",
+        ])
         .execute();
 
       await db.schema
@@ -436,9 +440,7 @@ const migrationDefinitions: MigrationDefinition[] = [
         .addColumn("tenant_id", "text", (column) =>
           column.notNull().references("tenants.tenant_id").onDelete("cascade"),
         )
-        .addColumn("publication_id", "text", (column) =>
-          column.notNull().references("environment_publications.publication_id").onDelete("cascade"),
-        )
+        .addColumn("publication_id", "text", (column) => column.notNull())
         .addColumn("invocation_count", "integer", (column) => column.notNull())
         .addColumn("success_count", "integer", (column) => column.notNull())
         .addColumn("error_count", "integer", (column) => column.notNull())
@@ -448,6 +450,13 @@ const migrationDefinitions: MigrationDefinition[] = [
         .addColumn("window_ended_at", "timestamptz", (column) => column.notNull())
         .addColumn("recorded_at", "timestamptz", (column) =>
           column.notNull().defaultTo(sql`now()`),
+        )
+        .addForeignKeyConstraint(
+          "publication_telemetry_publication_tenant_fk",
+          ["tenant_id", "publication_id"],
+          "environment_publications",
+          ["tenant_id", "publication_id"],
+          (constraint) => constraint.onDelete("cascade"),
         )
         .execute();
 
