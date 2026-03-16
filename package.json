@@ -14,6 +14,7 @@
     "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit",
     "test:inner": "bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit",
     "test:unit": "tsx --test tests/tenant-core-platform.test.ts",
+    "verify:devcontainer": "bash .devcontainer/scripts/post-create.sh --verify-only",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts"
   },
