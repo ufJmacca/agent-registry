@@ -32,6 +32,7 @@ export interface BootstrapSummary {
 }
 
 export interface OperatorBootstrapRepository {
+  deleteOtherTenants(retainedTenantId: string): Promise<void>;
   replaceEnvironments(tenantId: string, environments: string[]): Promise<void>;
   upsertMembership(tenantId: string, membership: BootstrapMembershipRecord): Promise<void>;
   upsertTenant(tenant: BootstrapTenantRecord): Promise<void>;
@@ -146,6 +147,10 @@ export class OperatorBootstrapService {
 
     if (options.deploymentMode === "self-hosted" && manifest.tenants.length !== 1) {
       throw new Error("self-hosted mode supports exactly one tenant manifest entry");
+    }
+
+    if (options.deploymentMode === "self-hosted") {
+      await this.repository.deleteOtherTenants(manifest.tenants[0].tenantId);
     }
 
     let membershipCount = 0;

@@ -208,6 +208,23 @@ test("loadRegistryConfig requires a self-hosted bootstrap file", () => {
   );
 });
 
+test("loadRegistryConfig rejects malformed numeric env values", () => {
+  // Arrange
+  const env = {
+    DATABASE_URL: "postgres://registry:registry@postgres:5432/agent_registry",
+  };
+
+  // Act / Assert
+  assert.throws(
+    () => loadRegistryConfig({ ...env, HEALTH_PROBE_INTERVAL_SECONDS: "30s" }),
+    /HEALTH_PROBE_INTERVAL_SECONDS/,
+  );
+  assert.throws(
+    () => loadRegistryConfig({ ...env, RAW_CARD_BYTE_LIMIT: "256kb" }),
+    /RAW_CARD_BYTE_LIMIT/,
+  );
+});
+
 test("migrateToLatest creates the full registry schema and keeps migrations forward-only", async () => {
   // Arrange
   const database = await createFreshRegistryDatabase();
@@ -920,6 +937,123 @@ test("bootstrapFromConfig rejects multi-tenant manifests in self-hosted mode wit
     assert.deepEqual(tenants, []);
     assert.deepEqual(environments, []);
     assert.deepEqual(memberships, []);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
+test("bootstrapFromConfig replaces stale tenant state in self-hosted mode", async () => {
+  // Arrange
+  const database = await createFreshRegistryDatabase();
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-bootstrap-self-hosted-replace-"));
+  const initialManifestPath = path.join(tempDir, "self-hosted-initial.yaml");
+  const updatedManifestPath = path.join(tempDir, "self-hosted-updated.yaml");
+
+  try {
+    await writeFile(
+      initialManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-alpha",
+        "    displayName: Tenant Alpha",
+        "    environments: [dev]",
+        "    memberships:",
+        "      - subjectId: operator-alpha",
+        "        roles: [tenant-admin]",
+        "        scopes: [agents.read]",
+        "        registryCapabilities: [bootstrap:write]",
+        "        userContext:",
+        "          department: alpha",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      updatedManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-beta",
+        "    displayName: Tenant Beta",
+        "    environments: [prod]",
+        "    memberships:",
+        "      - subjectId: operator-beta",
+        "        roles: [tenant-operator]",
+        "        scopes: [agents.read, agents.write]",
+        "        registryCapabilities: [tenants:read]",
+        "        userContext:",
+        "          department: beta",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const initialConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: initialManifestPath,
+    });
+    const updatedConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: updatedManifestPath,
+    });
+    const repository = new KyselyBootstrapRepository(database.db);
+
+    // Act
+    await bootstrapFromConfig(initialConfig, repository);
+    await bootstrapFromConfig(updatedConfig, repository);
+    const tenants = await database.db
+      .selectFrom("tenants")
+      .select(["tenant_id", "display_name", "deployment_mode"])
+      .orderBy("tenant_id")
+      .execute();
+    const environments = await database.db
+      .selectFrom("tenant_environments")
+      .select(["tenant_id", "environment_key"])
+      .orderBy("tenant_id")
+      .orderBy("environment_key")
+      .execute();
+    const memberships = await database.db
+      .selectFrom("tenant_memberships")
+      .select([
+        "tenant_id",
+        "subject_id",
+        "roles",
+        "scopes",
+        "registry_capabilities",
+        "user_context",
+      ])
+      .orderBy("tenant_id")
+      .orderBy("subject_id")
+      .execute();
+
+    // Assert
+    assert.deepEqual(tenants, [
+      {
+        deployment_mode: "self-hosted",
+        display_name: "Tenant Beta",
+        tenant_id: "tenant-beta",
+      },
+    ]);
+    assert.deepEqual(environments, [
+      {
+        environment_key: "prod",
+        tenant_id: "tenant-beta",
+      },
+    ]);
+    assert.deepEqual(memberships, [
+      {
+        registry_capabilities: ["tenants:read"],
+        roles: ["tenant-operator"],
+        scopes: ["agents.read", "agents.write"],
+        subject_id: "operator-beta",
+        tenant_id: "tenant-beta",
+        user_context: {
+          department: "beta",
+        },
+      },
+    ]);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
     await database.cleanup();

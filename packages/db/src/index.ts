@@ -548,6 +548,13 @@ export class KyselyBootstrapRepository {
     this.db = db;
   }
 
+  async deleteOtherTenants(retainedTenantId: string): Promise<void> {
+    await this.db
+      .deleteFrom("tenants")
+      .where("tenant_id", "!=", retainedTenantId)
+      .execute();
+  }
+
   async upsertTenant(tenant: BootstrapTenantRecord): Promise<void> {
     await this.db
       .insertInto("tenants")
