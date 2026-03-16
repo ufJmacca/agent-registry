@@ -593,6 +593,33 @@ export class KyselyBootstrapRepository {
     });
   }
 
+  async replaceMemberships(
+    tenantId: string,
+    memberships: BootstrapMembershipRecord[],
+  ): Promise<void> {
+    await this.db.transaction().execute(async (transaction) => {
+      await transaction.deleteFrom("tenant_memberships").where("tenant_id", "=", tenantId).execute();
+
+      if (memberships.length === 0) {
+        return;
+      }
+
+      await transaction
+        .insertInto("tenant_memberships")
+        .values(
+          memberships.map((membership) => ({
+            registry_capabilities: membership.registryCapabilities,
+            roles: membership.roles,
+            scopes: membership.scopes,
+            subject_id: membership.subjectId,
+            tenant_id: tenantId,
+            user_context: membership.userContext,
+          })),
+        )
+        .execute();
+    });
+  }
+
   async upsertMembership(tenantId: string, membership: BootstrapMembershipRecord): Promise<void> {
     await this.db
       .insertInto("tenant_memberships")

@@ -1060,6 +1060,82 @@ test("bootstrapFromConfig replaces stale tenant state in self-hosted mode", asyn
   }
 });
 
+test("bootstrapFromConfig prunes removed memberships in self-hosted mode", async () => {
+  // Arrange
+  const database = await createFreshRegistryDatabase();
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-bootstrap-self-hosted-membership-prune-"));
+  const initialManifestPath = path.join(tempDir, "self-hosted-initial.yaml");
+  const updatedManifestPath = path.join(tempDir, "self-hosted-updated.yaml");
+
+  try {
+    await writeFile(
+      initialManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-self-hosted",
+        "    displayName: Self Hosted Tenant",
+        "    environments: [prod]",
+        "    memberships:",
+        "      - subjectId: operator-1",
+        "        roles: [tenant-admin]",
+        "        scopes: [agents.read]",
+        "        registryCapabilities: [bootstrap:write]",
+        "        userContext:",
+        "          department: platform",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      updatedManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-self-hosted",
+        "    displayName: Self Hosted Tenant Updated",
+        "    environments: [prod]",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const initialConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: initialManifestPath,
+    });
+    const updatedConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: updatedManifestPath,
+    });
+    const repository = new KyselyBootstrapRepository(database.db);
+
+    // Act
+    await bootstrapFromConfig(initialConfig, repository);
+    await bootstrapFromConfig(updatedConfig, repository);
+    const memberships = await database.db
+      .selectFrom("tenant_memberships")
+      .select(["tenant_id", "subject_id"])
+      .execute();
+
+    // Assert
+    assert.deepEqual(memberships, []);
+    await assert.rejects(
+      () =>
+        createPrincipalResolver(database.db).resolve({
+          auth: {
+            subjectId: "operator-1",
+          },
+          tenantId: "tenant-self-hosted",
+        }),
+      /does not have tenant membership/,
+    );
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
 test("initializeApiRuntime closes the DB pool when bootstrap fails after opening a connection", async () => {
   // Arrange
   const database = await createEmptyRegistryDatabase();
