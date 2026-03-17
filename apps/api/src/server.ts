@@ -1,17 +1,17 @@
 import http from "node:http";
 
-const port = 4000;
-const payload = JSON.stringify({
-  service: "api",
-  status: "ok",
-  summary: "REST API placeholder for the agent registry.",
-});
+import { apiService } from "./index.js";
+import { createApiRequestListener } from "./http.js";
+import { initializeApiRuntime } from "./main.js";
 
-http
-  .createServer((_request, response) => {
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(payload);
-  })
-  .listen(port, () => {
-    console.log(`api placeholder listening on http://0.0.0.0:${port}`);
-  });
+const runtime = await initializeApiRuntime();
+const port = apiService.port;
+const server = http.createServer(
+  createApiRequestListener({
+    db: runtime.db,
+  }),
+);
+
+server.listen(port, () => {
+  console.log(`api listening on http://0.0.0.0:${port}`);
+});

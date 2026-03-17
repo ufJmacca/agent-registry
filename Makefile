@@ -46,13 +46,13 @@ lint:
 
 test:
 	$(call require_docker,make test)
-	@$(COMPOSE) up -d workspace
+	@$(COMPOSE) up -d workspace postgres
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run test:inner"
 
 migrate:
 	$(call require_docker,make migrate)
-	@$(COMPOSE) up -d workspace
+	@$(COMPOSE) up -d workspace postgres
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run migrate"
 
