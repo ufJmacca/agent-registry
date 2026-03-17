@@ -13,6 +13,8 @@ import pg from "pg";
 
 const { Pool } = pg;
 
+export * from "./repositories/index.js";
+
 export interface DatabaseConfig {
   database: string;
   host: string;
