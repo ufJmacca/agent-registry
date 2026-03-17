@@ -4,6 +4,7 @@ import { KyselyTenantEnvironmentRepository, type AgentRegistryDb } from "@agent-
 
 import { createPrincipalResolver } from "./auth/index.js";
 import {
+  InvalidTenantEnvironmentRequestError,
   TenantEnvironmentCatalogService,
   handleTenantEnvironmentRequest,
   matchTenantEnvironmentRoute,
@@ -20,6 +21,20 @@ function writeJson(
   response.end(JSON.stringify(body));
 }
 
+function writeError(
+  response: http.ServerResponse,
+  statusCode: number,
+  code: string,
+  message: string,
+): void {
+  writeJson(response, statusCode, {
+    error: {
+      code,
+      message,
+    },
+  });
+}
+
 export interface ApiRequestListenerOptions {
   db: AgentRegistryDb;
 }
@@ -31,31 +46,35 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   );
 
   return async (request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
+    try {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
 
-    if (environmentRoute !== null) {
-      await handleTenantEnvironmentRequest(request, response, environmentRoute, {
-        principalResolver,
-        service: environmentService,
-      });
-      return;
+      if (environmentRoute !== null) {
+        await handleTenantEnvironmentRequest(request, response, environmentRoute, {
+          principalResolver,
+          service: environmentService,
+        });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/") {
+        writeJson(response, 200, {
+          service: "api",
+          status: "ok",
+          summary: "REST API for the agent registry.",
+        });
+        return;
+      }
+
+      writeError(response, 404, "not_found", "Route not found.");
+    } catch (error) {
+      if (error instanceof InvalidTenantEnvironmentRequestError) {
+        writeError(response, 400, "invalid_request", error.message);
+        return;
+      }
+
+      writeError(response, 500, "internal_error", "Internal server error.");
     }
-
-    if (request.method === "GET" && url.pathname === "/") {
-      writeJson(response, 200, {
-        service: "api",
-        status: "ok",
-        summary: "REST API for the agent registry.",
-      });
-      return;
-    }
-
-    writeJson(response, 404, {
-      error: {
-        code: "not_found",
-        message: "Route not found.",
-      },
-    });
   };
 }
