@@ -33,6 +33,8 @@ export interface AgentDraftHttpDependencies {
   service: AgentDraftRegistrationService;
 }
 
+export class InvalidAgentDraftRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -81,10 +83,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidAgentDraftRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidAgentDraftRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -119,7 +127,7 @@ async function readDraftRegistrationRequest(
   const body = (await readRequestBody(request)).trim();
 
   if (body === "") {
-    throw new Error("Request body must be a JSON object.");
+    throw new InvalidAgentDraftRequestError("Request body must be a JSON object.");
   }
 
   return parseJsonObject(body, "Request body must be a JSON object.") as unknown as
@@ -127,13 +135,21 @@ async function readDraftRegistrationRequest(
     | CreateDraftVersionRequest;
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidAgentDraftRequestError(`${label} path segment must be valid URL encoding.`);
+  }
+}
+
 export function matchAgentDraftRoute(pathname: string): AgentDraftRouteMatch | null {
   const createVersionMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/?$/.exec(pathname);
 
   if (createVersionMatch !== null) {
     return {
-      agentId: decodeURIComponent(createVersionMatch[2]),
-      tenantId: decodeURIComponent(createVersionMatch[1]),
+      agentId: decodeRouteSegment(createVersionMatch[2], "Agent id"),
+      tenantId: decodeRouteSegment(createVersionMatch[1], "Tenant id"),
       type: "version",
     };
   }
@@ -142,7 +158,7 @@ export function matchAgentDraftRoute(pathname: string): AgentDraftRouteMatch | n
 
   if (createAgentMatch !== null) {
     return {
-      tenantId: decodeURIComponent(createAgentMatch[1]),
+      tenantId: decodeRouteSegment(createAgentMatch[1], "Tenant id"),
       type: "agent",
     };
   }
@@ -223,7 +239,7 @@ export async function handleAgentDraftRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidAgentDraftRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

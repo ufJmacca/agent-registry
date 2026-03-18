@@ -37,6 +37,8 @@ export interface TenantPolicyOverlayHttpDependencies {
   service: TenantPolicyOverlayService;
 }
 
+export class InvalidTenantPolicyOverlayRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -85,10 +87,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidTenantPolicyOverlayRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidTenantPolicyOverlayRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -107,6 +115,16 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidTenantPolicyOverlayRequestError(
+      `${label} path segment must be valid URL encoding.`,
+    );
+  }
+}
+
 export function matchTenantPolicyOverlayRoute(
   pathname: string,
 ): TenantPolicyOverlayRouteMatch | null {
@@ -118,9 +136,9 @@ export function matchTenantPolicyOverlayRoute(
   if (environmentMatch !== null) {
     return {
       action: environmentMatch[4] as OverlayAction,
-      agentId: decodeURIComponent(environmentMatch[2]),
-      environmentKey: decodeURIComponent(environmentMatch[3]),
-      tenantId: decodeURIComponent(environmentMatch[1]),
+      agentId: decodeRouteSegment(environmentMatch[2], "Agent id"),
+      environmentKey: decodeRouteSegment(environmentMatch[3], "Environment key"),
+      tenantId: decodeRouteSegment(environmentMatch[1], "Tenant id"),
       type: "environment",
     };
   }
@@ -130,8 +148,8 @@ export function matchTenantPolicyOverlayRoute(
   if (agentMatch !== null) {
     return {
       action: agentMatch[3] as OverlayAction,
-      agentId: decodeURIComponent(agentMatch[2]),
-      tenantId: decodeURIComponent(agentMatch[1]),
+      agentId: decodeRouteSegment(agentMatch[2], "Agent id"),
+      tenantId: decodeRouteSegment(agentMatch[1], "Tenant id"),
       type: "agent",
     };
   }
@@ -215,7 +233,7 @@ export async function handleTenantPolicyOverlayRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidTenantPolicyOverlayRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

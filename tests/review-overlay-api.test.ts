@@ -10,6 +10,22 @@ import pg from "pg";
 
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  AgentAdminDetailService,
+  handleAgentAdminDetailRequest,
+  matchAgentAdminDetailRoute,
+} from "../apps/api/src/modules/admin-detail/index.ts";
+import {
+  handleTenantPolicyOverlayRequest,
+  matchTenantPolicyOverlayRoute,
+  TenantPolicyOverlayService,
+} from "../apps/api/src/modules/overlays/index.ts";
+import {
+  AgentVersionReviewService,
+  handleAgentVersionReviewRequest,
+  matchAgentVersionReviewRoute,
+} from "../apps/api/src/modules/review/index.ts";
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -45,6 +61,11 @@ interface JsonRequestOptions {
 interface JsonResponse<TBody> {
   body: TBody;
   status: number;
+}
+
+interface TemporaryServerContext {
+  baseUrl: string;
+  close(): Promise<void>;
 }
 
 interface DraftAgentRegistrationResponse {
@@ -342,6 +363,38 @@ async function requestJson<TBody>(
   return {
     body: body as TBody,
     status: response.status,
+  };
+}
+
+async function createTemporaryServerContext(
+  listener: http.RequestListener,
+): Promise<TemporaryServerContext> {
+  const server = http.createServer(listener);
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
   };
 }
 
@@ -1096,5 +1149,197 @@ test("approval rejects hosted probe targets whose hostname resolves to a private
   } finally {
     await hostedContext.close();
     await selfHostedContext.close();
+  }
+});
+
+test("malformed review, overlay, and admin-detail route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    // Act
+    const reviewMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/%E0%A4%A/agents/agent-alpha/versions/version-1:submit",
+      subjectId: "publisher-alpha",
+    });
+    const overlayMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/%E0%A4%A/agents/agent-alpha:disable",
+      subjectId: "admin-alpha",
+    });
+    const adminDetailMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      method: "GET",
+      path: "/tenants/%E0%A4%A/agents/agent-alpha",
+      subjectId: "admin-alpha",
+    });
+    const followUpResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.17",
+      }),
+      path: "/tenants/tenant-alpha/agents",
+      subjectId: "publisher-alpha",
+    });
+
+    // Assert
+    assert.equal(reviewMalformedResponse.status, 400);
+    assert.deepEqual(reviewMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(overlayMalformedResponse.status, 400);
+    assert.deepEqual(overlayMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(adminDetailMalformedResponse.status, 400);
+    assert.deepEqual(adminDetailMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 201);
+    assert.equal(followUpResponse.body.approvalState, "draft");
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses for review, overlay, and admin detail endpoints", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      throw new Error("database unavailable");
+    },
+  });
+  const reviewService = new AgentVersionReviewService({
+    async approveVersion() {
+      throw new Error("review repository should not be called");
+    },
+    async getVersionForReview() {
+      throw new Error("review repository should not be called");
+    },
+    async rejectVersion() {
+      throw new Error("review repository should not be called");
+    },
+    async submitVersion() {
+      throw new Error("review repository should not be called");
+    },
+  });
+  const overlayService = new TenantPolicyOverlayService({
+    async listForAgent() {
+      return [];
+    },
+    async upsertNarrowingOverlay() {
+      return {
+        agentId: "unused",
+        deprecated: false,
+        disabled: false,
+        environmentKey: null,
+        requiredRoles: [],
+        requiredScopes: [],
+      };
+    },
+  });
+  const adminDetailService = new AgentAdminDetailService({
+    async getAgentDetail() {
+      throw new Error("admin detail repository should not be called");
+    },
+    async getVersionDetail() {
+      throw new Error("admin detail repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
+
+    if (reviewRoute !== null) {
+      await handleAgentVersionReviewRequest(request, response, reviewRoute, {
+        principalResolver,
+        service: reviewService,
+      });
+      return;
+    }
+
+    const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
+
+    if (overlayRoute !== null) {
+      await handleTenantPolicyOverlayRequest(request, response, overlayRoute, {
+        principalResolver,
+        service: overlayService,
+      });
+      return;
+    }
+
+    const adminDetailRoute = matchAgentAdminDetailRoute(url.pathname);
+
+    if (adminDetailRoute !== null) {
+      await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
+        principalResolver,
+        service: adminDetailService,
+      });
+      return;
+    }
+
+    throw new Error(`Unexpected route: ${url.pathname}`);
+  });
+
+  try {
+    // Act
+    const reviewResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha/versions/version-1:submit", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "publisher-alpha",
+        }),
+        method: "POST",
+      },
+    );
+    const overlayResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha:disable", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "POST",
+      },
+    );
+    const adminDetailResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "GET",
+      },
+    );
+
+    // Assert
+    assert.equal(reviewResponse.status, 500);
+    assert.deepEqual((await reviewResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(overlayResponse.status, 500);
+    assert.deepEqual((await overlayResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(adminDetailResponse.status, 500);
+    assert.deepEqual((await adminDetailResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
   }
 });
