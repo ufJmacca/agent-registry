@@ -252,6 +252,31 @@ async function createAr03RegistryDatabase(): Promise<IsolatedRegistryDatabase> {
       on agent_versions (tenant_id, agent_id, version_sequence)
     `.execute(db);
     await sql`
+      create table environment_publications (
+        publication_id text primary key,
+        tenant_id text not null,
+        agent_id text not null,
+        version_id text not null,
+        environment_key text not null,
+        raw_card text not null,
+        invocation_endpoint text,
+        normalized_metadata jsonb not null default '{}'::jsonb,
+        health_endpoint_url text not null,
+        constraint environment_publications_version_fk
+          foreign key (tenant_id, agent_id, version_id)
+          references agent_versions(tenant_id, agent_id, version_id)
+          on delete cascade
+      )
+    `.execute(db);
+    await sql`
+      create table publication_health (
+        publication_id text primary key
+          references environment_publications(publication_id)
+          on delete cascade,
+        health_status text not null default 'unknown'
+      )
+    `.execute(db);
+    await sql`
       create table kysely_migration (
         name text primary key,
         timestamp text not null
@@ -774,6 +799,24 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
         version_sequence: 1,
       })
       .execute();
+    await database.db
+      .insertInto("environment_publications")
+      .values({
+        agent_id: "agent-legacy",
+        environment_key: "prod",
+        health_endpoint_url: "https://legacy.agent.example.com/health",
+        invocation_endpoint: "https://legacy.agent.example.com/invoke",
+        normalized_metadata: {
+          displayName: "Legacy Agent",
+        },
+        publication_id: "publication-legacy",
+        raw_card: JSON.stringify({
+          name: "Legacy Agent",
+        }),
+        tenant_id: "tenant-legacy",
+        version_id: "version-legacy",
+      })
+      .execute();
     const migrationResults = await migrateToLatest(database.db);
 
     // Act
@@ -788,6 +831,11 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
       .selectFrom("tenants")
       .select(["default_card_profile_id"])
       .where("tenant_id", "=", "tenant-legacy")
+      .executeTakeFirstOrThrow();
+    const publicationHealth = await database.db
+      .selectFrom("publication_health")
+      .select(["publication_id", "health_status"])
+      .where("publication_id", "=", "publication-legacy")
       .executeTakeFirstOrThrow();
     const duplicateInsert = database.db
       .insertInto("agent_versions")
@@ -827,6 +875,10 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
     ]);
     assert.deepEqual(tenant, {
       default_card_profile_id: defaultCardProfileId,
+    });
+    assert.deepEqual(publicationHealth, {
+      health_status: "unknown",
+      publication_id: "publication-legacy",
     });
     assert.deepEqual(version, {
       card_profile_id: defaultCardProfileId,

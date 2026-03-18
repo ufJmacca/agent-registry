@@ -581,6 +581,17 @@ const migrationDefinitions: MigrationDefinition[] = [
         alter table agent_versions
         add column if not exists rejected_by text
       `.execute(db);
+      await sql`
+        insert into publication_health (publication_id)
+        select publications.publication_id
+        from environment_publications as publications
+        inner join agent_versions as versions
+          on versions.tenant_id = publications.tenant_id
+          and versions.agent_id = publications.agent_id
+          and versions.version_id = publications.version_id
+        where versions.approval_state = 'approved'
+        on conflict (publication_id) do nothing
+      `.execute(db);
     },
   },
 ];

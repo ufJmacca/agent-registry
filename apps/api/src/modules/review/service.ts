@@ -157,6 +157,21 @@ async function resolveProbeTargets(
   }
 }
 
+function buildUnresolvableProbeTargetMessage(options: {
+  allowPrivateTargets: boolean;
+  deploymentMode: "hosted" | "self-hosted";
+}): string {
+  if (options.deploymentMode === "hosted") {
+    return "Hosted deployments require resolvable health endpoint hostnames.";
+  }
+
+  if (!options.allowPrivateTargets) {
+    return "Probe policy requires resolvable health endpoint hostnames.";
+  }
+
+  return "Health endpoint hostnames must be resolvable.";
+}
+
 async function assertProbeTargetAllowed(
   endpointUrl: string,
   options: {
@@ -171,6 +186,10 @@ async function assertProbeTargetAllowed(
 
   const hostname = new URL(endpointUrl).hostname;
   const resolvedTargets = await resolveProbeTargets(hostname, options.resolveProbeHostname);
+
+  if (resolvedTargets.length === 0) {
+    throw new AgentVersionProbeTargetPolicyError(buildUnresolvableProbeTargetMessage(options));
+  }
 
   if (!resolvedTargets.some((target) => isDisallowedProbeTarget(target))) {
     return;

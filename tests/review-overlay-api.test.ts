@@ -5,6 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import pg from "pg";
 
@@ -300,7 +301,10 @@ async function createReviewApiContext(
         config,
         db: database.db,
         reviewServiceOptions: {
-          resolveProbeHostname: options.resolveProbeHostname,
+          // Keep review tests deterministic and offline by default.
+          resolveProbeHostname:
+            options.resolveProbeHostname ??
+            (async () => ["203.0.113.10"]),
         },
       }),
     );
@@ -758,6 +762,88 @@ test("approvals update the active version pointer only for the highest approved 
   }
 });
 
+test("concurrent approvals keep the highest approved version active", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+  const lockDb = createKyselyDb(context.databaseUrl);
+  let releaseAgentLock = () => {};
+  let resolveAgentLockHeld = () => {};
+  let holdAgentLock: Promise<void> | undefined;
+  const agentLockHeld = new Promise<void>((resolve) => {
+    resolveAgentLockHeld = resolve;
+  });
+  const agentLockReleased = new Promise<void>((resolve) => {
+    releaseAgentLock = resolve;
+  });
+
+  try {
+    const firstDraft = await createDraftVersion(context, {
+      versionLabel: "2026.03.13",
+    });
+    await submitVersion(context, firstDraft.agentId, firstDraft.versionId);
+    await approveVersion(context, firstDraft.agentId, firstDraft.versionId);
+    const secondDraftResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.14",
+      }),
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}/versions`,
+      subjectId: "publisher-alpha",
+    });
+    const thirdDraftResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.15",
+      }),
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}/versions`,
+      subjectId: "publisher-alpha",
+    });
+    await submitVersion(context, firstDraft.agentId, secondDraftResponse.body.versionId);
+    await submitVersion(context, firstDraft.agentId, thirdDraftResponse.body.versionId);
+
+    holdAgentLock = lockDb.transaction().execute(async (transaction) => {
+      await transaction
+        .selectFrom("agents")
+        .select("agent_id")
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", firstDraft.agentId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      resolveAgentLockHeld();
+      await agentLockReleased;
+    });
+
+    await agentLockHeld;
+
+    const higherApproval = approveVersion(context, firstDraft.agentId, thirdDraftResponse.body.versionId);
+    await delay(50);
+    const lowerApproval = approveVersion(context, firstDraft.agentId, secondDraftResponse.body.versionId);
+    await delay(50);
+    releaseAgentLock();
+
+    // Act
+    const [higherApprovalResponse, lowerApprovalResponse] = await Promise.all([
+      higherApproval,
+      lowerApproval,
+    ]);
+    await holdAgentLock;
+    const storedAgent = await context.db
+      .selectFrom("agents")
+      .select("active_version_id")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", firstDraft.agentId)
+      .executeTakeFirstOrThrow();
+
+    // Assert
+    assert.equal(higherApprovalResponse.status, 200);
+    assert.equal(lowerApprovalResponse.status, 200);
+    assert.equal(storedAgent.active_version_id, thirdDraftResponse.body.versionId);
+  } finally {
+    releaseAgentLock();
+    await holdAgentLock?.catch(() => undefined);
+    await destroyKyselyDb(lockDb);
+    await context.close();
+  }
+});
+
 test("overlay endpoints persist separate agent and environment overlays and admin detail keeps version snapshots immutable", async () => {
   // Arrange
   const context = await createReviewApiContext();
@@ -1149,6 +1235,72 @@ test("approval rejects hosted probe targets whose hostname resolves to a private
   } finally {
     await hostedContext.close();
     await selfHostedContext.close();
+  }
+});
+
+test("approval rejects hosted probe targets whose hostname cannot be resolved", async () => {
+  // Arrange
+  const resolveProbeHostname = async (): Promise<string[]> => {
+    const error = new Error("hostname not found") as NodeJS.ErrnoException;
+    error.code = "ENOTFOUND";
+    throw error;
+  };
+  const hostedContext = await createReviewApiContext({
+    resolveProbeHostname,
+  });
+
+  try {
+    const hostedDraft = await createDraftVersion(hostedContext, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://unresolved-probe.example.test/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+    await submitVersion(hostedContext, hostedDraft.agentId, hostedDraft.versionId);
+
+    // Act
+    const hostedApprove = await approveVersion(
+      hostedContext,
+      hostedDraft.agentId,
+      hostedDraft.versionId,
+    );
+    const hostedVersion = await hostedContext.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", hostedDraft.agentId)
+      .where("version_id", "=", hostedDraft.versionId)
+      .executeTakeFirstOrThrow();
+    const hostedHealthRows = await hostedContext.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", hostedDraft.agentId)
+      .where("environment_publications.version_id", "=", hostedDraft.versionId)
+      .execute();
+
+    // Assert
+    assert.equal(hostedApprove.status, 400);
+    assert.deepEqual(hostedApprove.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: "Hosted deployments require resolvable health endpoint hostnames.",
+      },
+    });
+    assert.equal(hostedVersion.approval_state, "pending_review");
+    assert.deepEqual(hostedHealthRows, []);
+  } finally {
+    await hostedContext.close();
   }
 });
 

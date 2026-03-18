@@ -218,6 +218,14 @@ export class KyselyAgentReviewRepository implements AgentReviewRepository {
         .where("version_id", "=", input.versionId)
         .execute();
 
+      const agent = await transaction
+        .selectFrom("agents")
+        .select("active_version_id")
+        .where("tenant_id", "=", input.tenantId)
+        .where("agent_id", "=", input.agentId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+
       const highestOtherApproved = await transaction
         .selectFrom("agent_versions")
         .select((expressionBuilder) =>
@@ -243,12 +251,6 @@ export class KyselyAgentReviewRepository implements AgentReviewRepository {
           .execute();
         activeVersionId = input.versionId;
       } else {
-        const agent = await transaction
-          .selectFrom("agents")
-          .select("active_version_id")
-          .where("tenant_id", "=", input.tenantId)
-          .where("agent_id", "=", input.agentId)
-          .executeTakeFirstOrThrow();
         activeVersionId = agent.active_version_id;
       }
 
