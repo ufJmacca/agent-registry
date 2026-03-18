@@ -8,7 +8,6 @@ const runtime = await initializeApiRuntime();
 const port = apiService.port;
 const server = http.createServer(
   createApiRequestListener({
-    config: runtime.config,
     db: runtime.db,
   }),
 );

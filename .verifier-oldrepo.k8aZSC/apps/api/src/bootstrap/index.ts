@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 
-import { defaultCardProfileId } from "@agent-registry/agent-card";
 import type { DeploymentMode, RegistryConfig } from "@agent-registry/config";
 import type {
   BootstrapMembershipRecord,
@@ -17,7 +16,6 @@ export interface BootstrapMembershipManifest {
 }
 
 export interface BootstrapTenantManifest {
-  defaultCardProfileId: string;
   displayName: string;
   environments: string[];
   memberships?: BootstrapMembershipManifest[];
@@ -34,8 +32,6 @@ export interface BootstrapSummary {
 }
 
 export interface OperatorBootstrapRepository {
-  deleteOtherTenants(retainedTenantId: string): Promise<void>;
-  replaceMemberships(tenantId: string, memberships: BootstrapMembershipRecord[]): Promise<void>;
   replaceEnvironments(tenantId: string, environments: string[]): Promise<void>;
   upsertMembership(tenantId: string, membership: BootstrapMembershipRecord): Promise<void>;
   upsertTenant(tenant: BootstrapTenantRecord): Promise<void>;
@@ -128,9 +124,6 @@ export async function loadBootstrapManifest(manifestPath: string): Promise<Boots
     }
 
     return {
-      defaultCardProfileId: tenant.defaultCardProfileId === undefined
-        ? defaultCardProfileId
-        : expectString(tenant.defaultCardProfileId, `tenants[${index}].defaultCardProfileId`),
       displayName: expectString(tenant.displayName, `tenants[${index}].displayName`),
       environments,
       memberships: readMemberships(tenant.memberships),
@@ -155,38 +148,26 @@ export class OperatorBootstrapService {
       throw new Error("self-hosted mode supports exactly one tenant manifest entry");
     }
 
-    if (options.deploymentMode === "self-hosted") {
-      await this.repository.deleteOtherTenants(manifest.tenants[0].tenantId);
-    }
-
     let membershipCount = 0;
 
     for (const tenant of manifest.tenants) {
-      const normalizedMemberships = (tenant.memberships ?? []).map((membership) => ({
-        registryCapabilities: membership.registryCapabilities ?? [],
-        roles: membership.roles ?? [],
-        scopes: membership.scopes ?? [],
-        subjectId: membership.subjectId,
-        userContext: membership.userContext ?? {},
-      }));
-
       await this.repository.upsertTenant({
-        defaultCardProfileId: tenant.defaultCardProfileId,
         deploymentMode: options.deploymentMode,
         displayName: tenant.displayName,
         tenantId: tenant.tenantId,
       });
       await this.repository.replaceEnvironments(tenant.tenantId, tenant.environments);
 
-      if (options.deploymentMode === "self-hosted") {
-        await this.repository.replaceMemberships(tenant.tenantId, normalizedMemberships);
-      } else {
-        for (const membership of normalizedMemberships) {
-          await this.repository.upsertMembership(tenant.tenantId, membership);
-        }
+      for (const membership of tenant.memberships ?? []) {
+        await this.repository.upsertMembership(tenant.tenantId, {
+          registryCapabilities: membership.registryCapabilities ?? [],
+          roles: membership.roles ?? [],
+          scopes: membership.scopes ?? [],
+          subjectId: membership.subjectId,
+          userContext: membership.userContext ?? {},
+        });
+        membershipCount += 1;
       }
-
-      membershipCount += normalizedMemberships.length;
     }
 
     return {

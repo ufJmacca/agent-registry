@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "moduleDetection": "force",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@agent-registry/api": ["apps/api/src/index.ts"],
+      "@agent-registry/worker": ["apps/worker/src/index.ts"],
+      "@agent-registry/web": ["apps/web/src/index.ts"],
+      "@agent-registry/contracts": ["packages/contracts/src/index.ts"],
+      "@agent-registry/config": ["packages/config/src/index.ts"],
+      "@agent-registry/auth": ["packages/auth/src/index.ts"],
+      "@agent-registry/agent-card": ["packages/agent-card/src/index.ts"],
+      "@agent-registry/db": ["packages/db/src/index.ts"]
+    }
+  }
+}

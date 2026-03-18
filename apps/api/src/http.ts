@@ -1,8 +1,20 @@
 import http from "node:http";
 
-import { KyselyTenantEnvironmentRepository, type AgentRegistryDb } from "@agent-registry/db";
+import { loadRegistryConfig, type RegistryConfig } from "@agent-registry/config";
+import {
+  KyselyAgentDraftRegistrationRepository,
+  KyselyTenantEnvironmentRepository,
+  KyselyTenantRepository,
+  type AgentRegistryDb,
+} from "@agent-registry/db";
 
 import { createPrincipalResolver } from "./auth/index.js";
+import {
+  AgentDraftRegistrationService,
+  InvalidAgentDraftRequestError,
+  handleAgentDraftRequest,
+  matchAgentDraftRoute,
+} from "./modules/agents/index.js";
 import {
   InvalidTenantEnvironmentRequestError,
   TenantEnvironmentCatalogService,
@@ -36,19 +48,40 @@ function writeError(
 }
 
 export interface ApiRequestListenerOptions {
+  config?: Pick<RegistryConfig, "deploymentMode" | "healthProbe" | "rawCardByteLimit">;
   db: AgentRegistryDb;
 }
 
 export function createApiRequestListener(options: ApiRequestListenerOptions): http.RequestListener {
+  const config = options.config ?? loadRegistryConfig(process.env, { requireBootstrapFile: false });
   const principalResolver = createPrincipalResolver(options.db);
-  const environmentService = new TenantEnvironmentCatalogService(
-    new KyselyTenantEnvironmentRepository(options.db),
+  const environmentRepository = new KyselyTenantEnvironmentRepository(options.db);
+  const tenantRepository = new KyselyTenantRepository(options.db);
+  const environmentService = new TenantEnvironmentCatalogService(environmentRepository);
+  const agentDraftService = new AgentDraftRegistrationService(
+    new KyselyAgentDraftRegistrationRepository(options.db),
+    environmentRepository,
+    tenantRepository,
+    {
+      deploymentMode: config.deploymentMode,
+      rawCardByteLimit: config.rawCardByteLimit,
+      requireHttpsHealthEndpoints: config.healthProbe.requireHttps,
+    },
   );
 
   return async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      const agentDraftRoute = matchAgentDraftRoute(url.pathname);
       const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
+
+      if (agentDraftRoute !== null) {
+        await handleAgentDraftRequest(request, response, agentDraftRoute, {
+          principalResolver,
+          service: agentDraftService,
+        });
+        return;
+      }
 
       if (environmentRoute !== null) {
         await handleTenantEnvironmentRequest(request, response, environmentRoute, {
@@ -69,7 +102,10 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
 
       writeError(response, 404, "not_found", "Route not found.");
     } catch (error) {
-      if (error instanceof InvalidTenantEnvironmentRequestError) {
+      if (
+        error instanceof InvalidAgentDraftRequestError ||
+        error instanceof InvalidTenantEnvironmentRequestError
+      ) {
         writeError(response, 400, "invalid_request", error.message);
         return;
       }
