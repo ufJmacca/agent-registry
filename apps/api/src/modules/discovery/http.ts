@@ -5,25 +5,25 @@ import {
   MissingTenantMembershipError,
   type PrincipalResolver,
 } from "@agent-registry/auth";
-import type { CreateTenantEnvironmentRequest } from "@agent-registry/contracts";
 
+import { parseDiscoveryListQuery } from "./query.js";
 import {
-  EnvironmentCatalogAuthorizationError,
-  EnvironmentCatalogDuplicateError,
-  EnvironmentCatalogValidationError,
-  TenantEnvironmentCatalogService,
+  AgentDiscoveryAuthorizationError,
+  AgentDiscoveryRawCardPayloadTooLargeError,
+  AgentDiscoveryService,
+  AgentDiscoveryValidationError,
 } from "./service.js";
 
-export interface TenantEnvironmentRouteMatch {
+export interface DiscoveryRouteMatch {
   tenantId: string;
 }
 
-export interface TenantEnvironmentHttpDependencies {
+export interface DiscoveryHttpDependencies {
   principalResolver: PrincipalResolver;
-  service: TenantEnvironmentCatalogService;
+  service: AgentDiscoveryService;
 }
 
-export class InvalidTenantEnvironmentRequestError extends Error {}
+export class InvalidDiscoveryRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -78,11 +78,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidTenantEnvironmentRequestError(errorMessage);
+    throw new InvalidDiscoveryRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidTenantEnvironmentRequestError(errorMessage);
+    throw new InvalidDiscoveryRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -101,68 +101,33 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
-async function readRequestBody(request: IncomingMessage): Promise<string> {
-  let body = "";
-
-  for await (const chunk of request) {
-    body += chunk.toString();
-  }
-
-  return body;
-}
-
-async function readCreateEnvironmentRequest(
-  request: IncomingMessage,
-): Promise<CreateTenantEnvironmentRequest> {
-  const body = (await readRequestBody(request)).trim();
-
-  if (body === "") {
-    throw new InvalidTenantEnvironmentRequestError(
-      "Request body must be a JSON object with an environmentKey string.",
-    );
-  }
-
-  const parsed = parseJsonObject(body, "Request body must be a JSON object.");
-  const environmentKey = parsed.environmentKey;
-
-  if (typeof environmentKey !== "string") {
-    throw new InvalidTenantEnvironmentRequestError(
-      "Request body must be a JSON object with an environmentKey string.",
-    );
-  }
-
-  return {
-    environmentKey,
-  };
-}
-
-function decodeTenantId(segment: string): string {
+function decodeRouteSegment(segment: string, label: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw new InvalidTenantEnvironmentRequestError(
-      "Tenant id path segment must be valid URL encoding.",
+    throw new InvalidDiscoveryRequestError(
+      `${label} path segment must be valid URL encoding.`,
     );
   }
 }
 
-export function matchTenantEnvironmentRoute(pathname: string): TenantEnvironmentRouteMatch | null {
-  const match = /^\/tenants\/([^/]+)\/environments\/?$/.exec(pathname);
+export function matchDiscoveryRoute(pathname: string): DiscoveryRouteMatch | null {
+  const match = /^\/tenants\/([^/]+)\/agents\/available\/?$/.exec(pathname);
 
   if (match === null) {
     return null;
   }
 
   return {
-    tenantId: decodeTenantId(match[1]),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
   };
 }
 
-export async function handleTenantEnvironmentRequest(
+export async function handleDiscoveryRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: TenantEnvironmentRouteMatch,
-  dependencies: TenantEnvironmentHttpDependencies,
+  route: DiscoveryRouteMatch,
+  dependencies: DiscoveryHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -173,24 +138,25 @@ export async function handleTenantEnvironmentRequest(
       tenantId: route.tenantId,
     });
 
-    if (request.method === "GET") {
-      writeJson(response, 200, await dependencies.service.listEnvironments(principal, route.tenantId));
+    if (request.method !== "GET") {
+      writeError(response, 405, "method_not_allowed", "Method not allowed.", {
+        allow: "GET",
+      });
       return;
     }
 
-    if (request.method === "POST") {
-      const createRequest = await readCreateEnvironmentRequest(request);
-      writeJson(
-        response,
-        201,
-        await dependencies.service.createEnvironment(principal, route.tenantId, createRequest),
-      );
-      return;
-    }
-
-    writeError(response, 405, "method_not_allowed", "Method not allowed.", {
-      allow: "GET, POST",
-    });
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    writeJson(
+      response,
+      200,
+      await dependencies.service.listAvailable(
+        principal,
+        route.tenantId,
+        parseDiscoveryListQuery(url.searchParams, {
+          allowTextQuery: false,
+        }),
+      ),
+    );
   } catch (error) {
     if (error instanceof MissingSubjectIdError) {
       writeError(response, 401, "unauthorized", error.message);
@@ -202,22 +168,22 @@ export async function handleTenantEnvironmentRequest(
       return;
     }
 
-    if (error instanceof EnvironmentCatalogAuthorizationError) {
+    if (error instanceof AgentDiscoveryAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
 
-    if (error instanceof EnvironmentCatalogDuplicateError) {
-      writeError(response, 409, "duplicate_environment", error.message);
+    if (error instanceof AgentDiscoveryValidationError) {
+      writeError(response, 400, "invalid_query", error.message);
       return;
     }
 
-    if (error instanceof EnvironmentCatalogValidationError) {
-      writeError(response, 400, "invalid_environment_key", error.message);
+    if (error instanceof AgentDiscoveryRawCardPayloadTooLargeError) {
+      writeError(response, 400, "raw_card_payload_too_large", error.message);
       return;
     }
 
-    if (error instanceof InvalidTenantEnvironmentRequestError) {
+    if (error instanceof InvalidDiscoveryRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

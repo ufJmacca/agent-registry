@@ -44,7 +44,6 @@ function assertTenantAdminAccess(principal: ResolvedPrincipal): void {
     );
   }
 }
-
 function assertRejectReason(value: string): string {
   if (value.trim() === "") {
     throw new AgentVersionReviewValidationError("Reject reason must be a non-empty string.");

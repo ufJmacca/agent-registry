@@ -313,7 +313,7 @@ test("assertHealthProbeTargetAllowed blocks hosted private targets but allows se
       return ["127.0.0.1"];
     }
 
-    return [];
+    return ["203.0.113.10"];
   };
 
   // Act / Assert
@@ -547,7 +547,7 @@ test("registered reconcile and probe handlers re-enqueue approved publications, 
       return ["127.0.0.1"];
     }
 
-    return [];
+    return ["203.0.113.10"];
   };
   const fetchImpl: typeof fetch = async (input, init) => {
     fetchCalls.push({

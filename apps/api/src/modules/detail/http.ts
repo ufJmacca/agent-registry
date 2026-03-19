@@ -6,38 +6,29 @@ import {
   type PrincipalResolver,
 } from "@agent-registry/auth";
 import {
+  ActiveAgentPublicationNotFoundError,
   AgentEnvironmentPublicationNotFoundError,
   AgentNotFoundError,
 } from "@agent-registry/db";
 
 import {
-  TenantPolicyOverlayAuthorizationError,
-  TenantPolicyOverlayService,
+  AgentPublicationDetailAuthorizationError,
+  AgentPublicationDetailService,
+  AgentPublicationDetailValidationError,
+  type AgentPublicationDetailQuery,
 } from "./service.js";
 
-type OverlayAction = "deprecate" | "disable";
-
-export type TenantPolicyOverlayRouteMatch =
-  | {
-      action: OverlayAction;
-      agentId: string;
-      environmentKey: string;
-      tenantId: string;
-      type: "environment";
-    }
-  | {
-      action: OverlayAction;
-      agentId: string;
-      tenantId: string;
-      type: "agent";
-    };
-
-export interface TenantPolicyOverlayHttpDependencies {
-  principalResolver: PrincipalResolver;
-  service: TenantPolicyOverlayService;
+export interface AgentDetailRouteMatch {
+  agentId: string;
+  tenantId: string;
 }
 
-export class InvalidTenantPolicyOverlayRequestError extends Error {}
+export interface AgentDetailHttpDependencies {
+  principalResolver: PrincipalResolver;
+  service: AgentPublicationDetailService;
+}
+
+export class InvalidAgentDetailRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -92,11 +83,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidTenantPolicyOverlayRequestError(errorMessage);
+    throw new InvalidAgentDetailRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidTenantPolicyOverlayRequestError(errorMessage);
+    throw new InvalidAgentDetailRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -119,49 +110,57 @@ function decodeRouteSegment(segment: string, label: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw new InvalidTenantPolicyOverlayRequestError(
-      `${label} path segment must be valid URL encoding.`,
-    );
+    throw new InvalidAgentDetailRequestError(`${label} path segment must be valid URL encoding.`);
   }
 }
 
-export function matchTenantPolicyOverlayRoute(
-  pathname: string,
-): TenantPolicyOverlayRouteMatch | null {
-  const environmentMatch =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/environments\/([^/:]+):(disable|deprecate)\/?$/.exec(
-      pathname,
-    );
+function parseIncludeRawCard(searchParams: URLSearchParams): boolean {
+  const includes = searchParams.getAll("include");
 
-  if (environmentMatch !== null) {
-    return {
-      action: environmentMatch[4] as OverlayAction,
-      agentId: decodeRouteSegment(environmentMatch[2], "Agent id"),
-      environmentKey: decodeRouteSegment(environmentMatch[3], "Environment key"),
-      tenantId: decodeRouteSegment(environmentMatch[1], "Tenant id"),
-      type: "environment",
-    };
+  for (const include of includes) {
+    if (include !== "rawCard") {
+      throw new AgentPublicationDetailValidationError(
+        `Unsupported include value '${include}'.`,
+      );
+    }
   }
 
-  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/:]+):(disable|deprecate)\/?$/.exec(pathname);
-
-  if (agentMatch !== null) {
-    return {
-      action: agentMatch[3] as OverlayAction,
-      agentId: decodeRouteSegment(agentMatch[2], "Agent id"),
-      tenantId: decodeRouteSegment(agentMatch[1], "Tenant id"),
-      type: "agent",
-    };
-  }
-
-  return null;
+  return includes.includes("rawCard");
 }
 
-export async function handleTenantPolicyOverlayRequest(
+function parseDetailQuery(searchParams: URLSearchParams): AgentPublicationDetailQuery {
+  const environmentKeys = searchParams.getAll("environmentKey");
+
+  if (environmentKeys.length > 1) {
+    throw new AgentPublicationDetailValidationError(
+      "environmentKey may only be specified once.",
+    );
+  }
+
+  return {
+    environmentKey: environmentKeys[0] ?? null,
+    includeRawCard: parseIncludeRawCard(searchParams),
+  };
+}
+
+export function matchAgentDetailRoute(pathname: string): AgentDetailRouteMatch | null {
+  const match = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/?$/.exec(pathname);
+
+  if (match === null) {
+    return null;
+  }
+
+  return {
+    agentId: decodeRouteSegment(match[2], "Agent id"),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
+  };
+}
+
+export async function handleAgentDetailRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: TenantPolicyOverlayRouteMatch,
-  dependencies: TenantPolicyOverlayHttpDependencies,
+  route: AgentDetailRouteMatch,
+  dependencies: AgentDetailHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -172,40 +171,20 @@ export async function handleTenantPolicyOverlayRequest(
       tenantId: route.tenantId,
     });
 
-    if (request.method !== "POST") {
+    if (request.method !== "GET") {
       writeError(response, 405, "method_not_allowed", "Method not allowed.", {
-        allow: "POST",
+        allow: "GET",
       });
       return;
     }
 
-    if (route.type === "agent") {
-      writeJson(
-        response,
-        200,
-        route.action === "disable"
-          ? await dependencies.service.disableAgent(principal, route.tenantId, route.agentId)
-          : await dependencies.service.deprecateAgent(principal, route.tenantId, route.agentId),
-      );
-      return;
-    }
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const query = parseDetailQuery(url.searchParams);
 
     writeJson(
       response,
       200,
-      route.action === "disable"
-        ? await dependencies.service.disableEnvironment(
-            principal,
-            route.tenantId,
-            route.agentId,
-            route.environmentKey,
-          )
-        : await dependencies.service.deprecateEnvironment(
-            principal,
-            route.tenantId,
-            route.agentId,
-            route.environmentKey,
-          ),
+      await dependencies.service.getPublicationDetail(principal, route.tenantId, route.agentId, query),
     );
   } catch (error) {
     if (error instanceof MissingSubjectIdError) {
@@ -218,8 +197,16 @@ export async function handleTenantPolicyOverlayRequest(
       return;
     }
 
-    if (error instanceof TenantPolicyOverlayAuthorizationError) {
+    if (error instanceof AgentPublicationDetailAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
+      return;
+    }
+
+    if (
+      error instanceof ActiveAgentPublicationNotFoundError ||
+      error instanceof AgentEnvironmentPublicationNotFoundError
+    ) {
+      writeError(response, 404, "publication_not_found", error.message);
       return;
     }
 
@@ -228,12 +215,12 @@ export async function handleTenantPolicyOverlayRequest(
       return;
     }
 
-    if (error instanceof AgentEnvironmentPublicationNotFoundError) {
-      writeError(response, 404, "environment_not_found", error.message);
+    if (error instanceof AgentPublicationDetailValidationError) {
+      writeError(response, 400, "invalid_query", error.message);
       return;
     }
 
-    if (error instanceof InvalidTenantPolicyOverlayRequestError) {
+    if (error instanceof InvalidAgentDetailRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

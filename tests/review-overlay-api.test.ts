@@ -5,11 +5,28 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import pg from "pg";
 
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  AgentAdminDetailService,
+  handleAgentAdminDetailRequest,
+  matchAgentAdminDetailRoute,
+} from "../apps/api/src/modules/admin-detail/index.ts";
+import {
+  handleTenantPolicyOverlayRequest,
+  matchTenantPolicyOverlayRoute,
+  TenantPolicyOverlayService,
+} from "../apps/api/src/modules/overlays/index.ts";
+import {
+  AgentVersionReviewService,
+  handleAgentVersionReviewRequest,
+  matchAgentVersionReviewRoute,
+} from "../apps/api/src/modules/review/index.ts";
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -45,6 +62,11 @@ interface JsonRequestOptions {
 interface JsonResponse<TBody> {
   body: TBody;
   status: number;
+}
+
+interface TemporaryServerContext {
+  baseUrl: string;
+  close(): Promise<void>;
 }
 
 interface DraftAgentRegistrationResponse {
@@ -162,6 +184,7 @@ interface VersionAdminDetailResponse {
   active: boolean;
   agentId: string;
   approvalState: string;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;
@@ -298,7 +321,10 @@ async function createReviewApiContext(
         config,
         db: database.db,
         reviewServiceOptions: {
-          resolveProbeHostname: options.resolveProbeHostname,
+          // Keep review tests deterministic and offline by default.
+          resolveProbeHostname:
+            options.resolveProbeHostname ??
+            (async () => ["203.0.113.10"]),
         },
       }),
     );
@@ -361,6 +387,38 @@ async function requestJson<TBody>(
   return {
     body: body as TBody,
     status: response.status,
+  };
+}
+
+async function createTemporaryServerContext(
+  listener: http.RequestListener,
+): Promise<TemporaryServerContext> {
+  const server = http.createServer(listener);
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
   };
 }
 
@@ -647,6 +705,54 @@ test("submit, approve, and reject enforce lifecycle transitions and record revie
   }
 });
 
+test("submit updates publisher_id to the submitting principal", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    const adminDraftResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest(),
+      path: "/tenants/tenant-alpha/agents",
+      subjectId: "admin-alpha",
+    });
+    const draftBeforeSubmit = await context.db
+      .selectFrom("agent_versions")
+      .select(["publisher_id", "submitted_by"])
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", adminDraftResponse.body.agentId)
+      .where("version_id", "=", adminDraftResponse.body.versionId)
+      .executeTakeFirstOrThrow();
+
+    // Act
+    const submitResponse = await submitVersion(
+      context,
+      adminDraftResponse.body.agentId,
+      adminDraftResponse.body.versionId,
+    );
+    const draftAfterSubmit = await context.db
+      .selectFrom("agent_versions")
+      .select(["publisher_id", "submitted_by"])
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", adminDraftResponse.body.agentId)
+      .where("version_id", "=", adminDraftResponse.body.versionId)
+      .executeTakeFirstOrThrow();
+
+    // Assert
+    assert.equal(adminDraftResponse.status, 201);
+    assert.deepEqual(draftBeforeSubmit, {
+      publisher_id: "admin-alpha",
+      submitted_by: null,
+    });
+    assert.equal(submitResponse.status, 200);
+    assert.deepEqual(draftAfterSubmit, {
+      publisher_id: "publisher-alpha",
+      submitted_by: "publisher-alpha",
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("approvals update the active version pointer only for the highest approved sequence", async () => {
   // Arrange
   const context = await createReviewApiContext();
@@ -679,7 +785,7 @@ test("approvals update the active version pointer only for the highest approved 
       .executeTakeFirstOrThrow();
     const agentDetailAfterSecondSubmit = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
 
@@ -741,7 +847,7 @@ test("approvals update the active version pointer only for the highest approved 
       .executeTakeFirstOrThrow();
     const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
 
@@ -784,6 +890,88 @@ test("approvals update the active version pointer only for the highest approved 
       ],
     );
   } finally {
+    await context.close();
+  }
+});
+
+test("concurrent approvals keep the highest approved version active", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+  const lockDb = createKyselyDb(context.databaseUrl);
+  let releaseAgentLock = () => {};
+  let resolveAgentLockHeld = () => {};
+  let holdAgentLock: Promise<void> | undefined;
+  const agentLockHeld = new Promise<void>((resolve) => {
+    resolveAgentLockHeld = resolve;
+  });
+  const agentLockReleased = new Promise<void>((resolve) => {
+    releaseAgentLock = resolve;
+  });
+
+  try {
+    const firstDraft = await createDraftVersion(context, {
+      versionLabel: "2026.03.13",
+    });
+    await submitVersion(context, firstDraft.agentId, firstDraft.versionId);
+    await approveVersion(context, firstDraft.agentId, firstDraft.versionId);
+    const secondDraftResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.14",
+      }),
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}/versions`,
+      subjectId: "publisher-alpha",
+    });
+    const thirdDraftResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.15",
+      }),
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}/versions`,
+      subjectId: "publisher-alpha",
+    });
+    await submitVersion(context, firstDraft.agentId, secondDraftResponse.body.versionId);
+    await submitVersion(context, firstDraft.agentId, thirdDraftResponse.body.versionId);
+
+    holdAgentLock = lockDb.transaction().execute(async (transaction) => {
+      await transaction
+        .selectFrom("agents")
+        .select("agent_id")
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", firstDraft.agentId)
+        .forUpdate()
+        .executeTakeFirstOrThrow();
+      resolveAgentLockHeld();
+      await agentLockReleased;
+    });
+
+    await agentLockHeld;
+
+    const higherApproval = approveVersion(context, firstDraft.agentId, thirdDraftResponse.body.versionId);
+    await delay(50);
+    const lowerApproval = approveVersion(context, firstDraft.agentId, secondDraftResponse.body.versionId);
+    await delay(50);
+    releaseAgentLock();
+
+    // Act
+    const [higherApprovalResponse, lowerApprovalResponse] = await Promise.all([
+      higherApproval,
+      lowerApproval,
+    ]);
+    await holdAgentLock;
+    const storedAgent = await context.db
+      .selectFrom("agents")
+      .select("active_version_id")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", firstDraft.agentId)
+      .executeTakeFirstOrThrow();
+
+    // Assert
+    assert.equal(higherApprovalResponse.status, 200);
+    assert.equal(lowerApprovalResponse.status, 200);
+    assert.equal(storedAgent.active_version_id, thirdDraftResponse.body.versionId);
+  } finally {
+    releaseAgentLock();
+    await holdAgentLock?.catch(() => undefined);
+    await destroyKyselyDb(lockDb);
     await context.close();
   }
 });
@@ -849,7 +1037,7 @@ test("overlay endpoints persist separate agent and environment overlays and admi
       .executeTakeFirstOrThrow();
     const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${draft.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${draft.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
     const versionDetail = await requestJson<VersionAdminDetailResponse>(context, {
@@ -937,6 +1125,7 @@ test("overlay endpoints persist separate agent and environment overlays and admi
     assert.equal(versionDetail.status, 200);
     assert.equal(versionDetail.body.active, true);
     assert.equal(versionDetail.body.approvalState, "approved");
+    assert.deepEqual(versionDetail.body.capabilities, ["shared-capability"]);
     assert.deepEqual(versionDetail.body.requiredRoles, ["support-agent"]);
     assert.deepEqual(versionDetail.body.requiredScopes, ["tickets.read"]);
     assert.equal(versionDetail.body.review.approvedBy, "admin-alpha");
@@ -944,6 +1133,7 @@ test("overlay endpoints persist separate agent and environment overlays and admi
     assert.equal(rejectedVersionDetail.status, 200);
     assert.equal(rejectedVersionDetail.body.active, false);
     assert.equal(rejectedVersionDetail.body.approvalState, "rejected");
+    assert.deepEqual(rejectedVersionDetail.body.capabilities, ["shared-capability"]);
     assert.equal(rejectedVersionDetail.body.review.approvedBy, null);
     assert.equal(rejectedVersionDetail.body.review.rejectedBy, "admin-alpha");
     assert.equal(rejectedVersionDetail.body.review.rejectedReason, rejectedReason);
@@ -1233,7 +1423,6 @@ test("approval rejects hosted probe targets whose hostname resolves to a private
     await selfHostedContext.close();
   }
 });
-
 test("approved publication health endpoint returns current status and recent probe history", async () => {
   // Arrange
   const context = await createReviewApiContext();
@@ -1382,5 +1571,454 @@ test("publication health endpoint returns 404 for unapproved versions", async ()
     });
   } finally {
     await context.close();
+  }
+});
+
+test("approval rejects hosted probe targets whose hostname cannot be resolved", async () => {
+  // Arrange
+  const resolveProbeHostname = async (): Promise<string[]> => {
+    const error = new Error("hostname not found") as NodeJS.ErrnoException;
+    error.code = "ENOTFOUND";
+    throw error;
+  };
+  const hostedContext = await createReviewApiContext({
+    resolveProbeHostname,
+  });
+
+  try {
+    const hostedDraft = await createDraftVersion(hostedContext, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://unresolved-probe.example.test/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+    await submitVersion(hostedContext, hostedDraft.agentId, hostedDraft.versionId);
+
+    // Act
+    const hostedApprove = await approveVersion(
+      hostedContext,
+      hostedDraft.agentId,
+      hostedDraft.versionId,
+    );
+    const hostedVersion = await hostedContext.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", hostedDraft.agentId)
+      .where("version_id", "=", hostedDraft.versionId)
+      .executeTakeFirstOrThrow();
+    const hostedHealthRows = await hostedContext.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", hostedDraft.agentId)
+      .where("environment_publications.version_id", "=", hostedDraft.versionId)
+      .execute();
+
+    // Assert
+    assert.equal(hostedApprove.status, 400);
+    assert.deepEqual(hostedApprove.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: "Hosted deployments require resolvable health endpoint hostnames.",
+      },
+    });
+    assert.equal(hostedVersion.approval_state, "pending_review");
+    assert.deepEqual(hostedHealthRows, []);
+  } finally {
+    await hostedContext.close();
+  }
+});
+
+test("approval rejects unresolved probe targets even when self-hosted private probing is allowed", async () => {
+  // Arrange
+  const resolveProbeHostname = async (): Promise<string[]> => {
+    const error = new Error("hostname not found") as NodeJS.ErrnoException;
+    error.code = "ENOTFOUND";
+    throw error;
+  };
+  const selfHostedContext = await createReviewApiContext({
+    allowPrivateTargets: true,
+    deploymentMode: "self-hosted",
+    resolveProbeHostname,
+  });
+
+  try {
+    const draft = await createDraftVersion(selfHostedContext, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://unresolved-probe.example.test/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+    await submitVersion(selfHostedContext, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(
+      selfHostedContext,
+      draft.agentId,
+      draft.versionId,
+    );
+    const storedVersion = await selfHostedContext.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .executeTakeFirstOrThrow();
+    const healthRows = await selfHostedContext.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", draft.agentId)
+      .where("environment_publications.version_id", "=", draft.versionId)
+      .execute();
+
+    // Assert
+    assert.equal(approveResponse.status, 400);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: "Health endpoint hostnames must be resolvable.",
+      },
+    });
+    assert.equal(storedVersion.approval_state, "pending_review");
+    assert.deepEqual(healthRows, []);
+  } finally {
+    await selfHostedContext.close();
+  }
+});
+
+test("approval rejects hosted probe targets in other reserved IPv4 ranges", async () => {
+  // Arrange
+  const hostedContext = await createReviewApiContext();
+  const reservedHosts = ["0.1.2.3", "100.64.0.1", "198.18.0.1"];
+
+  try {
+    for (const [index, reservedHost] of reservedHosts.entries()) {
+      const draft = await createDraftVersion(hostedContext, {
+        publications: [
+          {
+            environmentKey: "dev",
+            healthEndpointUrl: `https://${reservedHost}/health`,
+            rawCard: createRawCard({
+              invocationEndpoint: "https://dev.agent.example.com/invoke",
+            }),
+          },
+        ],
+        versionLabel: `2026.03.${18 + index}`,
+      });
+      await submitVersion(hostedContext, draft.agentId, draft.versionId);
+
+      // Act
+      const approveResponse = await approveVersion(
+        hostedContext,
+        draft.agentId,
+        draft.versionId,
+      );
+      const storedVersion = await hostedContext.db
+        .selectFrom("agent_versions")
+        .select("approval_state")
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", draft.agentId)
+        .where("version_id", "=", draft.versionId)
+        .executeTakeFirstOrThrow();
+      const healthRows = await hostedContext.db
+        .selectFrom("publication_health")
+        .innerJoin(
+          "environment_publications",
+          "environment_publications.publication_id",
+          "publication_health.publication_id",
+        )
+        .select("publication_health.health_status")
+        .where("environment_publications.tenant_id", "=", "tenant-alpha")
+        .where("environment_publications.agent_id", "=", draft.agentId)
+        .where("environment_publications.version_id", "=", draft.versionId)
+        .execute();
+
+      // Assert
+      assert.equal(approveResponse.status, 400);
+      assert.deepEqual(approveResponse.body, {
+        error: {
+          code: "invalid_probe_target",
+          message: "Hosted deployments cannot probe private or loopback health endpoints.",
+        },
+      });
+      assert.equal(storedVersion.approval_state, "pending_review");
+      assert.deepEqual(healthRows, []);
+    }
+  } finally {
+    await hostedContext.close();
+  }
+});
+
+test("approval rejects hosted probe targets with hex-form IPv4-mapped IPv6 literals", async () => {
+  // Arrange
+  const hostedContext = await createReviewApiContext();
+
+  try {
+    const draft = await createDraftVersion(hostedContext, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://[::ffff:7f00:1]/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+      versionLabel: "2026.03.21",
+    });
+    await submitVersion(hostedContext, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(
+      hostedContext,
+      draft.agentId,
+      draft.versionId,
+    );
+    const storedVersion = await hostedContext.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .executeTakeFirstOrThrow();
+    const healthRows = await hostedContext.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", draft.agentId)
+      .where("environment_publications.version_id", "=", draft.versionId)
+      .execute();
+
+    // Assert
+    assert.equal(approveResponse.status, 400);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: "Hosted deployments cannot probe private or loopback health endpoints.",
+      },
+    });
+    assert.equal(storedVersion.approval_state, "pending_review");
+    assert.deepEqual(healthRows, []);
+  } finally {
+    await hostedContext.close();
+  }
+});
+
+test("malformed review, overlay, and admin-detail route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    // Act
+    const reviewMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/%E0%A4%A/agents/agent-alpha/versions/version-1:submit",
+      subjectId: "publisher-alpha",
+    });
+    const overlayMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/%E0%A4%A/agents/agent-alpha:disable",
+      subjectId: "admin-alpha",
+    });
+    const adminDetailMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      method: "GET",
+      path: "/tenants/%E0%A4%A/agents/agent-alpha:admin-detail",
+      subjectId: "admin-alpha",
+    });
+    const followUpResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.17",
+      }),
+      path: "/tenants/tenant-alpha/agents",
+      subjectId: "publisher-alpha",
+    });
+
+    // Assert
+    assert.equal(reviewMalformedResponse.status, 400);
+    assert.deepEqual(reviewMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(overlayMalformedResponse.status, 400);
+    assert.deepEqual(overlayMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(adminDetailMalformedResponse.status, 400);
+    assert.deepEqual(adminDetailMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 201);
+    assert.equal(followUpResponse.body.approvalState, "draft");
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses for review, overlay, and admin detail endpoints", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      throw new Error("database unavailable");
+    },
+  });
+  const reviewService = new AgentVersionReviewService({
+    async approveVersion() {
+      throw new Error("review repository should not be called");
+    },
+    async getVersionForReview() {
+      throw new Error("review repository should not be called");
+    },
+    async rejectVersion() {
+      throw new Error("review repository should not be called");
+    },
+    async submitVersion() {
+      throw new Error("review repository should not be called");
+    },
+  });
+  const overlayService = new TenantPolicyOverlayService({
+    async listForAgent() {
+      return [];
+    },
+    async upsertNarrowingOverlay() {
+      return {
+        agentId: "unused",
+        deprecated: false,
+        disabled: false,
+        environmentKey: null,
+        requiredRoles: [],
+        requiredScopes: [],
+      };
+    },
+  });
+  const adminDetailService = new AgentAdminDetailService({
+    async getAgentDetail() {
+      throw new Error("admin detail repository should not be called");
+    },
+    async getVersionDetail() {
+      throw new Error("admin detail repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
+
+    if (reviewRoute !== null) {
+      await handleAgentVersionReviewRequest(request, response, reviewRoute, {
+        principalResolver,
+        service: reviewService,
+      });
+      return;
+    }
+
+    const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
+
+    if (overlayRoute !== null) {
+      await handleTenantPolicyOverlayRequest(request, response, overlayRoute, {
+        principalResolver,
+        service: overlayService,
+      });
+      return;
+    }
+
+    const adminDetailRoute = matchAgentAdminDetailRoute(url.pathname);
+
+    if (adminDetailRoute !== null) {
+      await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
+        principalResolver,
+        service: adminDetailService,
+      });
+      return;
+    }
+
+    throw new Error(`Unexpected route: ${url.pathname}`);
+  });
+
+  try {
+    // Act
+    const reviewResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha/versions/version-1:submit", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "publisher-alpha",
+        }),
+        method: "POST",
+      },
+    );
+    const overlayResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha:disable", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "POST",
+      },
+    );
+    const adminDetailResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha:admin-detail", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "GET",
+      },
+    );
+
+    // Assert
+    assert.equal(reviewResponse.status, 500);
+    assert.deepEqual((await reviewResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(overlayResponse.status, 500);
+    assert.deepEqual((await overlayResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(adminDetailResponse.status, 500);
+    assert.deepEqual((await adminDetailResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
   }
 });

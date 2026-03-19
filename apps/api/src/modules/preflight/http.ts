@@ -5,34 +5,26 @@ import {
   MissingTenantMembershipError,
   type PrincipalResolver,
 } from "@agent-registry/auth";
-import type { RejectAgentVersionRequest } from "@agent-registry/contracts";
-import {
-  AgentVersionNotFoundError,
-  InvalidVersionTransitionError,
-} from "@agent-registry/db";
+import type { AgentPublicationPreflightRequest } from "@agent-registry/contracts";
+import { AgentEnvironmentPublicationNotFoundError } from "@agent-registry/db";
 
 import {
-  AgentVersionProbeTargetPolicyError,
-  AgentVersionReviewAuthorizationError,
-  AgentVersionReviewService,
-  AgentVersionReviewValidationError,
+  AgentPublicationPreflightAuthorizationError,
+  AgentPublicationPreflightService,
 } from "./service.js";
 
-type ReviewAction = "approve" | "reject" | "submit";
-
-export interface AgentVersionReviewRouteMatch {
-  action: ReviewAction;
+export interface AgentPublicationPreflightRouteMatch {
   agentId: string;
+  environmentKey: string;
   tenantId: string;
-  versionId: string;
 }
 
-export interface AgentVersionReviewHttpDependencies {
+export interface AgentPublicationPreflightHttpDependencies {
   principalResolver: PrincipalResolver;
-  service: AgentVersionReviewService;
+  service: AgentPublicationPreflightService;
 }
 
-export class InvalidAgentVersionReviewRequestError extends Error {}
+export class InvalidAgentPublicationPreflightRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -87,11 +79,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidAgentVersionReviewRequestError(errorMessage);
+    throw new InvalidAgentPublicationPreflightRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidAgentVersionReviewRequestError(errorMessage);
+    throw new InvalidAgentPublicationPreflightRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -110,6 +102,16 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidAgentPublicationPreflightRequestError(
+      `${label} path segment must be valid URL encoding.`,
+    );
+  }
+}
+
 async function readRequestBody(request: IncomingMessage): Promise<string> {
   let body = "";
 
@@ -120,63 +122,80 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
   return body;
 }
 
-async function readRejectRequest(request: IncomingMessage): Promise<RejectAgentVersionRequest> {
-  const body = (await readRequestBody(request)).trim();
+function parseIncludeRawCard(searchParams: URLSearchParams): boolean {
+  const includes = searchParams.getAll("include");
 
-  if (body === "") {
-    throw new InvalidAgentVersionReviewRequestError(
-      "Request body must be a JSON object with a reason string.",
+  for (const include of includes) {
+    if (include !== "rawCard") {
+      throw new InvalidAgentPublicationPreflightRequestError(
+        `Unsupported include value '${include}'.`,
+      );
+    }
+  }
+
+  return includes.includes("rawCard");
+}
+
+function parseContext(value: unknown): Record<string, unknown> {
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidAgentPublicationPreflightRequestError(
+      "Preflight context must be a JSON object.",
     );
   }
 
-  const parsed = parseJsonObject(body, "Request body must be a JSON object.");
+  return value as Record<string, unknown>;
+}
 
-  if (typeof parsed.reason !== "string") {
-    throw new InvalidAgentVersionReviewRequestError(
-      "Request body must be a JSON object with a reason string.",
+async function readPreflightRequest(
+  request: IncomingMessage,
+  searchParams: URLSearchParams,
+): Promise<AgentPublicationPreflightRequest> {
+  const body = (await readRequestBody(request)).trim();
+  const parsed =
+    body === "" ? {} : parseJsonObject(body, "Request body must be a JSON object.");
+  const includeRawCard = parseIncludeRawCard(searchParams);
+
+  if (
+    parsed.includeRawCard !== undefined &&
+    typeof parsed.includeRawCard !== "boolean"
+  ) {
+    throw new InvalidAgentPublicationPreflightRequestError(
+      "includeRawCard must be a boolean when provided.",
     );
   }
 
   return {
-    reason: parsed.reason,
+    context: parseContext(parsed.context ?? parsed.contextValues),
+    includeRawCard: includeRawCard || parsed.includeRawCard === true,
   };
 }
 
-function decodeRouteSegment(segment: string, label: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    throw new InvalidAgentVersionReviewRequestError(
-      `${label} path segment must be valid URL encoding.`,
-    );
-  }
-}
-
-export function matchAgentVersionReviewRoute(
+export function matchAgentPublicationPreflightRoute(
   pathname: string,
-): AgentVersionReviewRouteMatch | null {
+): AgentPublicationPreflightRouteMatch | null {
   const match =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/:]+):(submit|approve|reject)\/?$/.exec(
-      pathname,
-    );
+    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/environments\/([^/:]+):preflight\/?$/.exec(pathname);
 
   if (match === null) {
     return null;
   }
 
   return {
-    action: match[4] as ReviewAction,
     agentId: decodeRouteSegment(match[2], "Agent id"),
+    environmentKey: decodeRouteSegment(match[3], "Environment key"),
     tenantId: decodeRouteSegment(match[1], "Tenant id"),
-    versionId: decodeRouteSegment(match[3], "Version id"),
   };
 }
 
-export async function handleAgentVersionReviewRequest(
+export async function handleAgentPublicationPreflightRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: AgentVersionReviewRouteMatch,
-  dependencies: AgentVersionReviewHttpDependencies,
+  route: AgentPublicationPreflightRouteMatch,
+  dependencies: AgentPublicationPreflightHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -194,44 +213,17 @@ export async function handleAgentVersionReviewRequest(
       return;
     }
 
-    if (route.action === "submit") {
-      writeJson(
-        response,
-        200,
-        await dependencies.service.submitVersion(
-          principal,
-          route.tenantId,
-          route.agentId,
-          route.versionId,
-        ),
-      );
-      return;
-    }
-
-    if (route.action === "approve") {
-      writeJson(
-        response,
-        200,
-        await dependencies.service.approveVersion(
-          principal,
-          route.tenantId,
-          route.agentId,
-          route.versionId,
-        ),
-      );
-      return;
-    }
-
-    const rejectRequest = await readRejectRequest(request);
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const preflightRequest = await readPreflightRequest(request, url.searchParams);
     writeJson(
       response,
       200,
-      await dependencies.service.rejectVersion(
+      await dependencies.service.preflightPublication(
         principal,
         route.tenantId,
         route.agentId,
-        route.versionId,
-        rejectRequest.reason,
+        route.environmentKey,
+        preflightRequest,
       ),
     );
   } catch (error) {
@@ -245,32 +237,17 @@ export async function handleAgentVersionReviewRequest(
       return;
     }
 
-    if (error instanceof AgentVersionReviewAuthorizationError) {
+    if (error instanceof AgentPublicationPreflightAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionNotFoundError) {
-      writeError(response, 404, "version_not_found", error.message);
+    if (error instanceof AgentEnvironmentPublicationNotFoundError) {
+      writeError(response, 404, "publication_not_found", error.message);
       return;
     }
 
-    if (error instanceof InvalidVersionTransitionError) {
-      writeError(response, 409, "invalid_lifecycle_transition", error.message);
-      return;
-    }
-
-    if (error instanceof AgentVersionProbeTargetPolicyError) {
-      writeError(response, 400, "invalid_probe_target", error.message);
-      return;
-    }
-
-    if (error instanceof AgentVersionReviewValidationError) {
-      writeError(response, 400, "invalid_review_request", error.message);
-      return;
-    }
-
-    if (error instanceof InvalidAgentVersionReviewRequestError) {
+    if (error instanceof InvalidAgentPublicationPreflightRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

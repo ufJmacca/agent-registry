@@ -5,35 +5,25 @@ import {
   MissingTenantMembershipError,
   type PrincipalResolver,
 } from "@agent-registry/auth";
+
+import { parseDiscoveryListQuery } from "../discovery/query.js";
 import {
-  AgentNotFoundError,
-  AgentVersionNotFoundError,
-} from "@agent-registry/db";
+  AgentDiscoveryAuthorizationError,
+  AgentDiscoveryRawCardPayloadTooLargeError,
+  AgentDiscoveryService,
+  AgentDiscoveryValidationError,
+} from "../discovery/service.js";
 
-import {
-  AgentAdminDetailAuthorizationError,
-  AgentAdminDetailService,
-} from "./service.js";
-
-export type AgentAdminDetailRouteMatch =
-  | {
-      agentId: string;
-      tenantId: string;
-      type: "version";
-      versionId: string;
-    }
-  | {
-      agentId: string;
-      tenantId: string;
-      type: "agent";
-    };
-
-export interface AgentAdminDetailHttpDependencies {
-  principalResolver: PrincipalResolver;
-  service: AgentAdminDetailService;
+export interface SearchRouteMatch {
+  tenantId: string;
 }
 
-export class InvalidAgentAdminDetailRequestError extends Error {}
+export interface SearchHttpDependencies {
+  principalResolver: PrincipalResolver;
+  service: AgentDiscoveryService;
+}
+
+export class InvalidSearchRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -88,11 +78,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidAgentAdminDetailRequestError(errorMessage);
+    throw new InvalidSearchRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidAgentAdminDetailRequestError(errorMessage);
+    throw new InvalidSearchRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -115,40 +105,27 @@ function decodeRouteSegment(segment: string, label: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw new InvalidAgentAdminDetailRequestError(`${label} path segment must be valid URL encoding.`);
+    throw new InvalidSearchRequestError(`${label} path segment must be valid URL encoding.`);
   }
 }
 
-export function matchAgentAdminDetailRoute(pathname: string): AgentAdminDetailRouteMatch | null {
-  const versionMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/?$/.exec(pathname);
+export function matchSearchRoute(pathname: string): SearchRouteMatch | null {
+  const match = /^\/tenants\/([^/]+)\/agents\/search\/?$/.exec(pathname);
 
-  if (versionMatch !== null) {
-    return {
-      agentId: decodeRouteSegment(versionMatch[2], "Agent id"),
-      tenantId: decodeRouteSegment(versionMatch[1], "Tenant id"),
-      type: "version",
-      versionId: decodeRouteSegment(versionMatch[3], "Version id"),
-    };
+  if (match === null) {
+    return null;
   }
 
-  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+):admin-detail\/?$/.exec(pathname);
-
-  if (agentMatch !== null) {
-    return {
-      agentId: decodeRouteSegment(agentMatch[2], "Agent id"),
-      tenantId: decodeRouteSegment(agentMatch[1], "Tenant id"),
-      type: "agent",
-    };
-  }
-
-  return null;
+  return {
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
+  };
 }
 
-export async function handleAgentAdminDetailRequest(
+export async function handleSearchRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: AgentAdminDetailRouteMatch,
-  dependencies: AgentAdminDetailHttpDependencies,
+  route: SearchRouteMatch,
+  dependencies: SearchHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -166,23 +143,16 @@ export async function handleAgentAdminDetailRequest(
       return;
     }
 
-    if (route.type === "agent") {
-      writeJson(
-        response,
-        200,
-        await dependencies.service.getAgentDetail(principal, route.tenantId, route.agentId),
-      );
-      return;
-    }
-
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
     writeJson(
       response,
       200,
-      await dependencies.service.getVersionDetail(
+      await dependencies.service.search(
         principal,
         route.tenantId,
-        route.agentId,
-        route.versionId,
+        parseDiscoveryListQuery(url.searchParams, {
+          allowTextQuery: true,
+        }),
       ),
     );
   } catch (error) {
@@ -196,22 +166,22 @@ export async function handleAgentAdminDetailRequest(
       return;
     }
 
-    if (error instanceof AgentAdminDetailAuthorizationError) {
+    if (error instanceof AgentDiscoveryAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
 
-    if (error instanceof AgentNotFoundError) {
-      writeError(response, 404, "agent_not_found", error.message);
+    if (error instanceof AgentDiscoveryValidationError) {
+      writeError(response, 400, "invalid_query", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionNotFoundError) {
-      writeError(response, 404, "version_not_found", error.message);
+    if (error instanceof AgentDiscoveryRawCardPayloadTooLargeError) {
+      writeError(response, 400, "raw_card_payload_too_large", error.message);
       return;
     }
 
-    if (error instanceof InvalidAgentAdminDetailRequestError) {
+    if (error instanceof InvalidSearchRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }
