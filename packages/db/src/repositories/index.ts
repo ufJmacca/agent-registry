@@ -1,3 +1,7 @@
+export * from "./agent-admin-detail-repository.js";
+export * from "./agent-repository-errors.js";
+export * from "./agent-review-repository.js";
 export * from "./agent-draft-registration-repository.js";
 export * from "./tenant-environment-repository.js";
+export * from "./tenant-policy-overlay-repository.js";
 export * from "./tenant-repository.js";
