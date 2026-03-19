@@ -184,6 +184,7 @@ interface VersionAdminDetailResponse {
   active: boolean;
   agentId: string;
   approvalState: string;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;
@@ -993,6 +994,7 @@ test("overlay endpoints persist separate agent and environment overlays and admi
     assert.equal(versionDetail.status, 200);
     assert.equal(versionDetail.body.active, true);
     assert.equal(versionDetail.body.approvalState, "approved");
+    assert.deepEqual(versionDetail.body.capabilities, ["shared-capability"]);
     assert.deepEqual(versionDetail.body.requiredRoles, ["support-agent"]);
     assert.deepEqual(versionDetail.body.requiredScopes, ["tickets.read"]);
     assert.equal(versionDetail.body.review.approvedBy, "admin-alpha");
@@ -1000,6 +1002,7 @@ test("overlay endpoints persist separate agent and environment overlays and admi
     assert.equal(rejectedVersionDetail.status, 200);
     assert.equal(rejectedVersionDetail.body.active, false);
     assert.equal(rejectedVersionDetail.body.approvalState, "rejected");
+    assert.deepEqual(rejectedVersionDetail.body.capabilities, ["shared-capability"]);
     assert.equal(rejectedVersionDetail.body.review.approvedBy, null);
     assert.equal(rejectedVersionDetail.body.review.rejectedBy, "admin-alpha");
     assert.equal(rejectedVersionDetail.body.review.rejectedReason, rejectedReason);
@@ -1301,6 +1304,74 @@ test("approval rejects hosted probe targets whose hostname cannot be resolved", 
     assert.deepEqual(hostedHealthRows, []);
   } finally {
     await hostedContext.close();
+  }
+});
+
+test("approval rejects unresolved probe targets even when self-hosted private probing is allowed", async () => {
+  // Arrange
+  const resolveProbeHostname = async (): Promise<string[]> => {
+    const error = new Error("hostname not found") as NodeJS.ErrnoException;
+    error.code = "ENOTFOUND";
+    throw error;
+  };
+  const selfHostedContext = await createReviewApiContext({
+    allowPrivateTargets: true,
+    deploymentMode: "self-hosted",
+    resolveProbeHostname,
+  });
+
+  try {
+    const draft = await createDraftVersion(selfHostedContext, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://unresolved-probe.example.test/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+    await submitVersion(selfHostedContext, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(
+      selfHostedContext,
+      draft.agentId,
+      draft.versionId,
+    );
+    const storedVersion = await selfHostedContext.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .executeTakeFirstOrThrow();
+    const healthRows = await selfHostedContext.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", draft.agentId)
+      .where("environment_publications.version_id", "=", draft.versionId)
+      .execute();
+
+    // Assert
+    assert.equal(approveResponse.status, 400);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: "Health endpoint hostnames must be resolvable.",
+      },
+    });
+    assert.equal(storedVersion.approval_state, "pending_review");
+    assert.deepEqual(healthRows, []);
+  } finally {
+    await selfHostedContext.close();
   }
 });
 

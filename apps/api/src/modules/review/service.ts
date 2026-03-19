@@ -180,10 +180,6 @@ async function assertProbeTargetAllowed(
     resolveProbeHostname: ProbeHostnameResolver;
   },
 ): Promise<void> {
-  if (options.deploymentMode === "self-hosted" && options.allowPrivateTargets) {
-    return;
-  }
-
   const hostname = new URL(endpointUrl).hostname;
   const resolvedTargets = await resolveProbeTargets(hostname, options.resolveProbeHostname);
 
