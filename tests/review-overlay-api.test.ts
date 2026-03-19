@@ -1375,6 +1375,129 @@ test("approval rejects unresolved probe targets even when self-hosted private pr
   }
 });
 
+test("approval rejects hosted probe targets in other reserved IPv4 ranges", async () => {
+  // Arrange
+  const hostedContext = await createReviewApiContext();
+  const reservedHosts = ["0.1.2.3", "100.64.0.1", "198.18.0.1"];
+
+  try {
+    for (const [index, reservedHost] of reservedHosts.entries()) {
+      const draft = await createDraftVersion(hostedContext, {
+        publications: [
+          {
+            environmentKey: "dev",
+            healthEndpointUrl: `https://${reservedHost}/health`,
+            rawCard: createRawCard({
+              invocationEndpoint: "https://dev.agent.example.com/invoke",
+            }),
+          },
+        ],
+        versionLabel: `2026.03.${18 + index}`,
+      });
+      await submitVersion(hostedContext, draft.agentId, draft.versionId);
+
+      // Act
+      const approveResponse = await approveVersion(
+        hostedContext,
+        draft.agentId,
+        draft.versionId,
+      );
+      const storedVersion = await hostedContext.db
+        .selectFrom("agent_versions")
+        .select("approval_state")
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", draft.agentId)
+        .where("version_id", "=", draft.versionId)
+        .executeTakeFirstOrThrow();
+      const healthRows = await hostedContext.db
+        .selectFrom("publication_health")
+        .innerJoin(
+          "environment_publications",
+          "environment_publications.publication_id",
+          "publication_health.publication_id",
+        )
+        .select("publication_health.health_status")
+        .where("environment_publications.tenant_id", "=", "tenant-alpha")
+        .where("environment_publications.agent_id", "=", draft.agentId)
+        .where("environment_publications.version_id", "=", draft.versionId)
+        .execute();
+
+      // Assert
+      assert.equal(approveResponse.status, 400);
+      assert.deepEqual(approveResponse.body, {
+        error: {
+          code: "invalid_probe_target",
+          message: "Hosted deployments cannot probe private or loopback health endpoints.",
+        },
+      });
+      assert.equal(storedVersion.approval_state, "pending_review");
+      assert.deepEqual(healthRows, []);
+    }
+  } finally {
+    await hostedContext.close();
+  }
+});
+
+test("approval rejects hosted probe targets with hex-form IPv4-mapped IPv6 literals", async () => {
+  // Arrange
+  const hostedContext = await createReviewApiContext();
+
+  try {
+    const draft = await createDraftVersion(hostedContext, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://[::ffff:7f00:1]/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+      versionLabel: "2026.03.21",
+    });
+    await submitVersion(hostedContext, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(
+      hostedContext,
+      draft.agentId,
+      draft.versionId,
+    );
+    const storedVersion = await hostedContext.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .executeTakeFirstOrThrow();
+    const healthRows = await hostedContext.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", draft.agentId)
+      .where("environment_publications.version_id", "=", draft.versionId)
+      .execute();
+
+    // Assert
+    assert.equal(approveResponse.status, 400);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: "Hosted deployments cannot probe private or loopback health endpoints.",
+      },
+    });
+    assert.equal(storedVersion.approval_state, "pending_review");
+    assert.deepEqual(healthRows, []);
+  } finally {
+    await hostedContext.close();
+  }
+});
+
 test("malformed review, overlay, and admin-detail route encoding returns 400 without taking down the API listener", async () => {
   // Arrange
   const context = await createReviewApiContext();
