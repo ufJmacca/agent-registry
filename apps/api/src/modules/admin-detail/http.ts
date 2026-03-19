@@ -131,7 +131,7 @@ export function matchAgentAdminDetailRoute(pathname: string): AgentAdminDetailRo
     };
   }
 
-  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/?$/.exec(pathname);
+  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+):admin-detail\/?$/.exec(pathname);
 
   if (agentMatch !== null) {
     return {

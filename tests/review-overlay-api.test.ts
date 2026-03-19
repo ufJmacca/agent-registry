@@ -702,7 +702,7 @@ test("approvals update the active version pointer only for the highest approved 
       .executeTakeFirstOrThrow();
     const agentDetailAfterSecondSubmit = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
 
@@ -764,7 +764,7 @@ test("approvals update the active version pointer only for the highest approved 
       .executeTakeFirstOrThrow();
     const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${firstDraft.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
 
@@ -954,7 +954,7 @@ test("overlay endpoints persist separate agent and environment overlays and admi
       .executeTakeFirstOrThrow();
     const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${draft.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${draft.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
     const versionDetail = await requestJson<VersionAdminDetailResponse>(context, {
@@ -1562,7 +1562,7 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
     });
     const adminDetailMalformedResponse = await requestJson<ErrorResponseBody>(context, {
       method: "GET",
-      path: "/tenants/%E0%A4%A/agents/agent-alpha",
+      path: "/tenants/%E0%A4%A/agents/agent-alpha:admin-detail",
       subjectId: "admin-alpha",
     });
     const followUpResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
@@ -1702,7 +1702,7 @@ test("unexpected resolver failures return 500 internal_error responses for revie
       },
     );
     const adminDetailResponse = await fetch(
-      new URL("/tenants/tenant-alpha/agents/agent-alpha", server.baseUrl),
+      new URL("/tenants/tenant-alpha/agents/agent-alpha:admin-detail", server.baseUrl),
       {
         headers: new Headers({
           "x-agent-registry-subject-id": "admin-alpha",

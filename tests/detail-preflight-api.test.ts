@@ -12,9 +12,6 @@ import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
 import {
-  AgentAdminDetailService,
-} from "../apps/api/src/modules/admin-detail/index.ts";
-import {
   AgentPublicationDetailService,
   handleAgentDetailRequest,
   matchAgentDetailRoute,
@@ -654,6 +651,59 @@ test("active detail omits rawCard for authorized callers unless it is explicitly
   }
 });
 
+test("active detail keeps the publication-detail schema stable for tenant-admins", async () => {
+  // Arrange
+  const context = await createDetailPreflightApiContext();
+
+  try {
+    await insertVersion(context, {
+      active: true,
+      agentId: "agent-detail-admin",
+      approvalState: "approved",
+      publications: [
+        {
+          environmentKey: "prod",
+          healthStatus: "healthy",
+          publicationId: "publication-detail-admin",
+        },
+      ],
+      publisherId: "publisher-alpha",
+      requiredRoles: ["tenant-admin"],
+      requiredScopes: [],
+      versionId: "version-detail-admin",
+      versionSequence: 1,
+    });
+
+    // Act
+    const detailResponse = await requestJson<ActivePublicationDetailResponse>(context, {
+      path: "/tenants/tenant-alpha/agents/agent-detail-admin",
+      subjectId: "admin-alpha",
+    });
+    const adminDetailResponse = await requestJson<{
+      activeVersionId: string | null;
+      versions: Array<{ versionId: string }>;
+    }>(context, {
+      path: "/tenants/tenant-alpha/agents/agent-detail-admin:admin-detail",
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(detailResponse.status, 200);
+    assert.equal(detailResponse.body.agentId, "agent-detail-admin");
+    assert.equal(detailResponse.body.activeVersionId, "version-detail-admin");
+    assert.equal(detailResponse.body.publication.environmentKey, "prod");
+    assert.equal("versions" in detailResponse.body, false);
+
+    assert.equal(adminDetailResponse.status, 200);
+    assert.equal(adminDetailResponse.body.activeVersionId, "version-detail-admin");
+    assert.deepEqual(adminDetailResponse.body.versions.map((version) => version.versionId), [
+      "version-detail-admin",
+    ]);
+  } finally {
+    await context.close();
+  }
+});
+
 test("active detail returns tenant-scoped 404s for inaccessible and disabled active publications to non-admin callers", async () => {
   // Arrange
   const context = await createDetailPreflightApiContext();
@@ -1124,14 +1174,6 @@ test("unexpected resolver failures return 500 internal_error responses for detai
       throw new Error("preflight repository should not be called");
     },
   });
-  const adminDetailService = new AgentAdminDetailService({
-    async getAgentDetail() {
-      throw new Error("admin detail repository should not be called");
-    },
-    async getVersionDetail() {
-      throw new Error("admin detail repository should not be called");
-    },
-  });
   const server = await createTemporaryServerContext(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
@@ -1148,7 +1190,6 @@ test("unexpected resolver failures return 500 internal_error responses for detai
 
     if (detailRoute !== null) {
       await handleAgentDetailRequest(request, response, detailRoute, {
-        adminDetailService,
         principalResolver,
         service: detailService,
       });

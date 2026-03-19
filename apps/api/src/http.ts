@@ -192,9 +192,16 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         return;
       }
 
+      if (adminDetailRoute !== null) {
+        await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
+          principalResolver,
+          service: adminDetailService,
+        });
+        return;
+      }
+
       if (detailRoute !== null) {
         await handleAgentDetailRequest(request, response, detailRoute, {
-          adminDetailService,
           principalResolver,
           service: detailService,
         });
@@ -213,14 +220,6 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         await handleTenantEnvironmentRequest(request, response, environmentRoute, {
           principalResolver,
           service: environmentService,
-        });
-        return;
-      }
-
-      if (adminDetailRoute !== null) {
-        await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
-          principalResolver,
-          service: adminDetailService,
         });
         return;
       }

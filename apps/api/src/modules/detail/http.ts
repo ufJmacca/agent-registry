@@ -3,7 +3,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   MissingSubjectIdError,
   MissingTenantMembershipError,
-  hasAnyRole,
   type PrincipalResolver,
 } from "@agent-registry/auth";
 import {
@@ -12,10 +11,6 @@ import {
   AgentNotFoundError,
 } from "@agent-registry/db";
 
-import {
-  AgentAdminDetailAuthorizationError,
-  AgentAdminDetailService,
-} from "../admin-detail/service.js";
 import {
   AgentPublicationDetailAuthorizationError,
   AgentPublicationDetailService,
@@ -29,7 +24,6 @@ export interface AgentDetailRouteMatch {
 }
 
 export interface AgentDetailHttpDependencies {
-  adminDetailService: AgentAdminDetailService;
   principalResolver: PrincipalResolver;
   service: AgentPublicationDetailService;
 }
@@ -187,19 +181,6 @@ export async function handleAgentDetailRequest(
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const query = parseDetailQuery(url.searchParams);
 
-    if (
-      hasAnyRole(principal.roles, ["tenant-admin"]) &&
-      query.environmentKey === null &&
-      !query.includeRawCard
-    ) {
-      writeJson(
-        response,
-        200,
-        await dependencies.adminDetailService.getAgentDetail(principal, route.tenantId, route.agentId),
-      );
-      return;
-    }
-
     writeJson(
       response,
       200,
@@ -216,10 +197,7 @@ export async function handleAgentDetailRequest(
       return;
     }
 
-    if (
-      error instanceof AgentAdminDetailAuthorizationError ||
-      error instanceof AgentPublicationDetailAuthorizationError
-    ) {
+    if (error instanceof AgentPublicationDetailAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
