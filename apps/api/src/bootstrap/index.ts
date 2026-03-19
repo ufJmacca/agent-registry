@@ -34,6 +34,8 @@ export interface BootstrapSummary {
 }
 
 export interface OperatorBootstrapRepository {
+  deleteOtherTenants(retainedTenantId: string): Promise<void>;
+  replaceMemberships(tenantId: string, memberships: BootstrapMembershipRecord[]): Promise<void>;
   replaceEnvironments(tenantId: string, environments: string[]): Promise<void>;
   upsertMembership(tenantId: string, membership: BootstrapMembershipRecord): Promise<void>;
   upsertTenant(tenant: BootstrapTenantRecord): Promise<void>;
@@ -153,9 +155,21 @@ export class OperatorBootstrapService {
       throw new Error("self-hosted mode supports exactly one tenant manifest entry");
     }
 
+    if (options.deploymentMode === "self-hosted") {
+      await this.repository.deleteOtherTenants(manifest.tenants[0].tenantId);
+    }
+
     let membershipCount = 0;
 
     for (const tenant of manifest.tenants) {
+      const normalizedMemberships = (tenant.memberships ?? []).map((membership) => ({
+        registryCapabilities: membership.registryCapabilities ?? [],
+        roles: membership.roles ?? [],
+        scopes: membership.scopes ?? [],
+        subjectId: membership.subjectId,
+        userContext: membership.userContext ?? {},
+      }));
+
       await this.repository.upsertTenant({
         defaultCardProfileId: tenant.defaultCardProfileId,
         deploymentMode: options.deploymentMode,
@@ -164,16 +178,15 @@ export class OperatorBootstrapService {
       });
       await this.repository.replaceEnvironments(tenant.tenantId, tenant.environments);
 
-      for (const membership of tenant.memberships ?? []) {
-        await this.repository.upsertMembership(tenant.tenantId, {
-          registryCapabilities: membership.registryCapabilities ?? [],
-          roles: membership.roles ?? [],
-          scopes: membership.scopes ?? [],
-          subjectId: membership.subjectId,
-          userContext: membership.userContext ?? {},
-        });
-        membershipCount += 1;
+      if (options.deploymentMode === "self-hosted") {
+        await this.repository.replaceMemberships(tenant.tenantId, normalizedMemberships);
+      } else {
+        for (const membership of normalizedMemberships) {
+          await this.repository.upsertMembership(tenant.tenantId, membership);
+        }
       }
+
+      membershipCount += normalizedMemberships.length;
     }
 
     return {

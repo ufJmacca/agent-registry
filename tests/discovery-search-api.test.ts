@@ -57,14 +57,43 @@ interface ErrorResponseBody {
 interface DiscoveryItemResponse {
   activeVersionId: string;
   agentId: string;
+  capabilities: string[];
+  contextContract: Array<{
+    description: string;
+    example?: unknown;
+    key: string;
+    required: boolean;
+    type: string;
+  }>;
   deprecated: boolean;
   displayName: string;
   environmentKey: string;
+  headerContract: Array<{
+    description: string;
+    name: string;
+    required: boolean;
+    source: string;
+  }>;
   healthStatus: string;
+  invocationEndpoint: string | null;
+  overlayRequirements: {
+    agent: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+    environment: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+  };
   publisherId: string;
   rawCard?: string;
   rawCardAvailable: boolean;
+  requiredRoles: string[];
+  requiredScopes: string[];
   status: string;
+  summary: string;
+  tags: string[];
 }
 
 interface DiscoveryListResponse {
@@ -689,6 +718,50 @@ test("available access checks combine publisher and overlay role and scope claus
       authorizedResponse.body.items.map((item) => item.agentId),
       ["agent-gated"],
     );
+    assert.deepEqual(authorizedResponse.body.items[0], {
+      activeVersionId: "version-gated",
+      agentId: "agent-gated",
+      capabilities: ["shared-capability"],
+      contextContract: [
+        {
+          description: "Selects the client partition.",
+          example: "client-123",
+          key: "client_id",
+          required: true,
+          type: "string",
+        },
+      ],
+      deprecated: false,
+      displayName: "Case Resolver",
+      environmentKey: "prod",
+      headerContract: [
+        {
+          description: "Passes the user id through to the downstream API.",
+          name: "X-User-Id",
+          required: true,
+          source: "user.id",
+        },
+      ],
+      healthStatus: "healthy",
+      invocationEndpoint: "https://publication-gated.example.com/invoke",
+      overlayRequirements: {
+        agent: {
+          requiredRoles: ["region-analyst", "risk-analyst"],
+          requiredScopes: [],
+        },
+        environment: {
+          requiredRoles: [],
+          requiredScopes: ["overlay.use"],
+        },
+      },
+      publisherId: "publisher-alpha",
+      rawCardAvailable: true,
+      requiredRoles: ["support-agent", "case-manager"],
+      requiredScopes: ["tickets.read"],
+      status: "approved_active",
+      summary: "Handles support case routing.",
+      tags: ["shared-tag"],
+    });
     assert.deepEqual(
       caseManagerResponse.body.items.map((item) => item.agentId),
       ["agent-gated"],
@@ -1240,6 +1313,41 @@ test("search pagination returns the requested page slice and total", async () =>
       response.body.items.map((item) => item.agentId),
       ["agent-page-beta", "agent-page-unknown"],
     );
+  } finally {
+    await context.close();
+  }
+});
+
+test("available and search reject malformed page and pageSize values", async () => {
+  // Arrange
+  const context = await createDiscoveryApiContext();
+
+  try {
+    // Act
+    const malformedPageResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/tenant-alpha/agents/available?page=1.5",
+      subjectId: "caller-authorized",
+    });
+    const malformedPageSizeResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/tenant-alpha/agents/search?pageSize=10foo",
+      subjectId: "caller-authorized",
+    });
+
+    // Assert
+    assert.equal(malformedPageResponse.status, 400);
+    assert.deepEqual(malformedPageResponse.body, {
+      error: {
+        code: "invalid_query",
+        message: "page must be a positive integer.",
+      },
+    });
+    assert.equal(malformedPageSizeResponse.status, 400);
+    assert.deepEqual(malformedPageSizeResponse.body, {
+      error: {
+        code: "invalid_query",
+        message: "pageSize must be a positive integer.",
+      },
+    });
   } finally {
     await context.close();
   }

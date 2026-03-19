@@ -84,6 +84,16 @@ function toDiscoveryPublication(
     headerContract: normalizeHeaderContract(record.headerContract),
     healthStatus: getHealthStatus(record),
     invocationEndpoint: record.invocationEndpoint,
+    overlayRequirements: {
+      agent: {
+        requiredRoles: record.overlayAgentRequiredRoles,
+        requiredScopes: record.overlayAgentRequiredScopes,
+      },
+      environment: {
+        requiredRoles: record.overlayEnvironmentRequiredRoles,
+        requiredScopes: record.overlayEnvironmentRequiredScopes,
+      },
+    },
     publisherId: record.publisherId,
     rawCard: includeRawCard ? record.rawCard : undefined,
     rawCardAvailable: true,

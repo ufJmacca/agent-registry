@@ -241,6 +241,7 @@ export interface VersionAdminDetailResponse {
   active: boolean;
   agentId: string;
   approvalState: ApprovalState;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;
@@ -276,6 +277,16 @@ export interface DiscoveryPublication {
   headerContract: HeaderContractEntry[];
   healthStatus: DiscoveryHealthStatus;
   invocationEndpoint: string | null;
+  overlayRequirements: {
+    agent: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+    environment: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+  };
   publisherId: string;
   rawCard?: string;
   rawCardAvailable: boolean;

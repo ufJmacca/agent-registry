@@ -23,6 +23,8 @@ export interface DiscoveryHttpDependencies {
   service: AgentDiscoveryService;
 }
 
+export class InvalidDiscoveryRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -71,10 +73,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidDiscoveryRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidDiscoveryRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -93,6 +101,16 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidDiscoveryRequestError(
+      `${label} path segment must be valid URL encoding.`,
+    );
+  }
+}
+
 export function matchDiscoveryRoute(pathname: string): DiscoveryRouteMatch | null {
   const match = /^\/tenants\/([^/]+)\/agents\/available\/?$/.exec(pathname);
 
@@ -101,7 +119,7 @@ export function matchDiscoveryRoute(pathname: string): DiscoveryRouteMatch | nul
   }
 
   return {
-    tenantId: decodeURIComponent(match[1]),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
   };
 }
 
@@ -165,7 +183,7 @@ export async function handleDiscoveryRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidDiscoveryRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

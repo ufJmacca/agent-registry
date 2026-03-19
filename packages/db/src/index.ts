@@ -370,6 +370,10 @@ const migrationDefinitions: MigrationDefinition[] = [
           ["tenant_id", "agent_id", "version_id"],
           (constraint) => constraint.onDelete("cascade"),
         )
+        .addUniqueConstraint("environment_publications_tenant_publication_key", [
+          "tenant_id",
+          "publication_id",
+        ])
         .execute();
 
       await db.schema
@@ -453,9 +457,7 @@ const migrationDefinitions: MigrationDefinition[] = [
         .addColumn("tenant_id", "text", (column) =>
           column.notNull().references("tenants.tenant_id").onDelete("cascade"),
         )
-        .addColumn("publication_id", "text", (column) =>
-          column.notNull().references("environment_publications.publication_id").onDelete("cascade"),
-        )
+        .addColumn("publication_id", "text", (column) => column.notNull())
         .addColumn("invocation_count", "integer", (column) => column.notNull())
         .addColumn("success_count", "integer", (column) => column.notNull())
         .addColumn("error_count", "integer", (column) => column.notNull())
@@ -465,6 +467,13 @@ const migrationDefinitions: MigrationDefinition[] = [
         .addColumn("window_ended_at", "timestamptz", (column) => column.notNull())
         .addColumn("recorded_at", "timestamptz", (column) =>
           column.notNull().defaultTo(sql`now()`),
+        )
+        .addForeignKeyConstraint(
+          "publication_telemetry_publication_tenant_fk",
+          ["tenant_id", "publication_id"],
+          "environment_publications",
+          ["tenant_id", "publication_id"],
+          (constraint) => constraint.onDelete("cascade"),
         )
         .execute();
 
@@ -572,6 +581,17 @@ const migrationDefinitions: MigrationDefinition[] = [
       await sql`
         alter table agent_versions
         add column if not exists rejected_by text
+      `.execute(db);
+      await sql`
+        insert into publication_health (publication_id)
+        select publications.publication_id
+        from environment_publications as publications
+        inner join agent_versions as versions
+          on versions.tenant_id = publications.tenant_id
+          and versions.agent_id = publications.agent_id
+          and versions.version_id = publications.version_id
+        where versions.approval_state = 'approved'
+        on conflict (publication_id) do nothing
       `.execute(db);
     },
   },
@@ -683,6 +703,13 @@ export class KyselyBootstrapRepository {
     this.db = db;
   }
 
+  async deleteOtherTenants(retainedTenantId: string): Promise<void> {
+    await this.db
+      .deleteFrom("tenants")
+      .where("tenant_id", "!=", retainedTenantId)
+      .execute();
+  }
+
   async upsertTenant(tenant: BootstrapTenantRecord): Promise<void> {
     await this.db
       .insertInto("tenants")
@@ -717,6 +744,33 @@ export class KyselyBootstrapRepository {
           environments.map((environmentKey) => ({
             environment_key: environmentKey,
             tenant_id: tenantId,
+          })),
+        )
+        .execute();
+    });
+  }
+
+  async replaceMemberships(
+    tenantId: string,
+    memberships: BootstrapMembershipRecord[],
+  ): Promise<void> {
+    await this.db.transaction().execute(async (transaction) => {
+      await transaction.deleteFrom("tenant_memberships").where("tenant_id", "=", tenantId).execute();
+
+      if (memberships.length === 0) {
+        return;
+      }
+
+      await transaction
+        .insertInto("tenant_memberships")
+        .values(
+          memberships.map((membership) => ({
+            registry_capabilities: membership.registryCapabilities,
+            roles: membership.roles,
+            scopes: membership.scopes,
+            subject_id: membership.subjectId,
+            tenant_id: tenantId,
+            user_context: membership.userContext,
           })),
         )
         .execute();
