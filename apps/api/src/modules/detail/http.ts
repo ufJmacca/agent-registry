@@ -6,34 +6,29 @@ import {
   type PrincipalResolver,
 } from "@agent-registry/auth";
 import {
+  ActiveAgentPublicationNotFoundError,
+  AgentEnvironmentPublicationNotFoundError,
   AgentNotFoundError,
-  AgentVersionNotFoundError,
 } from "@agent-registry/db";
 
 import {
-  AgentAdminDetailAuthorizationError,
-  AgentAdminDetailService,
+  AgentPublicationDetailAuthorizationError,
+  AgentPublicationDetailService,
+  AgentPublicationDetailValidationError,
+  type AgentPublicationDetailQuery,
 } from "./service.js";
 
-export type AgentAdminDetailRouteMatch =
-  | {
-      agentId: string;
-      tenantId: string;
-      type: "version";
-      versionId: string;
-    }
-  | {
-      agentId: string;
-      tenantId: string;
-      type: "agent";
-    };
-
-export interface AgentAdminDetailHttpDependencies {
-  principalResolver: PrincipalResolver;
-  service: AgentAdminDetailService;
+export interface AgentDetailRouteMatch {
+  agentId: string;
+  tenantId: string;
 }
 
-export class InvalidAgentAdminDetailRequestError extends Error {}
+export interface AgentDetailHttpDependencies {
+  principalResolver: PrincipalResolver;
+  service: AgentPublicationDetailService;
+}
+
+export class InvalidAgentDetailRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -88,11 +83,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidAgentAdminDetailRequestError(errorMessage);
+    throw new InvalidAgentDetailRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidAgentAdminDetailRequestError(errorMessage);
+    throw new InvalidAgentDetailRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -115,40 +110,57 @@ function decodeRouteSegment(segment: string, label: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw new InvalidAgentAdminDetailRequestError(`${label} path segment must be valid URL encoding.`);
+    throw new InvalidAgentDetailRequestError(`${label} path segment must be valid URL encoding.`);
   }
 }
 
-export function matchAgentAdminDetailRoute(pathname: string): AgentAdminDetailRouteMatch | null {
-  const versionMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/?$/.exec(pathname);
+function parseIncludeRawCard(searchParams: URLSearchParams): boolean {
+  const includes = searchParams.getAll("include");
 
-  if (versionMatch !== null) {
-    return {
-      agentId: decodeRouteSegment(versionMatch[2], "Agent id"),
-      tenantId: decodeRouteSegment(versionMatch[1], "Tenant id"),
-      type: "version",
-      versionId: decodeRouteSegment(versionMatch[3], "Version id"),
-    };
+  for (const include of includes) {
+    if (include !== "rawCard") {
+      throw new AgentPublicationDetailValidationError(
+        `Unsupported include value '${include}'.`,
+      );
+    }
   }
 
-  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+):admin-detail\/?$/.exec(pathname);
-
-  if (agentMatch !== null) {
-    return {
-      agentId: decodeRouteSegment(agentMatch[2], "Agent id"),
-      tenantId: decodeRouteSegment(agentMatch[1], "Tenant id"),
-      type: "agent",
-    };
-  }
-
-  return null;
+  return includes.includes("rawCard");
 }
 
-export async function handleAgentAdminDetailRequest(
+function parseDetailQuery(searchParams: URLSearchParams): AgentPublicationDetailQuery {
+  const environmentKeys = searchParams.getAll("environmentKey");
+
+  if (environmentKeys.length > 1) {
+    throw new AgentPublicationDetailValidationError(
+      "environmentKey may only be specified once.",
+    );
+  }
+
+  return {
+    environmentKey: environmentKeys[0] ?? null,
+    includeRawCard: parseIncludeRawCard(searchParams),
+  };
+}
+
+export function matchAgentDetailRoute(pathname: string): AgentDetailRouteMatch | null {
+  const match = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/?$/.exec(pathname);
+
+  if (match === null) {
+    return null;
+  }
+
+  return {
+    agentId: decodeRouteSegment(match[2], "Agent id"),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
+  };
+}
+
+export async function handleAgentDetailRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: AgentAdminDetailRouteMatch,
-  dependencies: AgentAdminDetailHttpDependencies,
+  route: AgentDetailRouteMatch,
+  dependencies: AgentDetailHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -166,24 +178,13 @@ export async function handleAgentAdminDetailRequest(
       return;
     }
 
-    if (route.type === "agent") {
-      writeJson(
-        response,
-        200,
-        await dependencies.service.getAgentDetail(principal, route.tenantId, route.agentId),
-      );
-      return;
-    }
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const query = parseDetailQuery(url.searchParams);
 
     writeJson(
       response,
       200,
-      await dependencies.service.getVersionDetail(
-        principal,
-        route.tenantId,
-        route.agentId,
-        route.versionId,
-      ),
+      await dependencies.service.getPublicationDetail(principal, route.tenantId, route.agentId, query),
     );
   } catch (error) {
     if (error instanceof MissingSubjectIdError) {
@@ -196,8 +197,16 @@ export async function handleAgentAdminDetailRequest(
       return;
     }
 
-    if (error instanceof AgentAdminDetailAuthorizationError) {
+    if (error instanceof AgentPublicationDetailAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
+      return;
+    }
+
+    if (
+      error instanceof ActiveAgentPublicationNotFoundError ||
+      error instanceof AgentEnvironmentPublicationNotFoundError
+    ) {
+      writeError(response, 404, "publication_not_found", error.message);
       return;
     }
 
@@ -206,12 +215,12 @@ export async function handleAgentAdminDetailRequest(
       return;
     }
 
-    if (error instanceof AgentVersionNotFoundError) {
-      writeError(response, 404, "version_not_found", error.message);
+    if (error instanceof AgentPublicationDetailValidationError) {
+      writeError(response, 400, "invalid_query", error.message);
       return;
     }
 
-    if (error instanceof InvalidAgentAdminDetailRequestError) {
+    if (error instanceof InvalidAgentDetailRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

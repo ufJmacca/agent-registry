@@ -4,6 +4,11 @@ export interface CallerIdentity {
   tenantId: string;
 }
 
+export interface AccessRequirementClause {
+  requiredRoles: string[];
+  requiredScopes: string[];
+}
+
 export interface AuthenticatedRequestLike {
   auth?: {
     subjectId?: string;
@@ -89,4 +94,50 @@ export function hasAnyRole(callerRoles: string[], requiredRoles: string[]): bool
 
 export function hasAllScopes(callerScopes: string[], requiredScopes: string[]): boolean {
   return requiredScopes.every((scope) => callerScopes.includes(scope));
+}
+
+export function satisfiesAccessClauses(
+  caller: Pick<CallerIdentity, "roles" | "scopes">,
+  clauses: AccessRequirementClause[],
+): boolean {
+  return clauses.every(
+    (clause) =>
+      hasAnyRole(caller.roles, clause.requiredRoles) &&
+      hasAllScopes(caller.scopes, clause.requiredScopes),
+  );
+}
+
+function getPathValue(root: unknown, path: string[]): unknown {
+  let current = root;
+
+  for (const segment of path) {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
+}
+
+export function resolveUserContextSource(
+  userContext: Record<string, unknown>,
+  source: string,
+): unknown {
+  const normalizedSource = source.trim();
+
+  if (normalizedSource === "") {
+    return undefined;
+  }
+
+  if (normalizedSource.startsWith("user.")) {
+    const strippedValue = getPathValue(userContext, normalizedSource.slice(5).split("."));
+
+    if (strippedValue !== undefined && strippedValue !== null) {
+      return strippedValue;
+    }
+  }
+
+  return getPathValue(userContext, normalizedSource.split("."));
 }

@@ -26,6 +26,12 @@ import {
   matchAgentDraftRoute,
 } from "./modules/agents/index.js";
 import {
+  AgentPublicationDetailService,
+  InvalidAgentDetailRequestError,
+  handleAgentDetailRequest,
+  matchAgentDetailRoute,
+} from "./modules/detail/index.js";
+import {
   AgentDiscoveryService,
   InvalidDiscoveryRequestError,
   handleDiscoveryRequest,
@@ -43,6 +49,12 @@ import {
   handleTenantPolicyOverlayRequest,
   matchTenantPolicyOverlayRoute,
 } from "./modules/overlays/index.js";
+import {
+  AgentPublicationPreflightService,
+  InvalidAgentPublicationPreflightRequestError,
+  handleAgentPublicationPreflightRequest,
+  matchAgentPublicationPreflightRoute,
+} from "./modules/preflight/index.js";
 import {
   AgentVersionReviewService,
   InvalidAgentVersionReviewRequestError,
@@ -92,6 +104,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const principalResolver = createPrincipalResolver(options.db);
   const environmentRepository = new KyselyTenantEnvironmentRepository(options.db);
   const tenantRepository = new KyselyTenantRepository(options.db);
+  const publicationRepository = new KyselyAgentDiscoveryRepository(options.db);
   const environmentService = new TenantEnvironmentCatalogService(environmentRepository);
   const agentDraftService = new AgentDraftRegistrationService(
     new KyselyAgentDraftRegistrationRepository(options.db),
@@ -112,7 +125,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     },
   );
   const discoveryService = new AgentDiscoveryService(
-    new KyselyAgentDiscoveryRepository(options.db),
+    publicationRepository,
     {
       rawCardByteLimit: config.rawCardByteLimit,
     },
@@ -123,6 +136,8 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
+  const detailService = new AgentPublicationDetailService(publicationRepository);
+  const preflightService = new AgentPublicationPreflightService(publicationRepository);
 
   return async (request, response) => {
     try {
@@ -131,6 +146,8 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       const overlayRoute = matchTenantPolicyOverlayRoute(url.pathname);
       const searchRoute = matchSearchRoute(url.pathname);
       const discoveryRoute = matchDiscoveryRoute(url.pathname);
+      const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
+      const detailRoute = matchAgentDetailRoute(url.pathname);
       const agentDraftRoute = matchAgentDraftRoute(url.pathname);
       const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
       const adminDetailRoute = matchAgentAdminDetailRoute(url.pathname);
@@ -167,6 +184,30 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         return;
       }
 
+      if (preflightRoute !== null) {
+        await handleAgentPublicationPreflightRequest(request, response, preflightRoute, {
+          principalResolver,
+          service: preflightService,
+        });
+        return;
+      }
+
+      if (adminDetailRoute !== null) {
+        await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
+          principalResolver,
+          service: adminDetailService,
+        });
+        return;
+      }
+
+      if (detailRoute !== null) {
+        await handleAgentDetailRequest(request, response, detailRoute, {
+          principalResolver,
+          service: detailService,
+        });
+        return;
+      }
+
       if (agentDraftRoute !== null) {
         await handleAgentDraftRequest(request, response, agentDraftRoute, {
           principalResolver,
@@ -179,14 +220,6 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         await handleTenantEnvironmentRequest(request, response, environmentRoute, {
           principalResolver,
           service: environmentService,
-        });
-        return;
-      }
-
-      if (adminDetailRoute !== null) {
-        await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
-          principalResolver,
-          service: adminDetailService,
         });
         return;
       }
@@ -204,7 +237,9 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     } catch (error) {
       if (
         error instanceof InvalidAgentAdminDetailRequestError ||
+        error instanceof InvalidAgentDetailRequestError ||
         error instanceof InvalidAgentDraftRequestError ||
+        error instanceof InvalidAgentPublicationPreflightRequestError ||
         error instanceof InvalidAgentVersionReviewRequestError ||
         error instanceof InvalidDiscoveryRequestError ||
         error instanceof InvalidSearchRequestError ||
