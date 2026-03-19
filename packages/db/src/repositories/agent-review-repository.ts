@@ -155,6 +155,7 @@ export class KyselyAgentReviewRepository implements AgentReviewRepository {
         .updateTable("agent_versions")
         .set({
           approval_state: "pending_review",
+          publisher_id: input.submittedBy,
           submitted_at: new Date().toISOString(),
           submitted_by: input.submittedBy,
         })

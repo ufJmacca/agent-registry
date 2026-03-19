@@ -268,6 +268,7 @@ export class AgentDraftRegistrationService {
     const validated = await this.validateRequest(tenantId, request);
     const record = await this.draftRepository.createDraftAgent({
       ...validated,
+      publisherId: principal.subjectId,
       tenantId,
     });
 
@@ -294,6 +295,7 @@ export class AgentDraftRegistrationService {
     const record = await this.draftRepository.createDraftVersion({
       ...validated,
       agentId,
+      publisherId: principal.subjectId,
       tenantId,
     });
 

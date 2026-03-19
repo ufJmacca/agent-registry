@@ -207,3 +207,50 @@ export interface VersionAdminDetailResponse {
   versionLabel: string;
   versionSequence: number;
 }
+
+export type DiscoveryPublicationStatus =
+  | "approved_active"
+  | "approved_inactive"
+  | "draft"
+  | "pending_review"
+  | "rejected";
+
+export type DiscoveryHealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
+
+export interface DiscoveryPublication {
+  activeVersionId: string;
+  agentId: string;
+  capabilities: string[];
+  contextContract: ContextContractEntry[];
+  deprecated: boolean;
+  displayName: string;
+  environmentKey: string;
+  headerContract: HeaderContractEntry[];
+  healthStatus: DiscoveryHealthStatus;
+  invocationEndpoint: string | null;
+  overlayRequirements: {
+    agent: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+    environment: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+  };
+  publisherId: string;
+  rawCard?: string;
+  rawCardAvailable: boolean;
+  requiredRoles: string[];
+  requiredScopes: string[];
+  status: DiscoveryPublicationStatus;
+  summary: string;
+  tags: string[];
+}
+
+export interface DiscoveryPublicationListResponse {
+  items: DiscoveryPublication[];
+  page: number;
+  pageSize: number;
+  total: number;
+}

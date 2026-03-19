@@ -622,6 +622,54 @@ test("submit, approve, and reject enforce lifecycle transitions and record revie
   }
 });
 
+test("submit updates publisher_id to the submitting principal", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    const adminDraftResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest(),
+      path: "/tenants/tenant-alpha/agents",
+      subjectId: "admin-alpha",
+    });
+    const draftBeforeSubmit = await context.db
+      .selectFrom("agent_versions")
+      .select(["publisher_id", "submitted_by"])
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", adminDraftResponse.body.agentId)
+      .where("version_id", "=", adminDraftResponse.body.versionId)
+      .executeTakeFirstOrThrow();
+
+    // Act
+    const submitResponse = await submitVersion(
+      context,
+      adminDraftResponse.body.agentId,
+      adminDraftResponse.body.versionId,
+    );
+    const draftAfterSubmit = await context.db
+      .selectFrom("agent_versions")
+      .select(["publisher_id", "submitted_by"])
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", adminDraftResponse.body.agentId)
+      .where("version_id", "=", adminDraftResponse.body.versionId)
+      .executeTakeFirstOrThrow();
+
+    // Assert
+    assert.equal(adminDraftResponse.status, 201);
+    assert.deepEqual(draftBeforeSubmit, {
+      publisher_id: "admin-alpha",
+      submitted_by: null,
+    });
+    assert.equal(submitResponse.status, 200);
+    assert.deepEqual(draftAfterSubmit, {
+      publisher_id: "publisher-alpha",
+      submitted_by: "publisher-alpha",
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("approvals update the active version pointer only for the highest approved sequence", async () => {
   // Arrange
   const context = await createReviewApiContext();
