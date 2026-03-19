@@ -23,6 +23,8 @@ export interface SearchHttpDependencies {
   service: AgentDiscoveryService;
 }
 
+export class InvalidSearchRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -71,10 +73,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidSearchRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidSearchRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -93,6 +101,14 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidSearchRequestError(`${label} path segment must be valid URL encoding.`);
+  }
+}
+
 export function matchSearchRoute(pathname: string): SearchRouteMatch | null {
   const match = /^\/tenants\/([^/]+)\/agents\/search\/?$/.exec(pathname);
 
@@ -101,7 +117,7 @@ export function matchSearchRoute(pathname: string): SearchRouteMatch | null {
   }
 
   return {
-    tenantId: decodeURIComponent(match[1]),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
   };
 }
 
@@ -165,7 +181,7 @@ export async function handleSearchRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidSearchRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

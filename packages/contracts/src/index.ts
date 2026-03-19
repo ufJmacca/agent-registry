@@ -192,6 +192,7 @@ export interface VersionAdminDetailResponse {
   active: boolean;
   agentId: string;
   approvalState: ApprovalState;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;

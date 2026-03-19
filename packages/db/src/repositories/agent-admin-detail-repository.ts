@@ -57,6 +57,7 @@ export interface VersionAdminDetailRecord {
   active: boolean;
   agentId: string;
   approvalState: ApprovalState;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;
@@ -261,6 +262,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
         "approval_state",
         "approved_at",
         "approved_by",
+        "capabilities",
         "card_profile_id",
         "context_contract",
         "display_name",
@@ -313,6 +315,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
       active: agent.active_version_id === versionId,
       agentId: agent.agent_id,
       approvalState: version.approval_state as ApprovalState,
+      capabilities: version.capabilities,
       cardProfileId: version.card_profile_id,
       contextContract: version.context_contract,
       displayName: version.display_name,
