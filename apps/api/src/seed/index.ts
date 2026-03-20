@@ -47,6 +47,7 @@ interface DemoPublicationSeed {
 }
 
 interface DemoAgentSeed {
+  agentId: string;
   capabilities: string[];
   contextContract: CreateDraftAgentRequest["contextContract"];
   displayName: string;
@@ -71,6 +72,7 @@ export interface DemoSeedSummary {
 
 interface DemoSeedContext {
   adminSubjectId: string;
+  environmentKeys: string[];
   publisherSubjectId: string;
   tenantId: string;
 }
@@ -97,6 +99,7 @@ function createRawCard(input: {
 
 const demoAgents: DemoAgentSeed[] = [
   {
+    agentId: "demo-case-resolution-copilot",
     capabilities: ["case-resolution", "timeline"],
     contextContract: [
       {
@@ -184,6 +187,7 @@ const demoAgents: DemoAgentSeed[] = [
     versionLabel: "demo-2026.01.15",
   },
   {
+    agentId: "demo-policy-retrieval-assistant",
     capabilities: ["policy-search", "knowledge-base"],
     contextContract: [
       {
@@ -296,6 +300,7 @@ async function loadDemoSeedContext(selfHostedBootstrapFile: string): Promise<Dem
 
   return {
     adminSubjectId,
+    environmentKeys: tenant.environments,
     publisherSubjectId,
     tenantId: tenant.tenantId,
   };
@@ -306,11 +311,107 @@ async function resetDemoAgentCatalog(db: AgentRegistryDb, tenantId: string): Pro
     .deleteFrom("agents")
     .where("tenant_id", "=", tenantId)
     .where(
-      "display_name",
+      "agent_id",
       "in",
-      demoAgents.map((agent) => agent.displayName),
+      demoAgents.map((agent) => agent.agentId),
     )
     .execute();
+}
+
+function resolveSeedEnvironmentKey(
+  requestedEnvironmentKey: string,
+  environmentKeys: string[],
+): string {
+  if (environmentKeys.length === 0) {
+    throw new Error("Self-hosted seed requires at least one tenant environment.");
+  }
+
+  if (requestedEnvironmentKey === "dev") {
+    return environmentKeys[0];
+  }
+
+  if (requestedEnvironmentKey === "prod") {
+    return environmentKeys[environmentKeys.length - 1];
+  }
+
+  return requestedEnvironmentKey;
+}
+
+function rewriteSeedUrlEnvironment(
+  url: string,
+  requestedEnvironmentKey: string,
+  actualEnvironmentKey: string,
+): string {
+  if (requestedEnvironmentKey === actualEnvironmentKey) {
+    return url;
+  }
+
+  const parsed = new URL(url);
+  const requestedSegment = `.${requestedEnvironmentKey}.`;
+  const actualSegment = `.${actualEnvironmentKey}.`;
+  const updatedHostname = parsed.hostname.replace(requestedSegment, actualSegment);
+
+  if (updatedHostname === parsed.hostname) {
+    throw new Error(
+      `Expected seed URL '${url}' to contain environment segment '${requestedEnvironmentKey}'.`,
+    );
+  }
+
+  parsed.hostname = updatedHostname;
+  return parsed.toString();
+}
+
+function rewriteSeedRawCardEnvironment(
+  rawCard: string,
+  requestedEnvironmentKey: string,
+  actualEnvironmentKey: string,
+): string {
+  if (requestedEnvironmentKey === actualEnvironmentKey) {
+    return rawCard;
+  }
+
+  const parsed = JSON.parse(rawCard) as Record<string, unknown>;
+
+  if (typeof parsed.invocationEndpoint === "string") {
+    parsed.invocationEndpoint = rewriteSeedUrlEnvironment(
+      parsed.invocationEndpoint,
+      requestedEnvironmentKey,
+      actualEnvironmentKey,
+    );
+  }
+
+  return JSON.stringify(parsed, null, 2);
+}
+
+function materializeDemoPublications(
+  publications: DemoPublicationSeed[],
+  environmentKeys: string[],
+): DemoPublicationSeed[] {
+  const materializedPublications = new Map<string, DemoPublicationSeed>();
+
+  for (const publication of publications) {
+    const actualEnvironmentKey = resolveSeedEnvironmentKey(
+      publication.environmentKey,
+      environmentKeys,
+    );
+
+    materializedPublications.set(actualEnvironmentKey, {
+      ...publication,
+      environmentKey: actualEnvironmentKey,
+      healthEndpointUrl: rewriteSeedUrlEnvironment(
+        publication.healthEndpointUrl,
+        publication.environmentKey,
+        actualEnvironmentKey,
+      ),
+      rawCard: rewriteSeedRawCardEnvironment(
+        publication.rawCard,
+        publication.environmentKey,
+        actualEnvironmentKey,
+      ),
+    });
+  }
+
+  return [...materializedPublications.values()];
 }
 
 async function seedDemoAgentCatalog(
@@ -362,12 +463,16 @@ async function seedDemoAgentCatalog(
   let telemetryWindowCount = 0;
 
   for (const demoAgent of demoAgents) {
+    const publications = materializeDemoPublications(
+      demoAgent.publications,
+      context.environmentKeys,
+    );
     const draftRequest: CreateDraftAgentRequest = {
       capabilities: demoAgent.capabilities,
       contextContract: demoAgent.contextContract,
       displayName: demoAgent.displayName,
       headerContract: demoAgent.headerContract,
-      publications: demoAgent.publications.map((publication) => ({
+      publications: publications.map((publication) => ({
         environmentKey: publication.environmentKey,
         healthEndpointUrl: publication.healthEndpointUrl,
         rawCard: publication.rawCard,
@@ -378,7 +483,9 @@ async function seedDemoAgentCatalog(
       tags: demoAgent.tags,
       versionLabel: demoAgent.versionLabel,
     };
-    const draft = await draftService.createDraftAgent(publisher, context.tenantId, draftRequest);
+    const draft = await draftService.createDraftAgent(publisher, context.tenantId, draftRequest, {
+      agentId: demoAgent.agentId,
+    });
     const publicationIds = new Map(
       draft.publications.map((publication) => [publication.environmentKey, publication.publicationId]),
     );
@@ -388,7 +495,7 @@ async function seedDemoAgentCatalog(
 
     publicationCount += draft.publications.length;
 
-    for (const publication of demoAgent.publications) {
+    for (const publication of publications) {
       const publicationId = publicationIds.get(publication.environmentKey);
 
       if (publicationId === undefined) {

@@ -261,12 +261,16 @@ export class AgentDraftRegistrationService {
     principal: ResolvedPrincipal,
     tenantId: string,
     request: CreateDraftAgentRequest,
+    options: {
+      agentId?: string;
+    } = {},
   ): Promise<DraftAgentRegistrationResponse> {
     assertTenantMembershipScope(principal, tenantId);
     assertPublisherAccess(principal);
 
     const validated = await this.validateRequest(tenantId, request);
     const record = await this.draftRepository.createDraftAgent({
+      agentId: options.agentId,
       ...validated,
       publisherId: principal.subjectId,
       tenantId,

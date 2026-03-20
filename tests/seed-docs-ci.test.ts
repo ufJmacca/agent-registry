@@ -47,6 +47,7 @@ interface SelfHostedBootstrapManifestOptions {
   adminSubjectId?: string;
   callerSubjectId?: string;
   displayName?: string;
+  environments?: string[];
   publisherSubjectId?: string;
   tenantId?: string;
 }
@@ -102,6 +103,7 @@ async function createSelfHostedBootstrapManifest(
   const manifestPath = path.join(tempDir, "self-hosted-bootstrap.yaml");
   const tenantId = options.tenantId ?? "tenant-demo";
   const displayName = options.displayName ?? "Demo Tenant";
+  const environments = options.environments ?? ["dev", "prod"];
   const adminSubjectId = options.adminSubjectId ?? "demo-admin";
   const publisherSubjectId = options.publisherSubjectId ?? "demo-publisher";
   const callerSubjectId = options.callerSubjectId ?? "demo-caller";
@@ -112,7 +114,7 @@ async function createSelfHostedBootstrapManifest(
       "tenants:",
       `  - tenantId: ${tenantId}`,
       `    displayName: ${displayName}`,
-      "    environments: [dev, prod]",
+      `    environments: [${environments.join(", ")}]`,
       "    memberships:",
       `      - subjectId: ${adminSubjectId}`,
       "        roles: [tenant-admin]",
@@ -162,7 +164,12 @@ async function runSeedScript(env: NodeJS.ProcessEnv): Promise<{
   );
 }
 
-async function insertCustomDemoAgent(db: AgentRegistryDb): Promise<{
+async function insertCustomDemoAgent(
+  db: AgentRegistryDb,
+  options: {
+    displayName?: string;
+  } = {},
+): Promise<{
   agentId: string;
   publicationId: string;
   versionId: string;
@@ -170,14 +177,16 @@ async function insertCustomDemoAgent(db: AgentRegistryDb): Promise<{
   const agentId = randomUUID();
   const versionId = randomUUID();
   const publicationId = randomUUID();
+  const displayName = options.displayName ?? "Local Sandbox Agent";
+  const summary = `Seeded custom agent for '${displayName}'.`;
 
   await db
     .insertInto("agents")
     .values({
       active_version_id: versionId,
       agent_id: agentId,
-      display_name: "Local Sandbox Agent",
-      summary: "A locally registered agent that should survive demo reseeding.",
+      display_name: displayName,
+      summary,
       tenant_id: "tenant-demo",
     })
     .execute();
@@ -192,12 +201,12 @@ async function insertCustomDemoAgent(db: AgentRegistryDb): Promise<{
       capabilities: ["sandbox"],
       card_profile_id: "a2a-default",
       context_contract: [],
-      display_name: "Local Sandbox Agent",
+      display_name: displayName,
       header_contract: [],
       publisher_id: "demo-publisher",
       required_roles: [],
       required_scopes: [],
-      summary: "A locally registered agent that should survive demo reseeding.",
+      summary,
       tags: ["local-only"],
       tenant_id: "tenant-demo",
       version_id: versionId,
@@ -214,15 +223,15 @@ async function insertCustomDemoAgent(db: AgentRegistryDb): Promise<{
       health_endpoint_url: "https://local-sandbox.example.com/health",
       invocation_endpoint: "https://local-sandbox.example.com/invoke",
       normalized_metadata: {
-        displayName: "Local Sandbox Agent",
+        displayName,
       },
       publication_id: publicationId,
       raw_card: JSON.stringify(
         {
           capabilities: ["sandbox"],
           invocationEndpoint: "https://local-sandbox.example.com/invoke",
-          name: "Local Sandbox Agent",
-          summary: "A locally registered agent that should survive demo reseeding.",
+          name: displayName,
+          summary,
           tags: ["local-only"],
         },
         null,
@@ -544,12 +553,63 @@ test("seed script preserves non-demo agents already registered in tenant-demo", 
   }
 });
 
-test("seed script derives tenant and operator principals from an overridden self-hosted manifest", async () => {
+test("seed script preserves non-seeded agents even when they share a demo display name", async () => {
+  const database = await createFreshRegistryDatabase();
+  const bootstrapManifest = await createSelfHostedBootstrapManifest();
+
+  try {
+    await runSeedScript({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: bootstrapManifest.manifestPath,
+    });
+
+    const customAgent = await insertCustomDemoAgent(database.db, {
+      displayName: "Case Resolution Copilot",
+    });
+
+    await runSeedScript({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: bootstrapManifest.manifestPath,
+    });
+
+    const sameNameAgents = await database.db
+      .selectFrom("agents")
+      .select(["agent_id", "display_name"])
+      .where("tenant_id", "=", "tenant-demo")
+      .where("display_name", "=", "Case Resolution Copilot")
+      .orderBy("agent_id")
+      .execute();
+
+    assert.equal(sameNameAgents.length, 2);
+    assert.ok(sameNameAgents.some((agent) => agent.agent_id === customAgent.agentId));
+
+    const preservedPublication = await database.db
+      .selectFrom("environment_publications")
+      .select(["agent_id", "publication_id", "version_id"])
+      .where("tenant_id", "=", "tenant-demo")
+      .where("agent_id", "=", customAgent.agentId)
+      .executeTakeFirst();
+
+    assert.deepEqual(preservedPublication, {
+      agent_id: customAgent.agentId,
+      publication_id: customAgent.publicationId,
+      version_id: customAgent.versionId,
+    });
+  } finally {
+    await bootstrapManifest.cleanup();
+    await database.cleanup();
+  }
+});
+
+test("seed script derives tenant and operator principals and remaps publications for overridden self-hosted manifests", async () => {
   const database = await createFreshRegistryDatabase();
   const bootstrapManifest = await createSelfHostedBootstrapManifest({
     adminSubjectId: "operator-admin",
     callerSubjectId: "operator-caller",
     displayName: "Operator Tenant",
+    environments: ["test"],
     publisherSubjectId: "operator-publisher",
     tenantId: "tenant-operator",
   });
@@ -586,15 +646,45 @@ test("seed script derives tenant and operator principals from an overridden self
       ["operator-admin", "operator-caller", "operator-publisher"],
     );
 
-    const agents = await database.db
-      .selectFrom("agents")
-      .select("display_name")
+    const environments = await database.db
+      .selectFrom("tenant_environments")
+      .select("environment_key")
       .where("tenant_id", "=", "tenant-operator")
-      .orderBy("display_name")
+      .orderBy("environment_key")
       .execute();
 
     assert.deepEqual(
-      agents.map((agent) => agent.display_name),
+      environments.map((environment) => environment.environment_key),
+      ["test"],
+    );
+
+    const publications = await database.db
+      .selectFrom("environment_publications")
+      .innerJoin("agent_versions", (join) =>
+        join
+          .onRef("agent_versions.tenant_id", "=", "environment_publications.tenant_id")
+          .onRef("agent_versions.agent_id", "=", "environment_publications.agent_id")
+          .onRef("agent_versions.version_id", "=", "environment_publications.version_id"),
+      )
+      .select([
+        "agent_versions.display_name as display_name",
+        "environment_publications.environment_key",
+        "environment_publications.health_endpoint_url",
+        "environment_publications.raw_card",
+      ])
+      .where("environment_publications.tenant_id", "=", "tenant-operator")
+      .orderBy("agent_versions.display_name")
+      .execute();
+
+    assert.deepEqual(
+      publications.map((publication) => publication.environment_key),
+      ["test", "test"],
+    );
+    assert.ok(publications.every((publication) => publication.health_endpoint_url.includes(".test.")));
+    assert.ok(publications.every((publication) => publication.raw_card.includes(".test.example.com/")));
+
+    assert.deepEqual(
+      publications.map((publication) => publication.display_name),
       ["Case Resolution Copilot", "Policy Retrieval Assistant"],
     );
   } finally {
