@@ -362,12 +362,16 @@ function createExpiredSessionCookie(): string {
   return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
 }
 
+function getRequestUrl(request: IncomingMessage): URL {
+  return new URL(request.url ?? "/", "http://127.0.0.1");
+}
+
 function getPathname(request: IncomingMessage): string {
-  return new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+  return getRequestUrl(request).pathname;
 }
 
 function createRequestForFormData(request: IncomingMessage): Request {
-  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const url = getRequestUrl(request);
   const method = request.method ?? "GET";
   const headers = new Headers();
 
@@ -448,6 +452,24 @@ function readJsonField<TValue>(formData: FormData, fieldName: string): TValue {
   return JSON.parse(rawValue) as TValue;
 }
 
+function readDraftJsonField<TValue>(formData: FormData, fieldName: string): TValue {
+  try {
+    return readJsonField<TValue>(formData, fieldName);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new AgentDraftRegistrationValidationError(
+        `Field '${fieldName}' must be valid JSON.`,
+      );
+    }
+
+    if (error instanceof Error) {
+      throw new AgentDraftRegistrationValidationError(error.message);
+    }
+
+    throw error;
+  }
+}
+
 async function readRawCardField(formData: FormData, fieldName: string): Promise<string> {
   const rawValue = formData.get(fieldName);
 
@@ -513,6 +535,7 @@ async function renderSignInPage(
   response: ServerResponse,
   db: AgentRegistryDb,
   deploymentMode: "hosted" | "self-hosted",
+  selectedHostedTenantId?: string,
 ): Promise<void> {
   const tenants = await loadTenantConsoleOptions(db);
 
@@ -521,19 +544,22 @@ async function renderSignInPage(
     return;
   }
 
+  const selfHostedTenant = tenants[0];
+  const selectedHostedTenant =
+    deploymentMode === "hosted"
+      ? tenants.find((tenant) => tenant.tenantId === selectedHostedTenantId) ?? tenants[0]
+      : selfHostedTenant;
   const hostedTenantOptions = tenants
     .map(
       (tenant) =>
-        `<option value="${escapeHtml(tenant.tenantId)}">${escapeHtml(tenant.displayName)} (${escapeHtml(tenant.tenantId)})</option>`,
+        `<option value="${escapeHtml(tenant.tenantId)}"${tenant.tenantId === selectedHostedTenant.tenantId ? " selected" : ""}>${escapeHtml(tenant.displayName)} (${escapeHtml(tenant.tenantId)})</option>`,
     )
     .join("");
-  const selfHostedTenant = tenants[0];
-  const subjectOptions = tenants
-    .flatMap((tenant) =>
-      tenant.memberships.map(
-        (membership) =>
-          `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}] in ${escapeHtml(tenant.displayName)}</option>`,
-      ),
+  const visibleTenant = deploymentMode === "hosted" ? selectedHostedTenant : selfHostedTenant;
+  const subjectOptions = visibleTenant.memberships
+    .map(
+      (membership) =>
+        `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}]</option>`,
     )
     .join("");
 
@@ -554,14 +580,18 @@ async function renderSignInPage(
                <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
                <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
             : `<label>Tenant
-                 <select name="tenantId">
+                 <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
                    ${hostedTenantOptions}
                  </select>
                </label>`
         }
         <label>Subject
           <select name="subjectId">
-            ${subjectOptions}
+            ${
+              subjectOptions === ""
+                ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
+                : subjectOptions
+            }
           </select>
         </label>
         <button type="submit">Sign In</button>
@@ -922,45 +952,67 @@ async function createDraftFromForm(
     environmentService.listEnvironments(principal, tenantId),
   ]);
 
-  const publications = [];
+  let draftInput: Parameters<AgentDraftRegistrationService["createDraftAgent"]>[2];
 
-  for (const environment of environments.environments) {
-    const prefix = `publication:${environment.environmentKey}:`;
+  try {
+    const publications = [];
 
-    if (formData.get(`${prefix}enabled`) === null) {
-      continue;
+    for (const environment of environments.environments) {
+      const prefix = `publication:${environment.environmentKey}:`;
+
+      if (formData.get(`${prefix}enabled`) === null) {
+        continue;
+      }
+
+      const invocationEndpoint = readStringField(formData, `${prefix}invocationEndpoint`);
+
+      publications.push({
+        environmentKey: environment.environmentKey,
+        healthEndpointUrl: readStringField(formData, `${prefix}healthEndpointUrl`, {
+          required: true,
+        }),
+        invocationEndpoint: invocationEndpoint === "" ? undefined : invocationEndpoint,
+        rawCard: await readRawCardField(formData, `${prefix}rawCard`),
+      });
     }
 
-    const invocationEndpoint = readStringField(formData, `${prefix}invocationEndpoint`);
-
-    publications.push({
-      environmentKey: environment.environmentKey,
-      healthEndpointUrl: readStringField(formData, `${prefix}healthEndpointUrl`, {
+    draftInput = {
+      capabilities: parseDelimitedStrings(
+        readStringField(formData, "capabilities", { required: true }),
+      ),
+      contextContract: readDraftJsonField(formData, "contextContract"),
+      displayName: readStringField(formData, "displayName", {
         required: true,
       }),
-      invocationEndpoint: invocationEndpoint === "" ? undefined : invocationEndpoint,
-      rawCard: await readRawCardField(formData, `${prefix}rawCard`),
-    });
+      headerContract: readDraftJsonField(formData, "headerContract"),
+      publications,
+      requiredRoles: parseDelimitedStrings(
+        readStringField(formData, "requiredRoles", { fallback: "" }),
+      ),
+      requiredScopes: parseDelimitedStrings(
+        readStringField(formData, "requiredScopes", { fallback: "" }),
+      ),
+      summary: readStringField(formData, "summary", {
+        required: true,
+      }),
+      tags: parseDelimitedStrings(readStringField(formData, "tags", { fallback: "" })),
+      versionLabel: readStringField(formData, "versionLabel", {
+        required: true,
+      }),
+    };
+  } catch (error) {
+    if (error instanceof AgentDraftRegistrationValidationError) {
+      throw error;
+    }
+
+    if (error instanceof Error) {
+      throw new AgentDraftRegistrationValidationError(error.message);
+    }
+
+    throw error;
   }
 
-  const draft = await draftService.createDraftAgent(principal, tenantId, {
-    capabilities: parseDelimitedStrings(readStringField(formData, "capabilities", { required: true })),
-    contextContract: readJsonField(formData, "contextContract"),
-    displayName: readStringField(formData, "displayName", {
-      required: true,
-    }),
-    headerContract: readJsonField(formData, "headerContract"),
-    publications,
-    requiredRoles: parseDelimitedStrings(readStringField(formData, "requiredRoles", { fallback: "" })),
-    requiredScopes: parseDelimitedStrings(readStringField(formData, "requiredScopes", { fallback: "" })),
-    summary: readStringField(formData, "summary", {
-      required: true,
-    }),
-    tags: parseDelimitedStrings(readStringField(formData, "tags", { fallback: "" })),
-    versionLabel: readStringField(formData, "versionLabel", {
-      required: true,
-    }),
-  });
+  const draft = await draftService.createDraftAgent(principal, tenantId, draftInput);
 
   redirect(
     response,
@@ -1087,21 +1139,25 @@ async function renderVersionDetailPage(
         ${renderPreformattedJson(publication.normalizedMetadata)}
         <h3>Raw Card</h3>
         <pre>${escapeHtml(publication.rawCard)}</pre>
-        <h3>Advisory Telemetry</h3>
         ${
-          publication.telemetry.length === 0
-            ? "<p>No advisory telemetry submitted.</p>"
-            : publication.telemetry
-                .map(
-                  (telemetry) =>
-                    `<div class="stack">
-                      <p>Invocation count: ${telemetry.invocationCount}</p>
-                      <p>Success count: ${telemetry.successCount}</p>
-                      <p>Error count: ${telemetry.errorCount}</p>
-                      <p>p95 latency: ${telemetry.p95LatencyMs ?? "n/a"}</p>
-                    </div>`,
-                )
-                .join("")
+          isTenantAdmin(principal)
+            ? `<h3>Advisory Telemetry</h3>
+               ${
+                 publication.telemetry.length === 0
+                   ? "<p>No advisory telemetry submitted.</p>"
+                   : publication.telemetry
+                       .map(
+                         (telemetry) =>
+                           `<div class="stack">
+                             <p>Invocation count: ${telemetry.invocationCount}</p>
+                             <p>Success count: ${telemetry.successCount}</p>
+                             <p>Error count: ${telemetry.errorCount}</p>
+                             <p>p95 latency: ${telemetry.p95LatencyMs ?? "n/a"}</p>
+                           </div>`,
+                       )
+                       .join("")
+               }`
+            : ""
         }
         ${
           health === undefined
@@ -1417,7 +1473,12 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
           return;
         }
 
-        await renderSignInPage(response, options.db, config.deploymentMode);
+        await renderSignInPage(
+          response,
+          options.db,
+          config.deploymentMode,
+          getRequestUrl(request).searchParams.get("tenantId") ?? undefined,
+        );
         return;
       }
 

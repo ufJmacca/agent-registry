@@ -466,6 +466,8 @@ test("publisher console creates a multi-environment draft and submits it for rev
     // Arrange
     const signInPage = await browser.get("/");
     const signInHtml = await signInPage.text();
+    const tenantBetaSignInPage = await browser.get("/?tenantId=tenant-beta");
+    const tenantBetaSignInHtml = await tenantBetaSignInPage.text();
 
     await signIn(browser, "tenant-alpha", "publisher-alpha");
 
@@ -567,7 +569,14 @@ test("publisher console creates a multi-environment draft and submits it for rev
 
     // Assert
     assert.equal(signInPage.status, 200);
+    assert.equal(tenantBetaSignInPage.status, 200);
     assert.match(signInHtml, /<select[^>]+name="tenantId"/);
+    assert.match(signInHtml, /admin-alpha/);
+    assert.match(signInHtml, /publisher-alpha/);
+    assert.doesNotMatch(signInHtml, /admin-beta/);
+    assert.match(tenantBetaSignInHtml, /admin-beta/);
+    assert.doesNotMatch(tenantBetaSignInHtml, /admin-alpha/);
+    assert.doesNotMatch(tenantBetaSignInHtml, /publisher-alpha/);
     assert.match(dashboardHtml, /New Draft Registration/);
     assert.doesNotMatch(dashboardHtml, /Review Queue/);
     assert.equal(newDraftPage.status, 200);
@@ -606,19 +615,91 @@ test("publisher console returns 403 for admin-only review and active agent detai
     });
 
     await approvePendingVersion(context, approvedFixture);
+    await seedHealthAndTelemetry(context.db, approvedFixture);
     await signIn(browser, "tenant-alpha", "publisher-alpha");
 
     // Act
     const reviewQueuePage = await browser.get("/tenants/tenant-alpha/review");
     const reviewQueueHtml = await reviewQueuePage.text();
+    const versionDetailPage = await browser.get(
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}`,
+    );
+    const versionDetailHtml = await versionDetailPage.text();
     const agentDetailPage = await browser.get(`/tenants/tenant-alpha/agents/${approvedFixture.agentId}`);
     const agentDetailHtml = await agentDetailPage.text();
 
     // Assert
     assert.equal(reviewQueuePage.status, 403);
     assert.match(reviewQueueHtml, /Tenant admin role is required/);
+    assert.equal(versionDetailPage.status, 200);
+    assert.doesNotMatch(versionDetailHtml, /Advisory Telemetry/);
+    assert.doesNotMatch(versionDetailHtml, /Invocation count: 12/);
     assert.equal(agentDetailPage.status, 403);
     assert.match(agentDetailHtml, /Tenant admin role is required/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publisher console returns 400 for malformed draft contract JSON", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+    const draftForm = new FormData();
+
+    draftForm.set("versionLabel", "v1");
+    draftForm.set("displayName", "Case Resolver");
+    draftForm.set("summary", "Handles support case routing.");
+    draftForm.set("capabilities", "shared-capability, case-routing");
+    draftForm.set("tags", "shared-tag, routing");
+    draftForm.set("requiredRoles", "support-agent");
+    draftForm.set("requiredScopes", "tickets.read");
+    draftForm.set("headerContract", "{");
+    draftForm.set(
+      "contextContract",
+      JSON.stringify([
+        {
+          description: "Selects the client partition.",
+          example: "client-123",
+          key: "client_id",
+          required: true,
+          type: "string",
+        },
+      ]),
+    );
+    draftForm.set("publication:dev:enabled", "on");
+    draftForm.set("publication:dev:healthEndpointUrl", "https://dev.health.example.com/status");
+    draftForm.set(
+      "publication:dev:rawCard",
+      new File(
+        [
+          createRawCard({
+            capabilities: ["card-search", "dev-capability"],
+            name: "Case Resolver",
+            summary: "Handles support case routing.",
+            tags: ["card-tag", "dev"],
+          }),
+        ],
+        "dev-card.json",
+        {
+          type: "application/json",
+        },
+      ),
+    );
+
+    // Act
+    const response = await browser.postForm("/tenants/tenant-alpha/drafts", draftForm);
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 400);
+    assert.match(html, /headerContract/);
+    assert.match(html, /valid JSON/);
   } finally {
     await context.close();
   }
