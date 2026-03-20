@@ -1,5 +1,3 @@
-import { registryServiceDefaults } from "@agent-registry/config";
+import { seedDemoRegistryFromCli } from "../apps/api/src/seed/index.ts";
 
-console.log(
-  `Scaffold seed placeholder with ${registryServiceDefaults.supportedEnvironmentCount} default environments`,
-);
+await seedDemoRegistryFromCli(process.env);

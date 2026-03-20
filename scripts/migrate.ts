@@ -3,9 +3,8 @@ import {
   createKyselyDb,
   destroyKyselyDb,
   migrateToLatest,
+  normalizeLegacyTelemetryMigrationRows,
 } from "@agent-registry/db";
-
-import { normalizeLegacyTelemetryMigrationRows } from "./migrate-helpers.js";
 
 const config = loadRegistryConfig(process.env, {
   requireBootstrapFile: false,

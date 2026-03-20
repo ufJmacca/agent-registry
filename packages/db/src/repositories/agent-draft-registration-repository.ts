@@ -11,6 +11,7 @@ export interface DraftPublicationPersistenceInput {
 }
 
 export interface CreateDraftAgentInput {
+  agentId?: string;
   capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
@@ -127,7 +128,7 @@ export class KyselyAgentDraftRegistrationRepository implements AgentDraftRegistr
 
   async createDraftAgent(input: CreateDraftAgentInput): Promise<DraftRegistrationRecord> {
     return this.db.transaction().execute(async (transaction) => {
-      const agentId = randomUUID();
+      const agentId = input.agentId ?? randomUUID();
       const versionId = randomUUID();
       const publicationRows = buildPublicationRows(input, agentId, versionId);
 

@@ -250,6 +250,7 @@ async function createDetailPreflightApiContext(): Promise<ApiTestContext> {
 
     const server = http.createServer(
       createApiRequestListener({
+        config,
         db: database.db,
       }),
     );

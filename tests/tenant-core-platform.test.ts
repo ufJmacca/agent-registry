@@ -21,9 +21,9 @@ import {
   createKyselyDb,
   destroyKyselyDb,
   migrateToLatest,
+  normalizeLegacyTelemetryMigrationRows,
   type AgentRegistryDb,
 } from "../packages/db/src/index.ts";
-import { normalizeLegacyTelemetryMigrationRows } from "../scripts/migrate-helpers.ts";
 
 const { Pool } = pg;
 
