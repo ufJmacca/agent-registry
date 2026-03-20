@@ -1,6 +1,8 @@
 import type { EnvironmentKey, ServiceManifest } from "@agent-registry/contracts";
 import { supportedEnvironments } from "@agent-registry/contracts";
 
+export * from "./health-probe.js";
+
 export type DeploymentMode = "hosted" | "self-hosted";
 
 export interface HealthProbeConfig {

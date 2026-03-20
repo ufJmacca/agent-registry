@@ -17,6 +17,11 @@ import {
   matchAgentAdminDetailRoute,
 } from "../apps/api/src/modules/admin-detail/index.ts";
 import {
+  AgentPublicationHealthService,
+  handleAgentPublicationHealthRequest,
+  matchAgentPublicationHealthRoute,
+} from "../apps/api/src/modules/health/index.ts";
+import {
   handleTenantPolicyOverlayRequest,
   matchTenantPolicyOverlayRoute,
   TenantPolicyOverlayService,
@@ -216,6 +221,25 @@ interface VersionAdminDetailResponse {
   versionSequence: number;
 }
 
+interface PublicationHealthDetailResponse {
+  current: {
+    consecutiveFailures: number;
+    healthStatus: "degraded" | "healthy" | "unknown" | "unreachable";
+    lastCheckedAt: string | null;
+    lastError: string | null;
+    lastSuccessAt: string | null;
+    recentFailures: number;
+  };
+  environmentKey: string;
+  history: Array<{
+    checkedAt: string;
+    error: string | null;
+    ok: boolean;
+    statusCode: number | null;
+  }>;
+  publicationId: string;
+}
+
 function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
   const url = new URL(baseUrl);
   url.pathname = `/${databaseName}`;
@@ -261,6 +285,7 @@ async function createReviewApiContext(
   options: {
     allowPrivateTargets?: boolean;
     deploymentMode?: "hosted" | "self-hosted";
+    enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
     resolveProbeHostname?: (hostname: string) => Promise<string[]>;
   } = {},
 ): Promise<ApiTestContext> {
@@ -302,6 +327,7 @@ async function createReviewApiContext(
         config,
         db: database.db,
         reviewServiceOptions: {
+          enqueuePublicationProbe: options.enqueuePublicationProbe,
           // Keep review tests deterministic and offline by default.
           resolveProbeHostname:
             options.resolveProbeHostname ??
@@ -506,6 +532,70 @@ async function approveVersion(
   });
 }
 
+async function seedPendingReviewVersion(
+  context: ApiTestContext,
+  input: {
+    agentId: string;
+    environmentKey?: string;
+    healthEndpointUrl: string;
+    publicationId: string;
+    versionId: string;
+  },
+): Promise<void> {
+  await context.db
+    .insertInto("agents")
+    .values({
+      active_version_id: null,
+      agent_id: input.agentId,
+      display_name: "Seeded Case Resolver",
+      summary: "Seeded summary",
+      tenant_id: "tenant-alpha",
+    })
+    .execute();
+
+  await context.db
+    .insertInto("agent_versions")
+    .values({
+      agent_id: input.agentId,
+      approval_state: "pending_review",
+      capabilities: ["search"],
+      card_profile_id: "a2a-default",
+      context_contract: [],
+      display_name: "Seeded Case Resolver",
+      header_contract: [],
+      required_roles: [],
+      required_scopes: [],
+      submitted_at: "2026-03-13T00:00:00.000Z",
+      submitted_by: "publisher-alpha",
+      summary: "Seeded summary",
+      tags: ["seeded"],
+      tenant_id: "tenant-alpha",
+      version_id: input.versionId,
+      version_label: input.versionId,
+      version_sequence: 1,
+    })
+    .execute();
+
+  await context.db
+    .insertInto("environment_publications")
+    .values({
+      agent_id: input.agentId,
+      environment_key: input.environmentKey ?? "dev",
+      health_endpoint_url: input.healthEndpointUrl,
+      invocation_endpoint: "https://seeded.agent.example.com/invoke",
+      normalized_metadata: {
+        displayName: "Seeded Case Resolver",
+      },
+      publication_id: input.publicationId,
+      raw_card: createRawCard({
+        invocationEndpoint: "https://seeded.agent.example.com/invoke",
+      }),
+      tenant_id: "tenant-alpha",
+      version_id: input.versionId,
+    })
+    .execute();
+}
+
 async function rejectVersion(
   context: ApiTestContext,
   agentId: string,
@@ -665,6 +755,69 @@ test("submit updates publisher_id to the submitting principal", async () => {
       publisher_id: "publisher-alpha",
       submitted_by: "publisher-alpha",
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("approvals enqueue an initial health probe for each approved publication", async () => {
+  // Arrange
+  const enqueuedPublicationIds: string[] = [];
+  const context = await createReviewApiContext({
+    async enqueuePublicationProbe(publicationId) {
+      enqueuedPublicationIds.push(publicationId);
+    },
+  });
+
+  try {
+    const draft = await createDraftVersion(context);
+    const expectedPublicationIds = [...draft.publications]
+      .map((publication) => publication.publicationId)
+      .sort();
+    await submitVersion(context, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(context, draft.agentId, draft.versionId);
+
+    // Assert
+    assert.equal(approveResponse.status, 200);
+    assert.deepEqual(enqueuedPublicationIds.sort(), expectedPublicationIds);
+  } finally {
+    await context.close();
+  }
+});
+
+test("approval returns 500 when the initial health probe cannot be queued", async () => {
+  // Arrange
+  const context = await createReviewApiContext({
+    async enqueuePublicationProbe() {
+      throw new Error("pg-boss unavailable");
+    },
+  });
+
+  try {
+    const draft = await createDraftVersion(context);
+    await submitVersion(context, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(context, draft.agentId, draft.versionId);
+    const storedVersion = await context.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .executeTakeFirstOrThrow();
+
+    // Assert
+    assert.equal(approveResponse.status, 500);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(storedVersion.approval_state, "approved");
   } finally {
     await context.close();
   }
@@ -1179,6 +1332,58 @@ test("approval rejects hosted private probe targets and initializes unknown heal
   }
 });
 
+test("approval rejects seeded hosted non-HTTPS probe targets before transitioning a pending version", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+  const agentId = "agent-http-policy";
+  const versionId = "version-http-policy";
+  const healthEndpointUrl = "http://public-probe.example.test/health";
+
+  try {
+    await seedPendingReviewVersion(context, {
+      agentId,
+      healthEndpointUrl,
+      publicationId: "publication-http-policy",
+      versionId,
+    });
+
+    // Act
+    const approveResponse = await approveVersion(context, agentId, versionId);
+    const storedVersion = await context.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", agentId)
+      .where("version_id", "=", versionId)
+      .executeTakeFirstOrThrow();
+    const storedHealthRows = await context.db
+      .selectFrom("publication_health")
+      .innerJoin(
+        "environment_publications",
+        "environment_publications.publication_id",
+        "publication_health.publication_id",
+      )
+      .select("publication_health.health_status")
+      .where("environment_publications.tenant_id", "=", "tenant-alpha")
+      .where("environment_publications.agent_id", "=", agentId)
+      .where("environment_publications.version_id", "=", versionId)
+      .execute();
+
+    // Assert
+    assert.equal(approveResponse.status, 400);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "invalid_probe_target",
+        message: `Hosted deployments require HTTPS health endpoints; received '${healthEndpointUrl}'.`,
+      },
+    });
+    assert.equal(storedVersion.approval_state, "pending_review");
+    assert.deepEqual(storedHealthRows, []);
+  } finally {
+    await context.close();
+  }
+});
+
 test("approval rejects hosted probe targets whose hostname resolves to a private address", async () => {
   // Arrange
   const resolveProbeHostname = async (hostname: string): Promise<string[]> => {
@@ -1286,6 +1491,226 @@ test("approval rejects hosted probe targets whose hostname resolves to a private
   } finally {
     await hostedContext.close();
     await selfHostedContext.close();
+  }
+});
+test("approved publication health endpoint returns current status and recent probe history", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    const draft = await createDraftVersion(context, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://dev.agent.example.com/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+    await submitVersion(context, draft.agentId, draft.versionId);
+    await approveVersion(context, draft.agentId, draft.versionId);
+
+    const publication = await context.db
+      .selectFrom("environment_publications")
+      .select("publication_id")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .where("environment_key", "=", "dev")
+      .executeTakeFirstOrThrow();
+
+    await context.db
+      .updateTable("publication_health")
+      .set({
+        consecutive_failures: 1,
+        health_status: "degraded",
+        last_checked_at: "2026-03-13T00:02:00.000Z",
+        last_error: "received 503 from health endpoint",
+        last_success_at: "2026-03-13T00:01:00.000Z",
+        recent_failures: 1,
+      })
+      .where("publication_id", "=", publication.publication_id)
+      .execute();
+    await context.db
+      .insertInto("publication_probe_history")
+      .values([
+        {
+          checked_at: "2026-03-13T00:02:00.000Z",
+          error: "received 503 from health endpoint",
+          ok: false,
+          publication_id: publication.publication_id,
+          status_code: 503,
+        },
+        {
+          checked_at: "2026-03-13T00:01:00.000Z",
+          error: null,
+          ok: true,
+          publication_id: publication.publication_id,
+          status_code: 204,
+        },
+        {
+          checked_at: "2026-03-13T00:00:00.000Z",
+          error: null,
+          ok: true,
+          publication_id: publication.publication_id,
+          status_code: 200,
+        },
+      ])
+      .execute();
+
+    // Act
+    const response = await requestJson<PublicationHealthDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${draft.agentId}/versions/${draft.versionId}/environments/dev/health`,
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      current: {
+        consecutiveFailures: 1,
+        healthStatus: "degraded",
+        lastCheckedAt: "2026-03-13T00:02:00.000Z",
+        lastError: "received 503 from health endpoint",
+        lastSuccessAt: "2026-03-13T00:01:00.000Z",
+        recentFailures: 1,
+      },
+      environmentKey: "dev",
+      history: [
+        {
+          checkedAt: "2026-03-13T00:02:00.000Z",
+          error: "received 503 from health endpoint",
+          ok: false,
+          statusCode: 503,
+        },
+        {
+          checkedAt: "2026-03-13T00:01:00.000Z",
+          error: null,
+          ok: true,
+          statusCode: 204,
+        },
+        {
+          checkedAt: "2026-03-13T00:00:00.000Z",
+          error: null,
+          ok: true,
+          statusCode: 200,
+        },
+      ],
+      publicationId: publication.publication_id,
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("publication health endpoint returns 404 for unapproved versions", async () => {
+  // Arrange
+  const context = await createReviewApiContext();
+
+  try {
+    const draft = await createDraftVersion(context, {
+      publications: [
+        {
+          environmentKey: "dev",
+          healthEndpointUrl: "https://dev.agent.example.com/health",
+          rawCard: createRawCard({
+            invocationEndpoint: "https://dev.agent.example.com/invoke",
+          }),
+        },
+      ],
+    });
+
+    // Act
+    const response = await requestJson<ErrorResponseBody>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${draft.agentId}/versions/${draft.versionId}/environments/dev/health`,
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(response.status, 404);
+    assert.deepEqual(response.body, {
+      error: {
+        code: "publication_health_not_found",
+        message:
+          `Approved publication health was not found for tenant 'tenant-alpha', agent '${draft.agentId}', version '${draft.versionId}', environment 'dev'.`,
+      },
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("publication health endpoint returns 500 for unexpected service failures", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      return {
+        registryCapabilities: [],
+        roles: ["tenant-admin"],
+        scopes: [],
+        subjectId: "admin-alpha",
+        tenantId: "tenant-alpha",
+        userContext: {},
+      };
+    },
+  });
+  const healthService = new AgentPublicationHealthService({
+    async getApprovedPublicationForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async getPublicationHealth() {
+      throw new Error("database unavailable");
+    },
+    async listApprovedPublicationsForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async recordPublicationProbe() {
+      throw new Error("health repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const route = matchAgentPublicationHealthRoute(url.pathname);
+
+    if (route === null) {
+      throw new Error(`Unexpected route: ${url.pathname}`);
+    }
+
+    await handleAgentPublicationHealthRequest(request, response, route, {
+      principalResolver,
+      service: healthService,
+    });
+  });
+
+  try {
+    // Act
+    const response = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev/health",
+        server.baseUrl,
+      ),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "GET",
+      },
+    );
+
+    // Assert
+    assert.equal(response.status, 500);
+    assert.deepEqual((await response.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
   }
 });
 
@@ -1546,7 +1971,7 @@ test("approval rejects hosted probe targets with hex-form IPv4-mapped IPv6 liter
   }
 });
 
-test("malformed review, overlay, and admin-detail route encoding returns 400 without taking down the API listener", async () => {
+test("malformed review, overlay, admin-detail, and health route encoding returns 400 without taking down the API listener", async () => {
   // Arrange
   const context = await createReviewApiContext();
 
@@ -1563,6 +1988,11 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
     const adminDetailMalformedResponse = await requestJson<ErrorResponseBody>(context, {
       method: "GET",
       path: "/tenants/%E0%A4%A/agents/agent-alpha:admin-detail",
+      subjectId: "admin-alpha",
+    });
+    const healthMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      method: "GET",
+      path: "/tenants/%E0%A4%A/agents/agent-alpha/versions/version-1/environments/dev/health",
       subjectId: "admin-alpha",
     });
     const followUpResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
@@ -1595,6 +2025,13 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
         message: "Tenant id path segment must be valid URL encoding.",
       },
     });
+    assert.equal(healthMalformedResponse.status, 400);
+    assert.deepEqual(healthMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
     assert.equal(followUpResponse.status, 201);
     assert.equal(followUpResponse.body.approvalState, "draft");
   } finally {
@@ -1602,7 +2039,7 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
   }
 });
 
-test("unexpected resolver failures return 500 internal_error responses for review, overlay, and admin detail endpoints", async () => {
+test("unexpected resolver failures return 500 internal_error responses for review, overlay, admin detail, and health endpoints", async () => {
   // Arrange
   const principalResolver = new PrincipalResolver({
     async getMembership() {
@@ -1646,6 +2083,20 @@ test("unexpected resolver failures return 500 internal_error responses for revie
       throw new Error("admin detail repository should not be called");
     },
   });
+  const healthService = new AgentPublicationHealthService({
+    async getApprovedPublicationForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async getPublicationHealth() {
+      throw new Error("health repository should not be called");
+    },
+    async listApprovedPublicationsForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async recordPublicationProbe() {
+      throw new Error("health repository should not be called");
+    },
+  });
   const server = await createTemporaryServerContext(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
@@ -1674,6 +2125,16 @@ test("unexpected resolver failures return 500 internal_error responses for revie
       await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
         principalResolver,
         service: adminDetailService,
+      });
+      return;
+    }
+
+    const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
+
+    if (healthRoute !== null) {
+      await handleAgentPublicationHealthRequest(request, response, healthRoute, {
+        principalResolver,
+        service: healthService,
       });
       return;
     }
@@ -1710,6 +2171,18 @@ test("unexpected resolver failures return 500 internal_error responses for revie
         method: "GET",
       },
     );
+    const healthResponse = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev/health",
+        server.baseUrl,
+      ),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "GET",
+      },
+    );
 
     // Assert
     assert.equal(reviewResponse.status, 500);
@@ -1728,6 +2201,13 @@ test("unexpected resolver failures return 500 internal_error responses for revie
     });
     assert.equal(adminDetailResponse.status, 500);
     assert.deepEqual((await adminDetailResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(healthResponse.status, 500);
+    assert.deepEqual((await healthResponse.json()) as ErrorResponseBody, {
       error: {
         code: "internal_error",
         message: "Internal server error.",

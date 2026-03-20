@@ -6,6 +6,7 @@ import {
   KyselyAgentDiscoveryRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
+  KyselyHealthRepository,
   KyselyTenantEnvironmentRepository,
   KyselyTenantPolicyOverlayRepository,
   KyselyTenantRepository,
@@ -19,6 +20,12 @@ import {
   handleAgentAdminDetailRequest,
   matchAgentAdminDetailRoute,
 } from "./modules/admin-detail/index.js";
+import {
+  AgentPublicationHealthService,
+  handleAgentPublicationHealthRequest,
+  InvalidAgentPublicationHealthRequestError,
+  matchAgentPublicationHealthRoute,
+} from "./modules/health/index.js";
 import {
   AgentDraftRegistrationService,
   InvalidAgentDraftRequestError,
@@ -96,7 +103,10 @@ function writeError(
 export interface ApiRequestListenerOptions {
   config?: Pick<RegistryConfig, "deploymentMode" | "healthProbe" | "rawCardByteLimit">;
   db: AgentRegistryDb;
-  reviewServiceOptions?: Pick<AgentVersionReviewServiceOptions, "resolveProbeHostname">;
+  reviewServiceOptions?: Pick<
+    AgentVersionReviewServiceOptions,
+    "enqueuePublicationProbe" | "resolveProbeHostname"
+  >;
 }
 
 export function createApiRequestListener(options: ApiRequestListenerOptions): http.RequestListener {
@@ -121,6 +131,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
     {
       allowPrivateTargets: config.healthProbe.allowPrivateTargets,
       deploymentMode: config.deploymentMode,
+      requireHttps: config.healthProbe.requireHttps,
       ...options.reviewServiceOptions,
     },
   );
@@ -136,6 +147,9 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
+  const healthService = new AgentPublicationHealthService(
+    new KyselyHealthRepository(options.db),
+  );
   const detailService = new AgentPublicationDetailService(publicationRepository);
   const preflightService = new AgentPublicationPreflightService(publicationRepository);
 
@@ -147,6 +161,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       const searchRoute = matchSearchRoute(url.pathname);
       const discoveryRoute = matchDiscoveryRoute(url.pathname);
       const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
+      const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
       const detailRoute = matchAgentDetailRoute(url.pathname);
       const agentDraftRoute = matchAgentDraftRoute(url.pathname);
       const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
@@ -188,6 +203,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         await handleAgentPublicationPreflightRequest(request, response, preflightRoute, {
           principalResolver,
           service: preflightService,
+        });
+        return;
+      }
+
+      if (healthRoute !== null) {
+        await handleAgentPublicationHealthRequest(request, response, healthRoute, {
+          principalResolver,
+          service: healthService,
         });
         return;
       }
@@ -239,6 +262,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         error instanceof InvalidAgentAdminDetailRequestError ||
         error instanceof InvalidAgentDetailRequestError ||
         error instanceof InvalidAgentDraftRequestError ||
+        error instanceof InvalidAgentPublicationHealthRequestError ||
         error instanceof InvalidAgentPublicationPreflightRequestError ||
         error instanceof InvalidAgentVersionReviewRequestError ||
         error instanceof InvalidDiscoveryRequestError ||
