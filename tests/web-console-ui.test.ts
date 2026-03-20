@@ -95,6 +95,10 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
 
 async function createWebConsoleContext(options: {
   deploymentMode: "hosted" | "self-hosted";
+  reviewServiceOptions?: {
+    enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
+    resolveProbeHostname?: (hostname: string) => Promise<string[]>;
+  };
 }): Promise<WebConsoleContext> {
   const database = await createFreshRegistryDatabase();
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-web-console-"));
@@ -124,6 +128,8 @@ async function createWebConsoleContext(options: {
             "      - subjectId: admin-alpha",
             "        roles: [tenant-admin]",
             "      - subjectId: publisher-alpha",
+            "        roles: [publisher]",
+            "      - subjectId: publisher-bravo",
             "        roles: [publisher]",
             "  - tenantId: tenant-beta",
             "    displayName: Tenant Beta",
@@ -157,7 +163,9 @@ async function createWebConsoleContext(options: {
         config,
         db: database.db,
         reviewServiceOptions: {
-          resolveProbeHostname: async () => ["198.51.100.20"],
+          resolveProbeHostname:
+            options.reviewServiceOptions?.resolveProbeHostname ?? (async () => ["198.51.100.20"]),
+          enqueuePublicationProbe: options.reviewServiceOptions?.enqueuePublicationProbe,
         },
       }),
     );
@@ -700,6 +708,87 @@ test("publisher console returns 400 for malformed draft contract JSON", async ()
     assert.equal(response.status, 400);
     assert.match(html, /headerContract/);
     assert.match(html, /valid JSON/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publisher console blocks version detail access to versions owned by another publisher", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const otherPublisherFixture = await createPendingVersion(context, {
+      displayName: "Escalation Router",
+      environments: ["dev"],
+      publisherId: "publisher-bravo",
+      summary: "Routes escalations for a different publisher.",
+      versionLabel: "v2",
+    });
+
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.get(
+      `/tenants/tenant-alpha/agents/${otherPublisherFixture.agentId}/versions/${otherPublisherFixture.versionId}`,
+    );
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 403);
+    assert.match(html, /versions they own/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin console approval enqueues initial publication probes", async () => {
+  const enqueuedPublicationIds: string[] = [];
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+    reviewServiceOptions: {
+      async enqueuePublicationProbe(publicationId) {
+        enqueuedPublicationIds.push(publicationId);
+      },
+    },
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const fixture = await createPendingVersion(context, {
+      displayName: "Case Router",
+      environments: ["dev", "prod"],
+      publisherId: "publisher-alpha",
+      summary: "Routes support cases.",
+      versionLabel: "v1",
+    });
+    const publicationIds = (
+      await context.db
+        .selectFrom("environment_publications")
+        .select("publication_id")
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", fixture.agentId)
+        .where("version_id", "=", fixture.versionId)
+        .orderBy("environment_key")
+        .execute()
+    ).map((publication) => publication.publication_id);
+
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const response = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}/approve`,
+      {},
+    );
+
+    // Assert
+    assert.equal(response.status, 303);
+    assert.equal(getRedirectLocation(response), `/tenants/tenant-alpha/agents/${fixture.agentId}`);
+    assert.deepEqual(enqueuedPublicationIds.sort(), publicationIds.sort());
   } finally {
     await context.close();
   }

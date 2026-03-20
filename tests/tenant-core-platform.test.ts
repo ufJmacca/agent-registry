@@ -22,6 +22,7 @@ import {
   migrateToLatest,
   type AgentRegistryDb,
 } from "../packages/db/src/index.ts";
+import { normalizeLegacyTelemetryMigrationRows } from "../scripts/migrate-helpers.ts";
 
 const { Pool } = pg;
 
@@ -797,6 +798,22 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       publication_id: "publication-1",
     });
   } finally {
+    await database.cleanup();
+  }
+});
+
+test("legacy telemetry migration cleanup is a no-op before kysely_migration exists", async () => {
+  const database = await createEmptyRegistryDatabase();
+  const db = createKyselyDb(database.databaseUrl);
+
+  try {
+    await normalizeLegacyTelemetryMigrationRows(db);
+
+    const results = await migrateToLatest(db);
+
+    assert.ok(results.length > 0);
+  } finally {
+    await destroyKyselyDb(db);
     await database.cleanup();
   }
 });

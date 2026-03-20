@@ -37,6 +37,7 @@ import {
   AgentVersionProbeTargetPolicyError,
   AgentVersionReviewAuthorizationError,
   AgentVersionReviewService,
+  type AgentVersionReviewServiceOptions,
   AgentVersionReviewValidationError,
   InvalidVersionTransitionError,
 } from "../../api/src/modules/review/service.js";
@@ -46,9 +47,10 @@ const sessionCookieName = "agent_registry_console_session";
 export interface WebRequestListenerOptions {
   config?: Pick<RegistryConfig, "deploymentMode" | "healthProbe" | "rawCardByteLimit">;
   db: AgentRegistryDb;
-  reviewServiceOptions?: {
-    resolveProbeHostname?: (hostname: string) => Promise<string[]>;
-  };
+  reviewServiceOptions?: Pick<
+    AgentVersionReviewServiceOptions,
+    "enqueuePublicationProbe" | "resolveProbeHostname"
+  >;
 }
 
 interface ConsoleSession {
@@ -1108,6 +1110,11 @@ async function renderVersionDetailPage(
   }
 
   const detail = await adminRepository.getVersionDetail(tenantId, agentId, versionId);
+
+  if (!isTenantAdmin(principal) && detail.publisherId !== principal.subjectId) {
+    throw new Error("Publishers may only view version details for versions they own.");
+  }
+
   const healthDetails =
     isTenantAdmin(principal) && detail.approvalState === "approved"
       ? await Promise.all(
