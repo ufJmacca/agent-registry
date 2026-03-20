@@ -12,6 +12,7 @@ import pg from "pg";
 import { createPrincipalResolver } from "../apps/api/src/auth/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { initializeApiRuntime } from "../apps/api/src/main.ts";
+import { initializeWebRuntime } from "../apps/web/src/main.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -1595,6 +1596,43 @@ test("initializeApiRuntime closes the DB pool when bootstrap fails after opening
     await assert.rejects(
       () =>
         initializeApiRuntime({
+          DATABASE_URL: database.databaseUrl,
+          DEPLOYMENT_MODE: "hosted",
+          HOSTED_BOOTSTRAP_FILE: manifestPath,
+        }),
+      /relation "tenants" does not exist/,
+    );
+
+    assert.equal(await waitForOpenConnectionCount(database, 0), 0);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
+test("initializeWebRuntime closes the DB pool when bootstrap fails after opening a connection", async () => {
+  // Arrange
+  const database = await createEmptyRegistryDatabase();
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-web-runtime-failure-"));
+  const manifestPath = path.join(tempDir, "hosted-bootstrap.yaml");
+
+  try {
+    await writeFile(
+      manifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-runtime",
+        "    displayName: Runtime Tenant",
+        "    environments: [prod]",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    // Act / Assert
+    await assert.rejects(
+      () =>
+        initializeWebRuntime({
           DATABASE_URL: database.databaseUrl,
           DEPLOYMENT_MODE: "hosted",
           HOSTED_BOOTSTRAP_FILE: manifestPath,

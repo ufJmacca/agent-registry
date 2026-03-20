@@ -41,6 +41,11 @@ interface FreshRegistryDatabase {
   db: AgentRegistryDb;
 }
 
+interface EmptyRegistryDatabase {
+  cleanup(): Promise<void>;
+  databaseUrl: string;
+}
+
 interface WebConsoleContext extends FreshRegistryDatabase {
   baseUrl: string;
   close(): Promise<void>;
@@ -91,6 +96,32 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
     await adminPool.end();
     throw error;
   }
+}
+
+async function createEmptyRegistryDatabase(): Promise<EmptyRegistryDatabase> {
+  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
+  const adminPool = new Pool({
+    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
+  });
+
+  try {
+    await adminPool.query(`create database "${databaseName}" template template0`);
+  } catch (error) {
+    await adminPool.end();
+    throw error;
+  }
+
+  return {
+    async cleanup() {
+      await adminPool.query(
+        "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
+        [databaseName],
+      );
+      await adminPool.query(`drop database if exists "${databaseName}"`);
+      await adminPool.end();
+    },
+    databaseUrl: createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName),
+  };
 }
 
 async function createWebConsoleContext(options: {
@@ -463,6 +494,107 @@ async function seedHealthAndTelemetry(
     windowStartedAt: "2026-03-13T10:00:00Z",
   });
 }
+
+test("console root renders a setup page before schema bootstrap", async () => {
+  const database = await createEmptyRegistryDatabase();
+  const db = createKyselyDb(database.databaseUrl);
+  const config = loadRegistryConfig(
+    {
+      DATABASE_URL: database.databaseUrl,
+    },
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db,
+    }),
+  );
+
+  try {
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /<h1>Agent Registry<\/h1>/);
+    assert.match(html, /Console Setup Pending/);
+    assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+    await destroyKyselyDb(db);
+    await database.cleanup();
+  }
+});
+
+test("unexpected console failures return 500 without exposing internal messages", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: {
+        selectFrom() {
+          throw new Error("database offline");
+        },
+      } as unknown as AgentRegistryDb,
+    }),
+  );
+
+  try {
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 500);
+    assert.match(html, /Internal server error\./);
+    assert.doesNotMatch(html, /database offline/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
 
 test("publisher console creates a multi-environment draft and submits it for review", async () => {
   const context = await createWebConsoleContext({

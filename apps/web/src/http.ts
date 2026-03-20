@@ -44,6 +44,10 @@ import {
 
 const sessionCookieName = "agent_registry_console_session";
 
+class ConsoleAuthorizationError extends Error {}
+
+class ConsoleValidationError extends Error {}
+
 export interface WebRequestListenerOptions {
   config?: Pick<RegistryConfig, "deploymentMode" | "healthProbe" | "rawCardByteLimit">;
   db: AgentRegistryDb;
@@ -286,6 +290,22 @@ function writeError(response: ServerResponse, statusCode: number, message: strin
   );
 }
 
+function writeConsoleHomePage(
+  response: ServerResponse,
+  body: string,
+): void {
+  writeHtml(
+    response,
+    200,
+    "Agent Registry",
+    `<section class="hero card stack">
+      <h1>Agent Registry</h1>
+      <p class="meta">Mock sign-in for tenant admins and publishers.</p>
+    </section>
+    ${body}`,
+  );
+}
+
 function redirect(
   response: ServerResponse,
   location: string,
@@ -423,20 +443,20 @@ function readStringField(
 
   if (rawValue === null) {
     if (options.required) {
-      throw new Error(`Field '${fieldName}' is required.`);
+      throw new ConsoleValidationError(`Field '${fieldName}' is required.`);
     }
 
     return options.fallback ?? "";
   }
 
   if (typeof rawValue !== "string") {
-    throw new Error(`Field '${fieldName}' must be a string.`);
+    throw new ConsoleValidationError(`Field '${fieldName}' must be a string.`);
   }
 
   const value = rawValue.trim();
 
   if (options.required && value === "") {
-    throw new Error(`Field '${fieldName}' is required.`);
+    throw new ConsoleValidationError(`Field '${fieldName}' is required.`);
   }
 
   return value === "" ? (options.fallback ?? "") : value;
@@ -476,7 +496,7 @@ async function readRawCardField(formData: FormData, fieldName: string): Promise<
   const rawValue = formData.get(fieldName);
 
   if (rawValue === null) {
-    throw new Error(`Field '${fieldName}' is required.`);
+    throw new ConsoleValidationError(`Field '${fieldName}' is required.`);
   }
 
   if (typeof rawValue === "string") {
@@ -509,6 +529,14 @@ async function loadTenantConsoleOptions(db: AgentRegistryDb): Promise<TenantCons
   }));
 }
 
+function isMissingConsoleSchemaError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /relation "(tenant_memberships|tenants)" does not exist/.test(error.message);
+}
+
 async function resolvePrincipalFromSession(
   principalResolver: PrincipalResolver,
   request: IncomingMessage,
@@ -539,10 +567,33 @@ async function renderSignInPage(
   deploymentMode: "hosted" | "self-hosted",
   selectedHostedTenantId?: string,
 ): Promise<void> {
-  const tenants = await loadTenantConsoleOptions(db);
+  let tenants: TenantConsoleOption[];
+
+  try {
+    tenants = await loadTenantConsoleOptions(db);
+  } catch (error) {
+    if (isMissingConsoleSchemaError(error)) {
+      writeConsoleHomePage(
+        response,
+        `<section class="card stack">
+          <h2>Console Setup Pending</h2>
+          <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
+        </section>`,
+      );
+      return;
+    }
+
+    throw error;
+  }
 
   if (tenants.length === 0) {
-    writeError(response, 500, "No tenants are configured for the console.");
+    writeConsoleHomePage(
+      response,
+      `<section class="card stack">
+        <h2>Console Setup Pending</h2>
+        <p>Bootstrap tenant and membership data to enable console sign-in.</p>
+      </section>`,
+    );
     return;
   }
 
@@ -565,15 +616,9 @@ async function renderSignInPage(
     )
     .join("");
 
-  writeHtml(
+  writeConsoleHomePage(
     response,
-    200,
-    "Agent Registry Console",
-    `<section class="hero card stack">
-      <h1>Agent Registry Console</h1>
-      <p class="meta">Mock sign-in for tenant admins and publishers.</p>
-    </section>
-    <section class="card stack">
+    `<section class="card stack">
       <h2>Mock Sign-In</h2>
       <form class="stack" action="/session" method="post">
         ${
@@ -758,13 +803,15 @@ async function requirePrincipal(
 
 function assertTenantAccess(principal: ResolvedPrincipal, tenantId: string): void {
   if (principal.tenantId !== tenantId) {
-    throw new Error(`Resolved principal does not belong to tenant '${tenantId}'.`);
+    throw new ConsoleAuthorizationError(
+      `Resolved principal does not belong to tenant '${tenantId}'.`,
+    );
   }
 }
 
 function assertTenantAdminAccess(principal: ResolvedPrincipal): void {
   if (!isTenantAdmin(principal)) {
-    throw new Error("Tenant admin role is required to access this page.");
+    throw new ConsoleAuthorizationError("Tenant admin role is required to access this page.");
   }
 }
 
@@ -842,7 +889,9 @@ async function renderDraftFormPage(
   assertTenantAccess(principal, tenantId);
 
   if (!canPublish(principal)) {
-    throw new Error("Publisher role is required to create draft agent registrations.");
+    throw new ConsoleAuthorizationError(
+      "Publisher role is required to create draft agent registrations.",
+    );
   }
 
   const environments = await environmentService.listEnvironments(principal, tenantId);
@@ -946,7 +995,9 @@ async function createDraftFromForm(
   assertTenantAccess(principal, tenantId);
 
   if (!canPublish(principal)) {
-    throw new Error("Publisher role is required to create draft agent registrations.");
+    throw new ConsoleAuthorizationError(
+      "Publisher role is required to create draft agent registrations.",
+    );
   }
 
   const [formData, environments] = await Promise.all([
@@ -1106,13 +1157,17 @@ async function renderVersionDetailPage(
   assertTenantAccess(principal, tenantId);
 
   if (!canPublish(principal) && !isTenantAdmin(principal)) {
-    throw new Error("Publisher or tenant admin role is required to view version detail.");
+    throw new ConsoleAuthorizationError(
+      "Publisher or tenant admin role is required to view version detail.",
+    );
   }
 
   const detail = await adminRepository.getVersionDetail(tenantId, agentId, versionId);
 
   if (!isTenantAdmin(principal) && detail.publisherId !== principal.subjectId) {
-    throw new Error("Publishers may only view version details for versions they own.");
+    throw new ConsoleAuthorizationError(
+      "Publishers may only view version details for versions they own.",
+    );
   }
 
   const healthDetails =
@@ -1498,12 +1553,18 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
           required: true,
         });
 
-        await principalResolver.resolve({
-          auth: {
-            subjectId,
-          },
-          tenantId,
-        });
+        try {
+          await principalResolver.resolve({
+            auth: {
+              subjectId,
+            },
+            tenantId,
+          });
+        } catch {
+          throw new ConsoleAuthorizationError(
+            "The selected subject does not belong to the chosen tenant.",
+          );
+        }
         redirect(
           response,
           "/console",
@@ -1661,6 +1722,21 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
 
       writeError(response, 404, "Route not found.");
     } catch (error) {
+      if (error instanceof URIError) {
+        writeError(response, 400, "Invalid request path.");
+        return;
+      }
+
+      if (error instanceof ConsoleAuthorizationError) {
+        writeError(response, 403, error.message);
+        return;
+      }
+
+      if (error instanceof ConsoleValidationError) {
+        writeError(response, 400, error.message);
+        return;
+      }
+
       if (
         error instanceof EnvironmentCatalogAuthorizationError ||
         error instanceof AgentDraftRegistrationAuthorizationError ||
@@ -1697,7 +1773,7 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
       }
 
       if (error instanceof Error) {
-        writeError(response, 403, error.message);
+        writeError(response, 500, "Internal server error.");
         return;
       }
 

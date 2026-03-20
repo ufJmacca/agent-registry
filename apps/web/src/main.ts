@@ -20,17 +20,23 @@ export async function initializeWebRuntime(
 ): Promise<WebRuntime> {
   const config = loadRegistryConfig(env);
   const db = createKyselyDb(config.databaseUrl);
-  const bootstrapSummary = await bootstrapFromConfig(
-    config,
-    new KyselyBootstrapRepository(db),
-  );
 
-  return {
-    bootstrapSummary,
-    async close() {
-      await destroyKyselyDb(db);
-    },
-    config,
-    db,
-  };
+  try {
+    const bootstrapSummary = await bootstrapFromConfig(
+      config,
+      new KyselyBootstrapRepository(db),
+    );
+
+    return {
+      bootstrapSummary,
+      async close() {
+        await destroyKyselyDb(db);
+      },
+      config,
+      db,
+    };
+  } catch (error) {
+    await destroyKyselyDb(db);
+    throw error;
+  }
 }
