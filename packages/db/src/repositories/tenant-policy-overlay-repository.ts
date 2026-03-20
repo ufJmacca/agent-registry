@@ -36,6 +36,30 @@ function sortUniqueStrings(values: string[]): string[] {
   return [...new Set(values)].sort();
 }
 
+function mergeNarrowingRoles(existingRoles: string[], nextRoles?: string[]): string[] {
+  const normalizedExisting = sortUniqueStrings(existingRoles);
+
+  if (nextRoles === undefined) {
+    return normalizedExisting;
+  }
+
+  const normalizedNext = sortUniqueStrings(nextRoles);
+
+  if (normalizedExisting.length === 0) {
+    return normalizedNext;
+  }
+
+  if (normalizedNext.length === 0) {
+    return normalizedExisting;
+  }
+
+  // Overlay role clauses are any-of, so only the overlap can tighten an existing clause.
+  const nextRoleSet = new Set(normalizedNext);
+  const intersection = normalizedExisting.filter((role) => nextRoleSet.has(role));
+
+  return intersection.length > 0 ? intersection : normalizedExisting;
+}
+
 export class KyselyTenantPolicyOverlayRepository implements TenantPolicyOverlayRepository {
   private readonly db: AgentRegistryDb;
 
@@ -131,10 +155,7 @@ export class KyselyTenantPolicyOverlayRepository implements TenantPolicyOverlayR
           : existingQuery.where("environment_key", "=", input.environmentKey);
 
       const existing = await existingQuery.forUpdate().executeTakeFirst();
-      const requiredRoles = sortUniqueStrings([
-        ...(existing?.required_roles ?? []),
-        ...(input.requiredRoles ?? []),
-      ]);
+      const requiredRoles = mergeNarrowingRoles(existing?.required_roles ?? [], input.requiredRoles);
       const requiredScopes = sortUniqueStrings([
         ...(existing?.required_scopes ?? []),
         ...(input.requiredScopes ?? []),

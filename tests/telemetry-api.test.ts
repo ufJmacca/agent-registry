@@ -10,6 +10,12 @@ import pg from "pg";
 
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  handlePublicationTelemetryRequest,
+  matchPublicationTelemetryRoute,
+  PublicationTelemetryService,
+} from "../apps/api/src/modules/telemetry/index.ts";
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -32,6 +38,11 @@ interface FreshRegistryDatabase {
 }
 
 interface ApiTestContext extends FreshRegistryDatabase {
+  baseUrl: string;
+  close(): Promise<void>;
+}
+
+interface TemporaryServerContext {
   baseUrl: string;
   close(): Promise<void>;
 }
@@ -248,6 +259,10 @@ async function createTelemetryApiContext(): Promise<ApiTestContext> {
       createApiRequestListener({
         config,
         db: database.db,
+        reviewServiceOptions: {
+          // Keep telemetry tests deterministic and offline by default.
+          resolveProbeHostname: async () => ["203.0.113.10"],
+        },
       }),
     );
 
@@ -309,6 +324,38 @@ async function requestJson<TBody>(
   return {
     body: body as TBody,
     status: response.status,
+  };
+}
+
+async function createTemporaryServerContext(
+  listener: http.RequestListener,
+): Promise<TemporaryServerContext> {
+  const server = http.createServer(listener);
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
   };
 }
 
@@ -661,7 +708,7 @@ test("telemetry upserts one summary per publication window and exposes it in adm
     });
     const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
 
@@ -1063,5 +1110,107 @@ test("telemetry ingestion is advisory and leaves health, lifecycle, and publicat
     );
   } finally {
     await context.close();
+  }
+});
+
+test("malformed telemetry route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createTelemetryApiContext();
+
+  try {
+    const approvedVersion = await createApprovedVersion(
+      context,
+      "tenant-alpha",
+      "publisher-alpha",
+      "admin-alpha",
+    );
+
+    // Act
+    const malformedResponse = await requestJson<ErrorResponseBody>(context, {
+      body: buildTelemetryRequest(),
+      path:
+        `/tenants/%E0%A4%A/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}` +
+        "/environments/dev:telemetry",
+      subjectId: "publisher-alpha",
+    });
+    const followUpResponse = await postTelemetry(context, {
+      agentId: approvedVersion.agentId,
+      body: buildTelemetryRequest({
+        invocationCount: 18,
+        successCount: 17,
+      }),
+      environmentKey: "dev",
+      subjectId: "publisher-alpha",
+      tenantId: "tenant-alpha",
+      versionId: approvedVersion.versionId,
+    });
+
+    // Assert
+    assert.equal(malformedResponse.status, 400);
+    assert.deepEqual(malformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 200);
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses for telemetry", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      throw new Error("database unavailable");
+    },
+  });
+  const telemetryService = new PublicationTelemetryService({
+    async upsertPublicationTelemetry() {
+      throw new Error("telemetry repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const route = matchPublicationTelemetryRoute(url.pathname);
+
+    if (route === null) {
+      throw new Error(`Unexpected route: ${url.pathname}`);
+    }
+
+    await handlePublicationTelemetryRequest(request, response, route, {
+      principalResolver,
+      service: telemetryService,
+    });
+  });
+
+  try {
+    // Act
+    const response = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev:telemetry",
+        server.baseUrl,
+      ),
+      {
+        body: JSON.stringify(buildTelemetryRequest()),
+        headers: new Headers({
+          "content-type": "application/json",
+          "x-agent-registry-subject-id": "publisher-alpha",
+        }),
+        method: "POST",
+      },
+    );
+
+    // Assert
+    assert.equal(response.status, 500);
+    assert.deepEqual((await response.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
   }
 });

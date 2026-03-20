@@ -5,31 +5,26 @@ import {
   MissingTenantMembershipError,
   type PrincipalResolver,
 } from "@agent-registry/auth";
-import type { UpsertPublicationTelemetryRequest } from "@agent-registry/contracts";
-import {
-  AgentVersionEnvironmentPublicationNotFoundError,
-  AgentVersionNotFoundError,
-} from "@agent-registry/db";
+import { PublicationHealthNotFoundError } from "@agent-registry/db";
 
 import {
-  PublicationTelemetryAuthorizationError,
-  PublicationTelemetryService,
-  PublicationTelemetryValidationError,
+  AgentPublicationHealthAuthorizationError,
+  AgentPublicationHealthService,
 } from "./service.js";
 
-export interface PublicationTelemetryRouteMatch {
+export interface AgentPublicationHealthRouteMatch {
   agentId: string;
   environmentKey: string;
   tenantId: string;
   versionId: string;
 }
 
-export interface PublicationTelemetryHttpDependencies {
+export interface AgentPublicationHealthHttpDependencies {
   principalResolver: PrincipalResolver;
-  service: PublicationTelemetryService;
+  service: AgentPublicationHealthService;
 }
 
-export class InvalidPublicationTelemetryRequestError extends Error {}
+export class InvalidAgentPublicationHealthRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -84,11 +79,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+    throw new InvalidAgentPublicationHealthRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+    throw new InvalidAgentPublicationHealthRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -107,43 +102,21 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
-async function readRequestBody(request: IncomingMessage): Promise<string> {
-  let body = "";
-
-  for await (const chunk of request) {
-    body += chunk.toString();
-  }
-
-  return body;
-}
-
-async function readTelemetryRequest(
-  request: IncomingMessage,
-): Promise<UpsertPublicationTelemetryRequest> {
-  const body = (await readRequestBody(request)).trim();
-
-  if (body === "") {
-    throw new InvalidPublicationTelemetryRequestError("Request body must be a JSON object.");
-  }
-
-  return parseJsonObject(body, "Request body must be a JSON object.") as unknown as UpsertPublicationTelemetryRequest;
-}
-
 function decodeRouteSegment(segment: string, label: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw new InvalidPublicationTelemetryRequestError(
+    throw new InvalidAgentPublicationHealthRequestError(
       `${label} path segment must be valid URL encoding.`,
     );
   }
 }
 
-export function matchPublicationTelemetryRoute(
+export function matchAgentPublicationHealthRoute(
   pathname: string,
-): PublicationTelemetryRouteMatch | null {
+): AgentPublicationHealthRouteMatch | null {
   const match =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/:]+):telemetry\/?$/.exec(
+    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/]+)\/health\/?$/.exec(
       pathname,
     );
 
@@ -159,11 +132,11 @@ export function matchPublicationTelemetryRoute(
   };
 }
 
-export async function handlePublicationTelemetryRequest(
+export async function handleAgentPublicationHealthRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: PublicationTelemetryRouteMatch,
-  dependencies: PublicationTelemetryHttpDependencies,
+  route: AgentPublicationHealthRouteMatch,
+  dependencies: AgentPublicationHealthHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -174,9 +147,9 @@ export async function handlePublicationTelemetryRequest(
       tenantId: route.tenantId,
     });
 
-    if (request.method !== "POST") {
+    if (request.method !== "GET") {
       writeError(response, 405, "method_not_allowed", "Method not allowed.", {
-        allow: "POST",
+        allow: "GET",
       });
       return;
     }
@@ -184,13 +157,12 @@ export async function handlePublicationTelemetryRequest(
     writeJson(
       response,
       200,
-      await dependencies.service.upsertTelemetry(
+      await dependencies.service.getPublicationHealth(
         principal,
         route.tenantId,
         route.agentId,
         route.versionId,
         route.environmentKey,
-        await readTelemetryRequest(request),
       ),
     );
   } catch (error) {
@@ -204,27 +176,17 @@ export async function handlePublicationTelemetryRequest(
       return;
     }
 
-    if (error instanceof PublicationTelemetryAuthorizationError) {
+    if (error instanceof AgentPublicationHealthAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionNotFoundError) {
-      writeError(response, 404, "version_not_found", error.message);
+    if (error instanceof PublicationHealthNotFoundError) {
+      writeError(response, 404, "publication_health_not_found", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionEnvironmentPublicationNotFoundError) {
-      writeError(response, 404, "environment_not_found", error.message);
-      return;
-    }
-
-    if (error instanceof PublicationTelemetryValidationError) {
-      writeError(response, 400, "invalid_telemetry_request", error.message);
-      return;
-    }
-
-    if (error instanceof InvalidPublicationTelemetryRequestError) {
+    if (error instanceof InvalidAgentPublicationHealthRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

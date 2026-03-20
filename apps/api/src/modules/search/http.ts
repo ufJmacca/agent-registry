@@ -5,31 +5,25 @@ import {
   MissingTenantMembershipError,
   type PrincipalResolver,
 } from "@agent-registry/auth";
-import type { UpsertPublicationTelemetryRequest } from "@agent-registry/contracts";
-import {
-  AgentVersionEnvironmentPublicationNotFoundError,
-  AgentVersionNotFoundError,
-} from "@agent-registry/db";
 
+import { parseDiscoveryListQuery } from "../discovery/query.js";
 import {
-  PublicationTelemetryAuthorizationError,
-  PublicationTelemetryService,
-  PublicationTelemetryValidationError,
-} from "./service.js";
+  AgentDiscoveryAuthorizationError,
+  AgentDiscoveryRawCardPayloadTooLargeError,
+  AgentDiscoveryService,
+  AgentDiscoveryValidationError,
+} from "../discovery/service.js";
 
-export interface PublicationTelemetryRouteMatch {
-  agentId: string;
-  environmentKey: string;
+export interface SearchRouteMatch {
   tenantId: string;
-  versionId: string;
 }
 
-export interface PublicationTelemetryHttpDependencies {
+export interface SearchHttpDependencies {
   principalResolver: PrincipalResolver;
-  service: PublicationTelemetryService;
+  service: AgentDiscoveryService;
 }
 
-export class InvalidPublicationTelemetryRequestError extends Error {}
+export class InvalidSearchRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -84,11 +78,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+    throw new InvalidSearchRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+    throw new InvalidSearchRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -107,63 +101,31 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
-async function readRequestBody(request: IncomingMessage): Promise<string> {
-  let body = "";
-
-  for await (const chunk of request) {
-    body += chunk.toString();
-  }
-
-  return body;
-}
-
-async function readTelemetryRequest(
-  request: IncomingMessage,
-): Promise<UpsertPublicationTelemetryRequest> {
-  const body = (await readRequestBody(request)).trim();
-
-  if (body === "") {
-    throw new InvalidPublicationTelemetryRequestError("Request body must be a JSON object.");
-  }
-
-  return parseJsonObject(body, "Request body must be a JSON object.") as unknown as UpsertPublicationTelemetryRequest;
-}
-
 function decodeRouteSegment(segment: string, label: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw new InvalidPublicationTelemetryRequestError(
-      `${label} path segment must be valid URL encoding.`,
-    );
+    throw new InvalidSearchRequestError(`${label} path segment must be valid URL encoding.`);
   }
 }
 
-export function matchPublicationTelemetryRoute(
-  pathname: string,
-): PublicationTelemetryRouteMatch | null {
-  const match =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/:]+):telemetry\/?$/.exec(
-      pathname,
-    );
+export function matchSearchRoute(pathname: string): SearchRouteMatch | null {
+  const match = /^\/tenants\/([^/]+)\/agents\/search\/?$/.exec(pathname);
 
   if (match === null) {
     return null;
   }
 
   return {
-    agentId: decodeRouteSegment(match[2], "Agent id"),
-    environmentKey: decodeRouteSegment(match[4], "Environment key"),
     tenantId: decodeRouteSegment(match[1], "Tenant id"),
-    versionId: decodeRouteSegment(match[3], "Version id"),
   };
 }
 
-export async function handlePublicationTelemetryRequest(
+export async function handleSearchRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: PublicationTelemetryRouteMatch,
-  dependencies: PublicationTelemetryHttpDependencies,
+  route: SearchRouteMatch,
+  dependencies: SearchHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -174,23 +136,23 @@ export async function handlePublicationTelemetryRequest(
       tenantId: route.tenantId,
     });
 
-    if (request.method !== "POST") {
+    if (request.method !== "GET") {
       writeError(response, 405, "method_not_allowed", "Method not allowed.", {
-        allow: "POST",
+        allow: "GET",
       });
       return;
     }
 
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
     writeJson(
       response,
       200,
-      await dependencies.service.upsertTelemetry(
+      await dependencies.service.search(
         principal,
         route.tenantId,
-        route.agentId,
-        route.versionId,
-        route.environmentKey,
-        await readTelemetryRequest(request),
+        parseDiscoveryListQuery(url.searchParams, {
+          allowTextQuery: true,
+        }),
       ),
     );
   } catch (error) {
@@ -204,27 +166,22 @@ export async function handlePublicationTelemetryRequest(
       return;
     }
 
-    if (error instanceof PublicationTelemetryAuthorizationError) {
+    if (error instanceof AgentDiscoveryAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionNotFoundError) {
-      writeError(response, 404, "version_not_found", error.message);
+    if (error instanceof AgentDiscoveryValidationError) {
+      writeError(response, 400, "invalid_query", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionEnvironmentPublicationNotFoundError) {
-      writeError(response, 404, "environment_not_found", error.message);
+    if (error instanceof AgentDiscoveryRawCardPayloadTooLargeError) {
+      writeError(response, 400, "raw_card_payload_too_large", error.message);
       return;
     }
 
-    if (error instanceof PublicationTelemetryValidationError) {
-      writeError(response, 400, "invalid_telemetry_request", error.message);
-      return;
-    }
-
-    if (error instanceof InvalidPublicationTelemetryRequestError) {
+    if (error instanceof InvalidSearchRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

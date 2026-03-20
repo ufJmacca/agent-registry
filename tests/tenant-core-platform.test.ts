@@ -4,15 +4,18 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { sql } from "kysely";
 import pg from "pg";
 
 import { createPrincipalResolver } from "../apps/api/src/auth/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
+import { initializeApiRuntime } from "../apps/api/src/main.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
+  KyselyTenantPolicyOverlayRepository,
   createRegistryMigrator,
   createKyselyDb,
   destroyKyselyDb,
@@ -29,6 +32,7 @@ const alternateCardProfileId = "a2a-v1";
 
 interface FreshRegistryDatabase {
   cleanup(): Promise<void>;
+  countOpenConnections(): Promise<number>;
   databaseUrl: string;
   db: AgentRegistryDb;
   migrationResults: Awaited<ReturnType<typeof migrateToLatest>>;
@@ -38,6 +42,12 @@ interface IsolatedRegistryDatabase {
   cleanup(): Promise<void>;
   databaseUrl: string;
   db: AgentRegistryDb;
+}
+
+interface EmptyRegistryDatabase {
+  cleanup(): Promise<void>;
+  countOpenConnections(): Promise<number>;
+  databaseUrl: string;
 }
 
 function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
@@ -70,6 +80,14 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
         await adminPool.query(`drop database if exists "${databaseName}"`);
         await adminPool.end();
       },
+      async countOpenConnections() {
+        const result = await adminPool.query<{ connection_count: string }>(
+          "select count(*)::text as connection_count from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
+          [databaseName],
+        );
+
+        return Number(result.rows[0]?.connection_count ?? "0");
+      },
       databaseUrl,
       db,
       migrationResults,
@@ -80,6 +98,58 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
     await adminPool.end();
     throw error;
   }
+}
+
+async function createEmptyRegistryDatabase(): Promise<EmptyRegistryDatabase> {
+  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
+  const adminPool = new Pool({
+    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
+  });
+
+  try {
+    await adminPool.query(`create database "${databaseName}" template template0`);
+  } catch (error) {
+    await adminPool.end();
+    throw error;
+  }
+
+  return {
+    async cleanup() {
+      await adminPool.query(
+        "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
+        [databaseName],
+      );
+      await adminPool.query(`drop database if exists "${databaseName}"`);
+      await adminPool.end();
+    },
+    async countOpenConnections() {
+      const result = await adminPool.query<{ connection_count: string }>(
+        "select count(*)::text as connection_count from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
+        [databaseName],
+      );
+
+      return Number(result.rows[0]?.connection_count ?? "0");
+    },
+    databaseUrl: createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName),
+  };
+}
+
+async function waitForOpenConnectionCount(
+  database: { countOpenConnections(): Promise<number> },
+  expectedCount: number,
+): Promise<number> {
+  let lastCount = await database.countOpenConnections();
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (lastCount === expectedCount) {
+      return lastCount;
+    }
+
+    await delay(50);
+    lastCount = await database.countOpenConnections();
+  }
+
+  return lastCount;
 }
 
 function formatMigrationResults(results: Awaited<ReturnType<typeof migrateToLatest>>) {
@@ -107,7 +177,15 @@ const expectedMigrationResults = [
     status: "Success",
   },
   {
-    migrationName: "005_publication_telemetry_unique_windows",
+    migrationName: "005_agent_version_publishers",
+    status: "Success",
+  },
+  {
+    migrationName: "006_publication_probe_history",
+    status: "Success",
+  },
+  {
+    migrationName: "007_publication_telemetry_unique_windows",
     status: "Success",
   },
 ];
@@ -183,8 +261,34 @@ async function createAr03RegistryDatabase(): Promise<IsolatedRegistryDatabase> {
       )
     `.execute(db);
     await sql`
+      create table environment_publications (
+        publication_id text primary key,
+        tenant_id text not null,
+        agent_id text not null,
+        version_id text not null,
+        environment_key text not null,
+        raw_card text not null,
+        invocation_endpoint text,
+        normalized_metadata jsonb not null default '{}'::jsonb,
+        health_endpoint_url text not null,
+        created_at timestamptz not null default now(),
+        constraint environment_publications_version_fk
+          foreign key (tenant_id, agent_id, version_id)
+          references agent_versions(tenant_id, agent_id, version_id)
+          on delete cascade
+      )
+    `.execute(db);
+    await sql`
       create index agent_versions_sequence_idx
       on agent_versions (tenant_id, agent_id, version_sequence)
+    `.execute(db);
+    await sql`
+      create table publication_health (
+        publication_id text primary key
+          references environment_publications(publication_id)
+          on delete cascade,
+        health_status text not null default 'unknown'
+      )
     `.execute(db);
     await sql`
       create table kysely_migration (
@@ -266,6 +370,23 @@ test("loadRegistryConfig requires a self-hosted bootstrap file", () => {
   );
 });
 
+test("loadRegistryConfig rejects malformed numeric env values", () => {
+  // Arrange
+  const env = {
+    DATABASE_URL: "postgres://registry:registry@postgres:5432/agent_registry",
+  };
+
+  // Act / Assert
+  assert.throws(
+    () => loadRegistryConfig({ ...env, HEALTH_PROBE_INTERVAL_SECONDS: "30s" }),
+    /HEALTH_PROBE_INTERVAL_SECONDS/,
+  );
+  assert.throws(
+    () => loadRegistryConfig({ ...env, RAW_CARD_BYTE_LIMIT: "256kb" }),
+    /RAW_CARD_BYTE_LIMIT/,
+  );
+});
+
 test("migrateToLatest creates the full registry schema and keeps migrations forward-only", async () => {
   // Arrange
   const database = await createFreshRegistryDatabase();
@@ -276,6 +397,7 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       "agents",
       "environment_publications",
       "publication_health",
+      "publication_probe_history",
       "publication_telemetry",
       "tenant_environments",
       "tenant_memberships",
@@ -393,6 +515,16 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       })
       .execute();
     await database.db
+      .insertInto("publication_probe_history")
+      .values({
+        checked_at: "2026-03-12T00:03:00Z",
+        error: null,
+        ok: true,
+        publication_id: "publication-1",
+        status_code: 200,
+      })
+      .execute();
+    await database.db
       .insertInto("publication_telemetry")
       .values({
         error_count: 1,
@@ -406,6 +538,33 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
         window_started_at: "2026-03-12T00:00:00Z",
       })
       .execute();
+    await database.db
+      .insertInto("tenants")
+      .values({
+        deployment_mode: "hosted",
+        display_name: "Other Tenant",
+        tenant_id: "tenant-other",
+      })
+      .execute();
+
+    await assert.rejects(
+      () =>
+        database.db
+          .insertInto("publication_telemetry")
+          .values({
+            error_count: 0,
+            invocation_count: 1,
+            p50_latency_ms: 50,
+            p95_latency_ms: 50,
+            publication_id: "publication-1",
+            success_count: 1,
+            tenant_id: "tenant-other",
+            window_ended_at: "2026-03-12T00:10:00Z",
+            window_started_at: "2026-03-12T00:05:00Z",
+          })
+          .execute(),
+      /publication_telemetry_publication_tenant_fk/,
+    );
 
     const tables = await listPublicTables(database.db);
     const tenant = await database.db
@@ -498,6 +657,11 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
         "p95_latency_ms",
       ])
       .where("tenant_id", "=", "tenant-schema")
+      .where("publication_id", "=", "publication-1")
+      .executeTakeFirstOrThrow();
+    const probeHistory = await database.db
+      .selectFrom("publication_probe_history")
+      .select(["publication_id", "checked_at", "ok", "status_code", "error"])
       .where("publication_id", "=", "publication-1")
       .executeTakeFirstOrThrow();
     const rollbackAttempt = await createRegistryMigrator(database.db).migrateDown();
@@ -604,13 +768,26 @@ test("migrateToLatest creates the full registry schema and keeps migrations forw
       success_count: 9,
       tenant_id: "tenant-schema",
     });
+    assert.deepEqual(
+      {
+        ...probeHistory,
+        checked_at: new Date(probeHistory.checked_at).toISOString(),
+      },
+      {
+        checked_at: "2026-03-12T00:03:00.000Z",
+        error: null,
+        ok: true,
+        publication_id: "publication-1",
+        status_code: 200,
+      },
+    );
     assert.ok(rollbackAttempt.error instanceof Error);
     assert.match(rollbackAttempt.error.message, /forward-only/);
     assert.deepEqual(
       formatMigrationResults((rollbackAttempt.results ?? []) as Awaited<ReturnType<typeof migrateToLatest>>),
       [
         {
-          migrationName: "005_publication_telemetry_unique_windows",
+          migrationName: "007_publication_telemetry_unique_windows",
           status: "Error",
         },
       ],
@@ -665,6 +842,24 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
         version_sequence: 1,
       })
       .execute();
+    await database.db
+      .insertInto("environment_publications")
+      .values({
+        agent_id: "agent-legacy",
+        environment_key: "prod",
+        health_endpoint_url: "https://legacy.agent.example.com/health",
+        invocation_endpoint: "https://legacy.agent.example.com/invoke",
+        normalized_metadata: {
+          displayName: "Legacy Agent",
+        },
+        publication_id: "publication-legacy",
+        raw_card: JSON.stringify({
+          name: "Legacy Agent",
+        }),
+        tenant_id: "tenant-legacy",
+        version_id: "version-legacy",
+      })
+      .execute();
     const migrationResults = await migrateToLatest(database.db);
 
     // Act
@@ -679,6 +874,11 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
       .selectFrom("tenants")
       .select(["default_card_profile_id"])
       .where("tenant_id", "=", "tenant-legacy")
+      .executeTakeFirstOrThrow();
+    const publicationHealth = await database.db
+      .selectFrom("publication_health")
+      .select(["publication_id", "health_status"])
+      .where("publication_id", "=", "publication-legacy")
       .executeTakeFirstOrThrow();
     const duplicateInsert = database.db
       .insertInto("agent_versions")
@@ -716,12 +916,24 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
         status: "Success",
       },
       {
-        migrationName: "005_publication_telemetry_unique_windows",
+        migrationName: "005_agent_version_publishers",
+        status: "Success",
+      },
+      {
+        migrationName: "006_publication_probe_history",
+        status: "Success",
+      },
+      {
+        migrationName: "007_publication_telemetry_unique_windows",
         status: "Success",
       },
     ]);
     assert.deepEqual(tenant, {
       default_card_profile_id: defaultCardProfileId,
+    });
+    assert.deepEqual(publicationHealth, {
+      health_status: "unknown",
+      publication_id: "publication-legacy",
     });
     assert.deepEqual(version, {
       card_profile_id: defaultCardProfileId,
@@ -1048,6 +1260,306 @@ test("bootstrapFromConfig rejects multi-tenant manifests in self-hosted mode wit
     assert.deepEqual(tenants, []);
     assert.deepEqual(environments, []);
     assert.deepEqual(memberships, []);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
+test("tenant policy overlay role updates stay monotonic for narrowing any-of clauses", async () => {
+  // Arrange
+  const database = await createFreshRegistryDatabase();
+
+  try {
+    await database.db
+      .insertInto("tenants")
+      .values({
+        deployment_mode: "hosted",
+        display_name: "Tenant Alpha",
+        tenant_id: "tenant-alpha",
+      })
+      .execute();
+    await database.db
+      .insertInto("agents")
+      .values({
+        active_version_id: null,
+        agent_id: "agent-alpha",
+        deprecated: false,
+        disabled: false,
+        display_name: "Agent Alpha",
+        summary: "Overlay narrowing regression fixture",
+        tenant_id: "tenant-alpha",
+      })
+      .execute();
+    const repository = new KyselyTenantPolicyOverlayRepository(database.db);
+
+    // Act
+    await repository.upsertNarrowingOverlay({
+      agentId: "agent-alpha",
+      environmentKey: null,
+      requiredRoles: ["case-manager", "support-agent"],
+      requiredScopes: ["tickets.read"],
+      tenantId: "tenant-alpha",
+    });
+    const overlay = await repository.upsertNarrowingOverlay({
+      agentId: "agent-alpha",
+      environmentKey: null,
+      requiredRoles: ["case-manager", "region-analyst"],
+      requiredScopes: ["tickets.write"],
+      tenantId: "tenant-alpha",
+    });
+
+    // Assert
+    assert.deepEqual(overlay, {
+      agentId: "agent-alpha",
+      deprecated: false,
+      disabled: false,
+      environmentKey: null,
+      requiredRoles: ["case-manager"],
+      requiredScopes: ["tickets.read", "tickets.write"],
+    });
+    assert.deepEqual(
+      await database.db
+        .selectFrom("tenant_policy_overlays")
+        .select(["required_roles", "required_scopes"])
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", "agent-alpha")
+        .where("environment_key", "is", null)
+        .executeTakeFirstOrThrow(),
+      {
+        required_roles: ["case-manager"],
+        required_scopes: ["tickets.read", "tickets.write"],
+      },
+    );
+  } finally {
+    await database.cleanup();
+  }
+});
+
+test("bootstrapFromConfig replaces stale tenant state in self-hosted mode", async () => {
+  // Arrange
+  const database = await createFreshRegistryDatabase();
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-bootstrap-self-hosted-replace-"));
+  const initialManifestPath = path.join(tempDir, "self-hosted-initial.yaml");
+  const updatedManifestPath = path.join(tempDir, "self-hosted-updated.yaml");
+
+  try {
+    await writeFile(
+      initialManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-alpha",
+        "    displayName: Tenant Alpha",
+        "    environments: [dev]",
+        "    memberships:",
+        "      - subjectId: operator-alpha",
+        "        roles: [tenant-admin]",
+        "        scopes: [agents.read]",
+        "        registryCapabilities: [bootstrap:write]",
+        "        userContext:",
+        "          department: alpha",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      updatedManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-beta",
+        "    displayName: Tenant Beta",
+        "    environments: [prod]",
+        "    memberships:",
+        "      - subjectId: operator-beta",
+        "        roles: [tenant-operator]",
+        "        scopes: [agents.read, agents.write]",
+        "        registryCapabilities: [tenants:read]",
+        "        userContext:",
+        "          department: beta",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const initialConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: initialManifestPath,
+    });
+    const updatedConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: updatedManifestPath,
+    });
+    const repository = new KyselyBootstrapRepository(database.db);
+
+    // Act
+    await bootstrapFromConfig(initialConfig, repository);
+    await bootstrapFromConfig(updatedConfig, repository);
+    const tenants = await database.db
+      .selectFrom("tenants")
+      .select(["tenant_id", "display_name", "deployment_mode"])
+      .orderBy("tenant_id")
+      .execute();
+    const environments = await database.db
+      .selectFrom("tenant_environments")
+      .select(["tenant_id", "environment_key"])
+      .orderBy("tenant_id")
+      .orderBy("environment_key")
+      .execute();
+    const memberships = await database.db
+      .selectFrom("tenant_memberships")
+      .select([
+        "tenant_id",
+        "subject_id",
+        "roles",
+        "scopes",
+        "registry_capabilities",
+        "user_context",
+      ])
+      .orderBy("tenant_id")
+      .orderBy("subject_id")
+      .execute();
+
+    // Assert
+    assert.deepEqual(tenants, [
+      {
+        deployment_mode: "self-hosted",
+        display_name: "Tenant Beta",
+        tenant_id: "tenant-beta",
+      },
+    ]);
+    assert.deepEqual(environments, [
+      {
+        environment_key: "prod",
+        tenant_id: "tenant-beta",
+      },
+    ]);
+    assert.deepEqual(memberships, [
+      {
+        registry_capabilities: ["tenants:read"],
+        roles: ["tenant-operator"],
+        scopes: ["agents.read", "agents.write"],
+        subject_id: "operator-beta",
+        tenant_id: "tenant-beta",
+        user_context: {
+          department: "beta",
+        },
+      },
+    ]);
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
+test("bootstrapFromConfig prunes removed memberships in self-hosted mode", async () => {
+  // Arrange
+  const database = await createFreshRegistryDatabase();
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-bootstrap-self-hosted-membership-prune-"));
+  const initialManifestPath = path.join(tempDir, "self-hosted-initial.yaml");
+  const updatedManifestPath = path.join(tempDir, "self-hosted-updated.yaml");
+
+  try {
+    await writeFile(
+      initialManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-self-hosted",
+        "    displayName: Self Hosted Tenant",
+        "    environments: [prod]",
+        "    memberships:",
+        "      - subjectId: operator-1",
+        "        roles: [tenant-admin]",
+        "        scopes: [agents.read]",
+        "        registryCapabilities: [bootstrap:write]",
+        "        userContext:",
+        "          department: platform",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      updatedManifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-self-hosted",
+        "    displayName: Self Hosted Tenant Updated",
+        "    environments: [prod]",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const initialConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: initialManifestPath,
+    });
+    const updatedConfig = loadRegistryConfig({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: updatedManifestPath,
+    });
+    const repository = new KyselyBootstrapRepository(database.db);
+
+    // Act
+    await bootstrapFromConfig(initialConfig, repository);
+    await bootstrapFromConfig(updatedConfig, repository);
+    const memberships = await database.db
+      .selectFrom("tenant_memberships")
+      .select(["tenant_id", "subject_id"])
+      .execute();
+
+    // Assert
+    assert.deepEqual(memberships, []);
+    await assert.rejects(
+      () =>
+        createPrincipalResolver(database.db).resolve({
+          auth: {
+            subjectId: "operator-1",
+          },
+          tenantId: "tenant-self-hosted",
+        }),
+      /does not have tenant membership/,
+    );
+  } finally {
+    await rm(tempDir, { force: true, recursive: true });
+    await database.cleanup();
+  }
+});
+
+test("initializeApiRuntime closes the DB pool when bootstrap fails after opening a connection", async () => {
+  // Arrange
+  const database = await createEmptyRegistryDatabase();
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-runtime-failure-"));
+  const manifestPath = path.join(tempDir, "hosted-bootstrap.yaml");
+
+  try {
+    await writeFile(
+      manifestPath,
+      [
+        "tenants:",
+        "  - tenantId: tenant-runtime",
+        "    displayName: Runtime Tenant",
+        "    environments: [prod]",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    // Act / Assert
+    await assert.rejects(
+      () =>
+        initializeApiRuntime({
+          DATABASE_URL: database.databaseUrl,
+          DEPLOYMENT_MODE: "hosted",
+          HOSTED_BOOTSTRAP_FILE: manifestPath,
+        }),
+      /relation "tenants" does not exist/,
+    );
+
+    assert.equal(await waitForOpenConnectionCount(database, 0), 0);
   } finally {
     await rm(tempDir, { force: true, recursive: true });
     await database.cleanup();

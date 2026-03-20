@@ -17,6 +17,7 @@ export interface CreateDraftAgentInput {
   displayName: string;
   headerContract: unknown[];
   publications: DraftPublicationPersistenceInput[];
+  publisherId: string;
   requiredRoles: string[];
   requiredScopes: string[];
   summary: string;
@@ -104,6 +105,7 @@ async function insertVersion(
       context_contract: JSON.stringify(input.contextContract),
       display_name: input.displayName,
       header_contract: JSON.stringify(input.headerContract),
+      publisher_id: input.publisherId,
       required_roles: input.requiredRoles,
       required_scopes: input.requiredScopes,
       summary: input.summary,

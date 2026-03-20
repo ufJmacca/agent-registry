@@ -5,31 +5,26 @@ import {
   MissingTenantMembershipError,
   type PrincipalResolver,
 } from "@agent-registry/auth";
-import type { UpsertPublicationTelemetryRequest } from "@agent-registry/contracts";
-import {
-  AgentVersionEnvironmentPublicationNotFoundError,
-  AgentVersionNotFoundError,
-} from "@agent-registry/db";
+import type { AgentPublicationPreflightRequest } from "@agent-registry/contracts";
+import { AgentEnvironmentPublicationNotFoundError } from "@agent-registry/db";
 
 import {
-  PublicationTelemetryAuthorizationError,
-  PublicationTelemetryService,
-  PublicationTelemetryValidationError,
+  AgentPublicationPreflightAuthorizationError,
+  AgentPublicationPreflightService,
 } from "./service.js";
 
-export interface PublicationTelemetryRouteMatch {
+export interface AgentPublicationPreflightRouteMatch {
   agentId: string;
   environmentKey: string;
   tenantId: string;
-  versionId: string;
 }
 
-export interface PublicationTelemetryHttpDependencies {
+export interface AgentPublicationPreflightHttpDependencies {
   principalResolver: PrincipalResolver;
-  service: PublicationTelemetryService;
+  service: AgentPublicationPreflightService;
 }
 
-export class InvalidPublicationTelemetryRequestError extends Error {}
+export class InvalidAgentPublicationPreflightRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -84,11 +79,11 @@ function parseJsonObject(value: string, errorMessage: string): Record<string, un
   try {
     parsed = JSON.parse(value);
   } catch {
-    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+    throw new InvalidAgentPublicationPreflightRequestError(errorMessage);
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+    throw new InvalidAgentPublicationPreflightRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -107,6 +102,16 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidAgentPublicationPreflightRequestError(
+      `${label} path segment must be valid URL encoding.`,
+    );
+  }
+}
+
 async function readRequestBody(request: IncomingMessage): Promise<string> {
   let body = "";
 
@@ -117,35 +122,63 @@ async function readRequestBody(request: IncomingMessage): Promise<string> {
   return body;
 }
 
-async function readTelemetryRequest(
+function parseIncludeRawCard(searchParams: URLSearchParams): boolean {
+  const includes = searchParams.getAll("include");
+
+  for (const include of includes) {
+    if (include !== "rawCard") {
+      throw new InvalidAgentPublicationPreflightRequestError(
+        `Unsupported include value '${include}'.`,
+      );
+    }
+  }
+
+  return includes.includes("rawCard");
+}
+
+function parseContext(value: unknown): Record<string, unknown> {
+  if (value === undefined) {
+    return {};
+  }
+
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new InvalidAgentPublicationPreflightRequestError(
+      "Preflight context must be a JSON object.",
+    );
+  }
+
+  return value as Record<string, unknown>;
+}
+
+async function readPreflightRequest(
   request: IncomingMessage,
-): Promise<UpsertPublicationTelemetryRequest> {
+  searchParams: URLSearchParams,
+): Promise<AgentPublicationPreflightRequest> {
   const body = (await readRequestBody(request)).trim();
+  const parsed =
+    body === "" ? {} : parseJsonObject(body, "Request body must be a JSON object.");
+  const includeRawCard = parseIncludeRawCard(searchParams);
 
-  if (body === "") {
-    throw new InvalidPublicationTelemetryRequestError("Request body must be a JSON object.");
-  }
-
-  return parseJsonObject(body, "Request body must be a JSON object.") as unknown as UpsertPublicationTelemetryRequest;
-}
-
-function decodeRouteSegment(segment: string, label: string): string {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    throw new InvalidPublicationTelemetryRequestError(
-      `${label} path segment must be valid URL encoding.`,
+  if (
+    parsed.includeRawCard !== undefined &&
+    typeof parsed.includeRawCard !== "boolean"
+  ) {
+    throw new InvalidAgentPublicationPreflightRequestError(
+      "includeRawCard must be a boolean when provided.",
     );
   }
+
+  return {
+    context: parseContext(parsed.context ?? parsed.contextValues),
+    includeRawCard: includeRawCard || parsed.includeRawCard === true,
+  };
 }
 
-export function matchPublicationTelemetryRoute(
+export function matchAgentPublicationPreflightRoute(
   pathname: string,
-): PublicationTelemetryRouteMatch | null {
+): AgentPublicationPreflightRouteMatch | null {
   const match =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/:]+):telemetry\/?$/.exec(
-      pathname,
-    );
+    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/environments\/([^/:]+):preflight\/?$/.exec(pathname);
 
   if (match === null) {
     return null;
@@ -153,17 +186,16 @@ export function matchPublicationTelemetryRoute(
 
   return {
     agentId: decodeRouteSegment(match[2], "Agent id"),
-    environmentKey: decodeRouteSegment(match[4], "Environment key"),
+    environmentKey: decodeRouteSegment(match[3], "Environment key"),
     tenantId: decodeRouteSegment(match[1], "Tenant id"),
-    versionId: decodeRouteSegment(match[3], "Version id"),
   };
 }
 
-export async function handlePublicationTelemetryRequest(
+export async function handleAgentPublicationPreflightRequest(
   request: IncomingMessage,
   response: ServerResponse,
-  route: PublicationTelemetryRouteMatch,
-  dependencies: PublicationTelemetryHttpDependencies,
+  route: AgentPublicationPreflightRouteMatch,
+  dependencies: AgentPublicationPreflightHttpDependencies,
 ): Promise<void> {
   try {
     const principal = await dependencies.principalResolver.resolve({
@@ -181,16 +213,17 @@ export async function handlePublicationTelemetryRequest(
       return;
     }
 
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const preflightRequest = await readPreflightRequest(request, url.searchParams);
     writeJson(
       response,
       200,
-      await dependencies.service.upsertTelemetry(
+      await dependencies.service.preflightPublication(
         principal,
         route.tenantId,
         route.agentId,
-        route.versionId,
         route.environmentKey,
-        await readTelemetryRequest(request),
+        preflightRequest,
       ),
     );
   } catch (error) {
@@ -204,27 +237,17 @@ export async function handlePublicationTelemetryRequest(
       return;
     }
 
-    if (error instanceof PublicationTelemetryAuthorizationError) {
+    if (error instanceof AgentPublicationPreflightAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionNotFoundError) {
-      writeError(response, 404, "version_not_found", error.message);
+    if (error instanceof AgentEnvironmentPublicationNotFoundError) {
+      writeError(response, 404, "publication_not_found", error.message);
       return;
     }
 
-    if (error instanceof AgentVersionEnvironmentPublicationNotFoundError) {
-      writeError(response, 404, "environment_not_found", error.message);
-      return;
-    }
-
-    if (error instanceof PublicationTelemetryValidationError) {
-      writeError(response, 400, "invalid_telemetry_request", error.message);
-      return;
-    }
-
-    if (error instanceof InvalidPublicationTelemetryRequestError) {
+    if (error instanceof InvalidAgentPublicationPreflightRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }
