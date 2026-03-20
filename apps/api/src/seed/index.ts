@@ -254,7 +254,15 @@ function createSeedConfigEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
 }
 
 async function resetDemoAgentCatalog(db: AgentRegistryDb): Promise<void> {
-  await db.deleteFrom("agents").where("tenant_id", "=", demoTenantId).execute();
+  await db
+    .deleteFrom("agents")
+    .where("tenant_id", "=", demoTenantId)
+    .where(
+      "display_name",
+      "in",
+      demoAgents.map((agent) => agent.displayName),
+    )
+    .execute();
 }
 
 async function seedDemoAgentCatalog(db: AgentRegistryDb): Promise<{

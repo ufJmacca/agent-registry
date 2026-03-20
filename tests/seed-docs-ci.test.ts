@@ -147,6 +147,84 @@ async function runSeedScript(env: NodeJS.ProcessEnv): Promise<{
   );
 }
 
+async function insertCustomDemoAgent(db: AgentRegistryDb): Promise<{
+  agentId: string;
+  publicationId: string;
+  versionId: string;
+}> {
+  const agentId = randomUUID();
+  const versionId = randomUUID();
+  const publicationId = randomUUID();
+
+  await db
+    .insertInto("agents")
+    .values({
+      active_version_id: versionId,
+      agent_id: agentId,
+      display_name: "Local Sandbox Agent",
+      summary: "A locally registered agent that should survive demo reseeding.",
+      tenant_id: "tenant-demo",
+    })
+    .execute();
+
+  await db
+    .insertInto("agent_versions")
+    .values({
+      agent_id: agentId,
+      approval_state: "approved",
+      approved_at: "2026-03-20T00:00:00.000Z",
+      approved_by: "demo-admin",
+      capabilities: ["sandbox"],
+      card_profile_id: "a2a-default",
+      context_contract: [],
+      display_name: "Local Sandbox Agent",
+      header_contract: [],
+      publisher_id: "demo-publisher",
+      required_roles: [],
+      required_scopes: [],
+      summary: "A locally registered agent that should survive demo reseeding.",
+      tags: ["local-only"],
+      tenant_id: "tenant-demo",
+      version_id: versionId,
+      version_label: "local-v1",
+      version_sequence: 1,
+    })
+    .execute();
+
+  await db
+    .insertInto("environment_publications")
+    .values({
+      agent_id: agentId,
+      environment_key: "dev",
+      health_endpoint_url: "https://local-sandbox.example.com/health",
+      invocation_endpoint: "https://local-sandbox.example.com/invoke",
+      normalized_metadata: {
+        displayName: "Local Sandbox Agent",
+      },
+      publication_id: publicationId,
+      raw_card: JSON.stringify(
+        {
+          capabilities: ["sandbox"],
+          invocationEndpoint: "https://local-sandbox.example.com/invoke",
+          name: "Local Sandbox Agent",
+          summary: "A locally registered agent that should survive demo reseeding.",
+          tags: ["local-only"],
+        },
+        null,
+        2,
+      ),
+      tenant_id: "tenant-demo",
+      version_id: versionId,
+    })
+    .execute();
+
+  return {
+    agentId,
+    publicationId,
+    versionId,
+  };
+}
+
 function extractRunCommands(runStep: string): string[] {
   return runStep
     .split("\n")
@@ -400,6 +478,65 @@ test("seed script bootstraps a demo self-hosted tenant with sample agents, healt
     await bootstrapManifest.cleanup();
     await database.cleanup();
   }
+});
+
+test("seed script preserves non-demo agents already registered in tenant-demo", async () => {
+  const database = await createFreshRegistryDatabase();
+  const bootstrapManifest = await createSelfHostedBootstrapManifest();
+
+  try {
+    await runSeedScript({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: bootstrapManifest.manifestPath,
+    });
+
+    const customAgent = await insertCustomDemoAgent(database.db);
+
+    await runSeedScript({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: bootstrapManifest.manifestPath,
+    });
+
+    const agents = await database.db
+      .selectFrom("agents")
+      .select(["agent_id", "display_name"])
+      .where("tenant_id", "=", "tenant-demo")
+      .orderBy("display_name")
+      .execute();
+
+    assert.deepEqual(
+      agents.map((agent) => agent.display_name),
+      ["Case Resolution Copilot", "Local Sandbox Agent", "Policy Retrieval Assistant"],
+    );
+
+    const preservedPublication = await database.db
+      .selectFrom("environment_publications")
+      .select(["agent_id", "publication_id", "version_id"])
+      .where("tenant_id", "=", "tenant-demo")
+      .where("agent_id", "=", customAgent.agentId)
+      .executeTakeFirst();
+
+    assert.deepEqual(preservedPublication, {
+      agent_id: customAgent.agentId,
+      publication_id: customAgent.publicationId,
+      version_id: customAgent.versionId,
+    });
+  } finally {
+    await bootstrapManifest.cleanup();
+    await database.cleanup();
+  }
+});
+
+test("compose defaults the demo self-hosted stack while allowing host overrides", async () => {
+  const composeSource = await readFile(path.join(repositoryRoot, "compose.yaml"), "utf8");
+
+  assert.match(composeSource, /DEPLOYMENT_MODE:\s+\$\{DEPLOYMENT_MODE:-self-hosted\}/);
+  assert.match(
+    composeSource,
+    /SELF_HOSTED_BOOTSTRAP_FILE:\s+\$\{SELF_HOSTED_BOOTSTRAP_FILE:-\/workspace\/apps\/api\/src\/seed\/self-hosted-bootstrap\.yaml\}/,
+  );
 });
 
 test("make test runs the non-recursive public workflow proof before the inner workspace suite", async () => {

@@ -4,7 +4,7 @@ Agent Registry is a self-hostable directory and policy service for A2A agent dis
 
 ## Bootstrap Flow
 
-The local compose stack is wired for the self-hosted demo tenant by default.
+The local compose stack defaults to the self-hosted demo tenant, and you can override those defaults with host environment variables before running the public `make` targets.
 
 - `DEPLOYMENT_MODE=self-hosted`
 - `SELF_HOSTED_BOOTSTRAP_FILE=/workspace/apps/api/src/seed/self-hosted-bootstrap.yaml`
