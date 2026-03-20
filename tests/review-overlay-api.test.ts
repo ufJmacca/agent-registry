@@ -17,6 +17,11 @@ import {
   matchAgentAdminDetailRoute,
 } from "../apps/api/src/modules/admin-detail/index.ts";
 import {
+  AgentPublicationHealthService,
+  handleAgentPublicationHealthRequest,
+  matchAgentPublicationHealthRoute,
+} from "../apps/api/src/modules/health/index.ts";
+import {
   handleTenantPolicyOverlayRequest,
   matchTenantPolicyOverlayRoute,
   TenantPolicyOverlayService,
@@ -1603,6 +1608,76 @@ test("publication health endpoint returns 404 for unapproved versions", async ()
   }
 });
 
+test("publication health endpoint returns 500 for unexpected service failures", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      return {
+        registryCapabilities: [],
+        roles: ["tenant-admin"],
+        scopes: [],
+        subjectId: "admin-alpha",
+        tenantId: "tenant-alpha",
+        userContext: {},
+      };
+    },
+  });
+  const healthService = new AgentPublicationHealthService({
+    async getApprovedPublicationForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async getPublicationHealth() {
+      throw new Error("database unavailable");
+    },
+    async listApprovedPublicationsForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async recordPublicationProbe() {
+      throw new Error("health repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const route = matchAgentPublicationHealthRoute(url.pathname);
+
+    if (route === null) {
+      throw new Error(`Unexpected route: ${url.pathname}`);
+    }
+
+    await handleAgentPublicationHealthRequest(request, response, route, {
+      principalResolver,
+      service: healthService,
+    });
+  });
+
+  try {
+    // Act
+    const response = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev/health",
+        server.baseUrl,
+      ),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "GET",
+      },
+    );
+
+    // Assert
+    assert.equal(response.status, 500);
+    assert.deepEqual((await response.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test("approval rejects hosted probe targets whose hostname cannot be resolved", async () => {
   // Arrange
   const resolveProbeHostname = async (): Promise<string[]> => {
@@ -1860,7 +1935,7 @@ test("approval rejects hosted probe targets with hex-form IPv4-mapped IPv6 liter
   }
 });
 
-test("malformed review, overlay, and admin-detail route encoding returns 400 without taking down the API listener", async () => {
+test("malformed review, overlay, admin-detail, and health route encoding returns 400 without taking down the API listener", async () => {
   // Arrange
   const context = await createReviewApiContext();
 
@@ -1877,6 +1952,11 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
     const adminDetailMalformedResponse = await requestJson<ErrorResponseBody>(context, {
       method: "GET",
       path: "/tenants/%E0%A4%A/agents/agent-alpha:admin-detail",
+      subjectId: "admin-alpha",
+    });
+    const healthMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      method: "GET",
+      path: "/tenants/%E0%A4%A/agents/agent-alpha/versions/version-1/environments/dev/health",
       subjectId: "admin-alpha",
     });
     const followUpResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
@@ -1909,6 +1989,13 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
         message: "Tenant id path segment must be valid URL encoding.",
       },
     });
+    assert.equal(healthMalformedResponse.status, 400);
+    assert.deepEqual(healthMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
     assert.equal(followUpResponse.status, 201);
     assert.equal(followUpResponse.body.approvalState, "draft");
   } finally {
@@ -1916,7 +2003,7 @@ test("malformed review, overlay, and admin-detail route encoding returns 400 wit
   }
 });
 
-test("unexpected resolver failures return 500 internal_error responses for review, overlay, and admin detail endpoints", async () => {
+test("unexpected resolver failures return 500 internal_error responses for review, overlay, admin detail, and health endpoints", async () => {
   // Arrange
   const principalResolver = new PrincipalResolver({
     async getMembership() {
@@ -1960,6 +2047,20 @@ test("unexpected resolver failures return 500 internal_error responses for revie
       throw new Error("admin detail repository should not be called");
     },
   });
+  const healthService = new AgentPublicationHealthService({
+    async getApprovedPublicationForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async getPublicationHealth() {
+      throw new Error("health repository should not be called");
+    },
+    async listApprovedPublicationsForProbing() {
+      throw new Error("health repository should not be called");
+    },
+    async recordPublicationProbe() {
+      throw new Error("health repository should not be called");
+    },
+  });
   const server = await createTemporaryServerContext(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const reviewRoute = matchAgentVersionReviewRoute(url.pathname);
@@ -1988,6 +2089,16 @@ test("unexpected resolver failures return 500 internal_error responses for revie
       await handleAgentAdminDetailRequest(request, response, adminDetailRoute, {
         principalResolver,
         service: adminDetailService,
+      });
+      return;
+    }
+
+    const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
+
+    if (healthRoute !== null) {
+      await handleAgentPublicationHealthRequest(request, response, healthRoute, {
+        principalResolver,
+        service: healthService,
       });
       return;
     }
@@ -2024,6 +2135,18 @@ test("unexpected resolver failures return 500 internal_error responses for revie
         method: "GET",
       },
     );
+    const healthResponse = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev/health",
+        server.baseUrl,
+      ),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "admin-alpha",
+        }),
+        method: "GET",
+      },
+    );
 
     // Assert
     assert.equal(reviewResponse.status, 500);
@@ -2042,6 +2165,13 @@ test("unexpected resolver failures return 500 internal_error responses for revie
     });
     assert.equal(adminDetailResponse.status, 500);
     assert.deepEqual((await adminDetailResponse.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(healthResponse.status, 500);
+    assert.deepEqual((await healthResponse.json()) as ErrorResponseBody, {
       error: {
         code: "internal_error",
         message: "Internal server error.",

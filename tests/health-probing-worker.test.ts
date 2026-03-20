@@ -513,7 +513,7 @@ test("health probe worker schedules recurring reconciliation and immediately enq
         allowPrivateTargets: false,
         degradedThreshold: 1,
         failureWindow: 3,
-        intervalSeconds: 60,
+        intervalSeconds: 300,
         method: "GET",
         requireHttps: true,
         timeoutSeconds: 5,
@@ -528,7 +528,7 @@ test("health probe worker schedules recurring reconciliation and immediately enq
     // Assert
     assert.deepEqual(boss.scheduledCalls, [
       {
-        cron: "* * * * *",
+        cron: "*/5 * * * *",
         data: undefined,
         name: HEALTH_PROBE_RECONCILE_JOB_NAME,
       },
@@ -555,6 +555,35 @@ test("health probe worker schedules recurring reconciliation and immediately enq
     );
     assert.equal(typeof boss.workers.get(HEALTH_PROBE_JOB_NAME), "function");
     assert.equal(typeof boss.workers.get(HEALTH_PROBE_RECONCILE_JOB_NAME), "function");
+  } finally {
+    await context.close();
+  }
+});
+
+test("health probe worker rejects intervals pg-boss cannot schedule exactly", async () => {
+  // Arrange
+  const context = await createProbeWorkerContext();
+  const boss = new FakeBoss();
+  const worker = new HealthProbeWorker(
+    {
+      allowPrivateTargets: false,
+      degradedThreshold: 1,
+      failureWindow: 3,
+      intervalSeconds: 90,
+      method: "GET",
+      requireHttps: true,
+      timeoutSeconds: 5,
+    },
+    boss,
+    new KyselyHealthRepository(context.db),
+  );
+
+  try {
+    // Act / Assert
+    await assert.rejects(
+      () => worker.start(),
+      /HEALTH_PROBE_INTERVAL_SECONDS must be a whole number of minutes for pg-boss scheduling\./,
+    );
   } finally {
     await context.close();
   }

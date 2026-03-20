@@ -23,6 +23,7 @@ import {
 import {
   AgentPublicationHealthService,
   handleAgentPublicationHealthRequest,
+  InvalidAgentPublicationHealthRequestError,
   matchAgentPublicationHealthRoute,
 } from "./modules/health/index.js";
 import {
@@ -261,6 +262,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         error instanceof InvalidAgentAdminDetailRequestError ||
         error instanceof InvalidAgentDetailRequestError ||
         error instanceof InvalidAgentDraftRequestError ||
+        error instanceof InvalidAgentPublicationHealthRequestError ||
         error instanceof InvalidAgentPublicationPreflightRequestError ||
         error instanceof InvalidAgentVersionReviewRequestError ||
         error instanceof InvalidDiscoveryRequestError ||

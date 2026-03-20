@@ -57,6 +57,44 @@ function formatProbeFailure(statusCode: number): string {
   return `received ${statusCode} from health endpoint`;
 }
 
+function buildProbeReconcileCron(intervalSeconds: number): string {
+  if (intervalSeconds < 60 || intervalSeconds % 60 !== 0) {
+    throw new Error(
+      "HEALTH_PROBE_INTERVAL_SECONDS must be a whole number of minutes for pg-boss scheduling.",
+    );
+  }
+
+  const intervalMinutes = intervalSeconds / 60;
+
+  if (intervalMinutes === 1) {
+    return HEALTH_PROBE_RECONCILE_CRON;
+  }
+
+  if (intervalMinutes < 60 && 60 % intervalMinutes === 0) {
+    return `*/${intervalMinutes} * * * *`;
+  }
+
+  if (intervalMinutes === 60) {
+    return "0 * * * *";
+  }
+
+  if (intervalMinutes % 60 === 0) {
+    const intervalHours = intervalMinutes / 60;
+
+    if (intervalHours < 24 && 24 % intervalHours === 0) {
+      return `0 */${intervalHours} * * *`;
+    }
+
+    if (intervalHours === 24) {
+      return "0 0 * * *";
+    }
+  }
+
+  throw new Error(
+    "HEALTH_PROBE_INTERVAL_SECONDS must align to a pg-boss cron interval (1m, divisors of 1h, divisors of 1d, or 24h).",
+  );
+}
+
 export async function probeHealthEndpoint(
   endpointUrl: string,
   options: ProbeEndpointOptions,
@@ -137,7 +175,10 @@ export class HealthProbeWorker {
     await Promise.resolve(
       this.boss.work(HEALTH_PROBE_RECONCILE_JOB_NAME, async () => this.reconcileApprovedPublications()),
     );
-    await this.boss.schedule(HEALTH_PROBE_RECONCILE_JOB_NAME, HEALTH_PROBE_RECONCILE_CRON);
+    await this.boss.schedule(
+      HEALTH_PROBE_RECONCILE_JOB_NAME,
+      buildProbeReconcileCron(this.config.intervalSeconds),
+    );
     await this.reconcileApprovedPublications();
   }
 
