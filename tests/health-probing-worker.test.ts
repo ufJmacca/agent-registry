@@ -49,17 +49,30 @@ interface ScheduledCall {
   name: string;
 }
 
+interface CreateQueueCall {
+  name: string;
+  options: Record<string, unknown> | undefined;
+}
+
 interface SentCall {
   data: Record<string, unknown> | undefined;
   name: string;
+  options: Record<string, unknown> | undefined;
 }
 
 class FakeBoss {
+  readonly createQueueCalls: CreateQueueCall[] = [];
+
   readonly scheduledCalls: ScheduledCall[] = [];
 
   readonly sentCalls: SentCall[] = [];
 
   readonly workers = new Map<string, (payload?: Record<string, unknown>) => Promise<void>>();
+
+  async createQueue(name: string, options?: Record<string, unknown>): Promise<string> {
+    this.createQueueCalls.push({ name, options });
+    return `${name}-queue`;
+  }
 
   async schedule(
     name: string,
@@ -70,8 +83,12 @@ class FakeBoss {
     return `${name}-schedule`;
   }
 
-  async send(name: string, data?: Record<string, unknown>): Promise<string> {
-    this.sentCalls.push({ data, name });
+  async send(
+    name: string,
+    data?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<string> {
+    this.sentCalls.push({ data, name, options });
     return `${name}-${this.sentCalls.length}`;
   }
 
@@ -313,7 +330,7 @@ test("assertHealthProbeTargetAllowed blocks hosted private targets but allows se
       return ["127.0.0.1"];
     }
 
-    return [];
+    return ["203.0.113.10"];
   };
 
   // Act / Assert
@@ -402,6 +419,32 @@ test("reducePublicationHealth derives unknown, degraded, healthy, and unreachabl
   assert.equal(unreachable.consecutiveFailures, 3);
 });
 
+test("reducePublicationHealth normalizes Date timestamps before sorting recent checks", () => {
+  // Arrange
+  const checks = [
+    {
+      checkedAt: new Date("2026-03-12T23:59:00.000Z"),
+      error: null,
+      ok: true,
+      statusCode: 204,
+    },
+    {
+      checkedAt: "2026-03-13T00:00:00.000Z",
+      error: "timeout",
+      ok: false,
+      statusCode: null,
+    },
+  ];
+
+  // Act
+  const reduced = reducePublicationHealth(checks);
+
+  // Assert
+  assert.equal(reduced.healthStatus, "degraded");
+  assert.equal(reduced.recentFailures, 1);
+  assert.equal(reduced.consecutiveFailures, 1);
+});
+
 test("health probe worker schedules recurring reconciliation and immediately enqueues every approved publication, including inactive and disabled ones", async () => {
   // Arrange
   const context = await createProbeWorkerContext();
@@ -487,7 +530,7 @@ test("health probe worker schedules recurring reconciliation and immediately enq
         allowPrivateTargets: false,
         degradedThreshold: 1,
         failureWindow: 3,
-        intervalSeconds: 60,
+        intervalSeconds: 300,
         method: "GET",
         requireHttps: true,
         timeoutSeconds: 5,
@@ -500,9 +543,21 @@ test("health probe worker schedules recurring reconciliation and immediately enq
     await worker.start();
 
     // Assert
+    assert.deepEqual(boss.createQueueCalls, [
+      {
+        name: HEALTH_PROBE_JOB_NAME,
+        options: {
+          policy: "exclusive",
+        },
+      },
+      {
+        name: HEALTH_PROBE_RECONCILE_JOB_NAME,
+        options: undefined,
+      },
+    ]);
     assert.deepEqual(boss.scheduledCalls, [
       {
-        cron: "* * * * *",
+        cron: "*/5 * * * *",
         data: undefined,
         name: HEALTH_PROBE_RECONCILE_JOB_NAME,
       },
@@ -510,25 +565,67 @@ test("health probe worker schedules recurring reconciliation and immediately enq
     assert.deepEqual(
       boss.sentCalls.map((call) => ({
         name: call.name,
+        options: call.options,
         publicationId: call.data?.publicationId,
       })),
       [
         {
           name: HEALTH_PROBE_JOB_NAME,
+          options: {
+            singletonKey: "publication-active",
+            singletonSeconds: 300,
+          },
           publicationId: "publication-active",
         },
         {
           name: HEALTH_PROBE_JOB_NAME,
+          options: {
+            singletonKey: "publication-disabled",
+            singletonSeconds: 300,
+          },
           publicationId: "publication-disabled",
         },
         {
           name: HEALTH_PROBE_JOB_NAME,
+          options: {
+            singletonKey: "publication-inactive",
+            singletonSeconds: 300,
+          },
           publicationId: "publication-inactive",
         },
       ],
     );
     assert.equal(typeof boss.workers.get(HEALTH_PROBE_JOB_NAME), "function");
     assert.equal(typeof boss.workers.get(HEALTH_PROBE_RECONCILE_JOB_NAME), "function");
+  } finally {
+    await context.close();
+  }
+});
+
+test("health probe worker rejects intervals pg-boss cannot schedule exactly", async () => {
+  // Arrange
+  const context = await createProbeWorkerContext();
+  const boss = new FakeBoss();
+  const worker = new HealthProbeWorker(
+    {
+      allowPrivateTargets: false,
+      degradedThreshold: 1,
+      failureWindow: 3,
+      intervalSeconds: 90,
+      method: "GET",
+      requireHttps: true,
+      timeoutSeconds: 5,
+    },
+    boss,
+    new KyselyHealthRepository(context.db),
+  );
+
+  try {
+    // Act / Assert
+    await assert.rejects(
+      () => worker.start(),
+      /HEALTH_PROBE_INTERVAL_SECONDS must be a whole number of minutes for pg-boss scheduling\./,
+    );
   } finally {
     await context.close();
   }
@@ -547,7 +644,7 @@ test("registered reconcile and probe handlers re-enqueue approved publications, 
       return ["127.0.0.1"];
     }
 
-    return [];
+    return ["203.0.113.10"];
   };
   const fetchImpl: typeof fetch = async (input, init) => {
     fetchCalls.push({
@@ -1024,7 +1121,10 @@ test("probeHealthEndpoint uses anonymous GET requests and does not follow redire
     assert.equal(redirectTargetSeen, false);
     assert.equal(observedMethod, "GET");
     assert.equal(observedHeaders?.authorization, undefined);
+    assert.equal(observedHeaders?.accept, undefined);
+    assert.equal(observedHeaders?.["accept-language"], undefined);
     assert.equal(observedHeaders?.cookie, undefined);
+    assert.equal(observedHeaders?.["user-agent"], undefined);
     assert.equal(observedHeaders?.["x-agent-registry-tenant-id"], undefined);
     assert.equal(observedHeaders?.["x-user-id"], undefined);
   } finally {

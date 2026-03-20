@@ -26,18 +26,24 @@ export async function initializeApiRuntime(
 ): Promise<ApiRuntime> {
   const config = loadRegistryConfig(env);
   const db = createKyselyDb(config.databaseUrl);
-  const bootstrapSummary = await bootstrapFromConfig(
-    config,
-    new KyselyBootstrapRepository(db),
-  );
 
-  return {
-    bootstrapSummary,
-    async close() {
-      await destroyKyselyDb(db);
-    },
-    config,
-    db,
-    principalResolver: createPrincipalResolver(db),
-  };
+  try {
+    const bootstrapSummary = await bootstrapFromConfig(
+      config,
+      new KyselyBootstrapRepository(db),
+    );
+
+    return {
+      bootstrapSummary,
+      async close() {
+        await destroyKyselyDb(db);
+      },
+      config,
+      db,
+      principalResolver: createPrincipalResolver(db),
+    };
+  } catch (error) {
+    await destroyKyselyDb(db);
+    throw error;
+  }
 }

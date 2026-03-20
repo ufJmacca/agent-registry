@@ -13,6 +13,7 @@ import {
 export interface AgentVersionReviewServiceOptions {
   allowPrivateTargets?: boolean;
   deploymentMode?: "hosted" | "self-hosted";
+  enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
   requireHttps?: boolean;
   resolveProbeHostname?: ProbeHostnameResolver;
 }
@@ -44,7 +45,6 @@ function assertTenantAdminAccess(principal: ResolvedPrincipal): void {
     );
   }
 }
-
 function assertRejectReason(value: string): string {
   if (value.trim() === "") {
     throw new AgentVersionReviewValidationError("Reject reason must be a non-empty string.");
@@ -58,6 +58,10 @@ export class AgentVersionReviewService {
 
   private readonly deploymentMode: "hosted" | "self-hosted";
 
+  private readonly enqueuePublicationProbe:
+    | ((publicationId: string) => Promise<void>)
+    | undefined;
+
   private readonly requireHttps: boolean;
 
   private readonly resolveProbeHostname: ProbeHostnameResolver | undefined;
@@ -70,9 +74,22 @@ export class AgentVersionReviewService {
   ) {
     this.allowPrivateTargets = options.allowPrivateTargets ?? false;
     this.deploymentMode = options.deploymentMode ?? "hosted";
+    this.enqueuePublicationProbe = options.enqueuePublicationProbe;
     this.requireHttps = options.requireHttps ?? this.deploymentMode === "hosted";
     this.resolveProbeHostname = options.resolveProbeHostname;
     this.repository = repository;
+  }
+
+  private async enqueueInitialProbes(publicationIds: readonly string[]): Promise<void> {
+    const enqueuePublicationProbe = this.enqueuePublicationProbe;
+
+    if (enqueuePublicationProbe === undefined) {
+      return;
+    }
+
+    await Promise.all(
+      publicationIds.map((publicationId) => enqueuePublicationProbe(publicationId)),
+    );
   }
 
   async submitVersion(
@@ -116,12 +133,18 @@ export class AgentVersionReviewService {
       );
     }
 
-    return this.repository.approveVersion({
+    const approvedVersion = await this.repository.approveVersion({
       agentId,
       approvedBy: principal.subjectId,
       tenantId,
       versionId,
     });
+
+    await this.enqueueInitialProbes(
+      version.publications.map((publication) => publication.publicationId),
+    );
+
+    return approvedVersion;
   }
 
   async rejectVersion(

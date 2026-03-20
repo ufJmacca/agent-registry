@@ -11,6 +11,12 @@ import pg from "pg";
 import { maxRawCardBytes } from "../packages/agent-card/src/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  AgentDraftRegistrationService,
+  handleAgentDraftRequest,
+  matchAgentDraftRoute,
+} from "../apps/api/src/modules/agents/index.ts";
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -1097,5 +1103,125 @@ test("registration rejects normalized displayName and summary conflicts", async 
     assert.match(summaryConflictResponse.body.error.message, /summary/i);
   } finally {
     await context.close();
+  }
+});
+
+test("malformed draft route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createDraftRegistrationApiContext();
+
+  try {
+    // Act
+    const malformedRouteResponse = await requestJson<ErrorResponseBody>(context, {
+      body: createDraftRegistrationRequest(),
+      path: "/tenants/%E0%A4%A/agents",
+      subjectId: "publisher-alpha",
+    });
+    const followUpResponse = await requestJson<DraftAgentRegistrationResponse>(context, {
+      body: createDraftRegistrationRequest({
+        versionLabel: "2026.03.15",
+      }),
+      path: "/tenants/tenant-alpha/agents",
+      subjectId: "publisher-alpha",
+    });
+
+    // Assert
+    assert.equal(malformedRouteResponse.status, 400);
+    assert.deepEqual(malformedRouteResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 201);
+    assert.equal(followUpResponse.body.approvalState, "draft");
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses for draft registration", async () => {
+  // Arrange
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const route = matchAgentDraftRoute(url.pathname);
+
+    if (route === null) {
+      throw new Error("Expected draft registration route to match.");
+    }
+
+    await handleAgentDraftRequest(request, response, route, {
+      principalResolver: new PrincipalResolver({
+        async getMembership() {
+          throw new Error("database unavailable");
+        },
+      }),
+      service: new AgentDraftRegistrationService(
+        {
+          async createDraftAgent() {
+            throw new Error("draft repository should not be called");
+          },
+          async createDraftVersion() {
+            throw new Error("draft repository should not be called");
+          },
+        },
+        {
+          async listForTenant() {
+            return [];
+          },
+          async create() {
+            return { environmentKey: "unused" };
+          },
+        },
+        {
+          async getById() {
+            return null;
+          },
+        },
+      ),
+    });
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  try {
+    // Act
+    const response = await fetch(new URL("/tenants/tenant-alpha/agents", `http://127.0.0.1:${address.port}`), {
+      body: JSON.stringify(createDraftRegistrationRequest()),
+      headers: new Headers({
+        "content-type": "application/json",
+        "x-agent-registry-subject-id": "publisher-alpha",
+      }),
+      method: "POST",
+    });
+    const body = (await response.json()) as ErrorResponseBody;
+
+    // Assert
+    assert.equal(response.status, 500);
+    assert.deepEqual(body, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
   }
 });

@@ -33,6 +33,8 @@ export interface AgentAdminDetailHttpDependencies {
   service: AgentAdminDetailService;
 }
 
+export class InvalidAgentAdminDetailRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -81,10 +83,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidAgentAdminDetailRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidAgentAdminDetailRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -103,24 +111,32 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
   );
 }
 
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidAgentAdminDetailRequestError(`${label} path segment must be valid URL encoding.`);
+  }
+}
+
 export function matchAgentAdminDetailRoute(pathname: string): AgentAdminDetailRouteMatch | null {
   const versionMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/?$/.exec(pathname);
 
   if (versionMatch !== null) {
     return {
-      agentId: decodeURIComponent(versionMatch[2]),
-      tenantId: decodeURIComponent(versionMatch[1]),
+      agentId: decodeRouteSegment(versionMatch[2], "Agent id"),
+      tenantId: decodeRouteSegment(versionMatch[1], "Tenant id"),
       type: "version",
-      versionId: decodeURIComponent(versionMatch[3]),
+      versionId: decodeRouteSegment(versionMatch[3], "Version id"),
     };
   }
 
-  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+)\/?$/.exec(pathname);
+  const agentMatch = /^\/tenants\/([^/]+)\/agents\/([^/]+):admin-detail\/?$/.exec(pathname);
 
   if (agentMatch !== null) {
     return {
-      agentId: decodeURIComponent(agentMatch[2]),
-      tenantId: decodeURIComponent(agentMatch[1]),
+      agentId: decodeRouteSegment(agentMatch[2], "Agent id"),
+      tenantId: decodeRouteSegment(agentMatch[1], "Tenant id"),
       type: "agent",
     };
   }
@@ -195,7 +211,7 @@ export async function handleAgentAdminDetailRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidAgentAdminDetailRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

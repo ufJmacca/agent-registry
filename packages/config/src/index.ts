@@ -87,9 +87,15 @@ function parseInteger(
     return fallback;
   }
 
-  const parsed = Number.parseInt(value, 10);
+  const normalized = value.trim();
 
-  if (!Number.isInteger(parsed) || parsed < minimum) {
+  if (!/^-?\d+$/.test(normalized)) {
+    throw new Error(`${fieldName} must be an integer greater than or equal to ${minimum}`);
+  }
+
+  const parsed = Number(normalized);
+
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) {
     throw new Error(`${fieldName} must be an integer greater than or equal to ${minimum}`);
   }
 
