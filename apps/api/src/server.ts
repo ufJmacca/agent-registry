@@ -53,7 +53,14 @@ async function main(): Promise<void> {
         db: runtime.db,
         reviewServiceOptions: {
           async enqueuePublicationProbe(publicationId) {
-            await boss.send(HEALTH_PROBE_JOB_NAME, { publicationId });
+            await boss.send(
+              HEALTH_PROBE_JOB_NAME,
+              { publicationId },
+              {
+                singletonKey: publicationId,
+                singletonSeconds: runtime.config.healthProbe.intervalSeconds,
+              },
+            );
           },
         },
       }),

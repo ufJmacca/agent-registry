@@ -49,17 +49,30 @@ interface ScheduledCall {
   name: string;
 }
 
+interface CreateQueueCall {
+  name: string;
+  options: Record<string, unknown> | undefined;
+}
+
 interface SentCall {
   data: Record<string, unknown> | undefined;
   name: string;
+  options: Record<string, unknown> | undefined;
 }
 
 class FakeBoss {
+  readonly createQueueCalls: CreateQueueCall[] = [];
+
   readonly scheduledCalls: ScheduledCall[] = [];
 
   readonly sentCalls: SentCall[] = [];
 
   readonly workers = new Map<string, (payload?: Record<string, unknown>) => Promise<void>>();
+
+  async createQueue(name: string, options?: Record<string, unknown>): Promise<string> {
+    this.createQueueCalls.push({ name, options });
+    return `${name}-queue`;
+  }
 
   async schedule(
     name: string,
@@ -70,8 +83,12 @@ class FakeBoss {
     return `${name}-schedule`;
   }
 
-  async send(name: string, data?: Record<string, unknown>): Promise<string> {
-    this.sentCalls.push({ data, name });
+  async send(
+    name: string,
+    data?: Record<string, unknown>,
+    options?: Record<string, unknown>,
+  ): Promise<string> {
+    this.sentCalls.push({ data, name, options });
     return `${name}-${this.sentCalls.length}`;
   }
 
@@ -526,6 +543,18 @@ test("health probe worker schedules recurring reconciliation and immediately enq
     await worker.start();
 
     // Assert
+    assert.deepEqual(boss.createQueueCalls, [
+      {
+        name: HEALTH_PROBE_JOB_NAME,
+        options: {
+          policy: "exclusive",
+        },
+      },
+      {
+        name: HEALTH_PROBE_RECONCILE_JOB_NAME,
+        options: undefined,
+      },
+    ]);
     assert.deepEqual(boss.scheduledCalls, [
       {
         cron: "*/5 * * * *",
@@ -536,19 +565,32 @@ test("health probe worker schedules recurring reconciliation and immediately enq
     assert.deepEqual(
       boss.sentCalls.map((call) => ({
         name: call.name,
+        options: call.options,
         publicationId: call.data?.publicationId,
       })),
       [
         {
           name: HEALTH_PROBE_JOB_NAME,
+          options: {
+            singletonKey: "publication-active",
+            singletonSeconds: 300,
+          },
           publicationId: "publication-active",
         },
         {
           name: HEALTH_PROBE_JOB_NAME,
+          options: {
+            singletonKey: "publication-disabled",
+            singletonSeconds: 300,
+          },
           publicationId: "publication-disabled",
         },
         {
           name: HEALTH_PROBE_JOB_NAME,
+          options: {
+            singletonKey: "publication-inactive",
+            singletonSeconds: 300,
+          },
           publicationId: "publication-inactive",
         },
       ],
@@ -1079,7 +1121,10 @@ test("probeHealthEndpoint uses anonymous GET requests and does not follow redire
     assert.equal(redirectTargetSeen, false);
     assert.equal(observedMethod, "GET");
     assert.equal(observedHeaders?.authorization, undefined);
+    assert.equal(observedHeaders?.accept, undefined);
+    assert.equal(observedHeaders?.["accept-language"], undefined);
     assert.equal(observedHeaders?.cookie, undefined);
+    assert.equal(observedHeaders?.["user-agent"], undefined);
     assert.equal(observedHeaders?.["x-agent-registry-tenant-id"], undefined);
     assert.equal(observedHeaders?.["x-user-id"], undefined);
   } finally {

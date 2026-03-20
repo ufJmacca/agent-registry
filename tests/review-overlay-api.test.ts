@@ -787,6 +787,42 @@ test("approvals enqueue an initial health probe for each approved publication", 
   }
 });
 
+test("approval returns 500 when the initial health probe cannot be queued", async () => {
+  // Arrange
+  const context = await createReviewApiContext({
+    async enqueuePublicationProbe() {
+      throw new Error("pg-boss unavailable");
+    },
+  });
+
+  try {
+    const draft = await createDraftVersion(context);
+    await submitVersion(context, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(context, draft.agentId, draft.versionId);
+    const storedVersion = await context.db
+      .selectFrom("agent_versions")
+      .select("approval_state")
+      .where("tenant_id", "=", "tenant-alpha")
+      .where("agent_id", "=", draft.agentId)
+      .where("version_id", "=", draft.versionId)
+      .executeTakeFirstOrThrow();
+
+    // Assert
+    assert.equal(approveResponse.status, 500);
+    assert.deepEqual(approveResponse.body, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(storedVersion.approval_state, "approved");
+  } finally {
+    await context.close();
+  }
+});
+
 test("approvals update the active version pointer only for the highest approved sequence", async () => {
   // Arrange
   const context = await createReviewApiContext();

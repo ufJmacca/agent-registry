@@ -87,20 +87,9 @@ export class AgentVersionReviewService {
       return;
     }
 
-    const enqueueResults = await Promise.allSettled(
+    await Promise.all(
       publicationIds.map((publicationId) => enqueuePublicationProbe(publicationId)),
     );
-
-    for (const [index, result] of enqueueResults.entries()) {
-      if (result.status === "fulfilled") {
-        continue;
-      }
-
-      console.error("failed to enqueue initial health probe", {
-        error: result.reason,
-        publicationId: publicationIds[index],
-      });
-    }
   }
 
   async submitVersion(

@@ -1,3 +1,6 @@
+import http from "node:http";
+import https from "node:https";
+
 import {
   assertHealthProbeTargetAllowed,
   type HealthProbeConfig,
@@ -9,6 +12,15 @@ import type { HealthRepository } from "@agent-registry/db";
 export const HEALTH_PROBE_JOB_NAME = "publication-health-probe";
 export const HEALTH_PROBE_RECONCILE_JOB_NAME = "publication-health-probe-reconcile";
 export const HEALTH_PROBE_RECONCILE_CRON = "* * * * *";
+
+interface ProbeJobQueueOptions {
+  policy?: "exclusive";
+}
+
+interface ProbeJobSendOptions {
+  singletonKey?: string;
+  singletonSeconds?: number;
+}
 
 interface ProbeJobPayload {
   publicationId: string;
@@ -30,9 +42,13 @@ interface HealthProbeWorkerOptions {
 }
 
 export interface HealthProbeBoss {
-  createQueue?(name: string): Promise<unknown>;
+  createQueue?(name: string, options?: ProbeJobQueueOptions): Promise<unknown>;
   schedule(name: string, cron: string, data?: Record<string, unknown>): Promise<unknown>;
-  send(name: string, data?: Record<string, unknown>): Promise<unknown>;
+  send(
+    name: string,
+    data?: Record<string, unknown>,
+    options?: ProbeJobSendOptions,
+  ): Promise<unknown>;
   work(
     name: string,
     handler: (jobs?: Array<BossJob<Record<string, unknown>>> | Record<string, unknown>) => Promise<void>,
@@ -55,6 +71,16 @@ function extractPayloads<TData extends Record<string, unknown>>(
 
 function formatProbeFailure(statusCode: number): string {
   return `received ${statusCode} from health endpoint`;
+}
+
+function buildProbeSendOptions(
+  publicationId: string,
+  intervalSeconds: number,
+): ProbeJobSendOptions {
+  return {
+    singletonKey: publicationId,
+    singletonSeconds: intervalSeconds,
+  };
 }
 
 function buildProbeReconcileCron(intervalSeconds: number): string {
@@ -100,6 +126,19 @@ export async function probeHealthEndpoint(
   options: ProbeEndpointOptions,
 ): Promise<PublicationProbeCheck> {
   const checkedAt = new Date().toISOString();
+
+  if (options.fetchImpl !== undefined) {
+    return probeHealthEndpointWithFetch(endpointUrl, checkedAt, options);
+  }
+
+  return probeHealthEndpointWithNodeRequest(endpointUrl, checkedAt, options);
+}
+
+async function probeHealthEndpointWithFetch(
+  endpointUrl: string,
+  checkedAt: string,
+  options: ProbeEndpointOptions,
+): Promise<PublicationProbeCheck> {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
 
   try {
@@ -125,6 +164,70 @@ export async function probeHealthEndpoint(
       error: formatProbeFailure(response.status),
       ok: false,
       statusCode: response.status,
+    };
+  } catch (error) {
+    return {
+      checkedAt,
+      error: error instanceof Error ? error.message : "Health probe failed.",
+      ok: false,
+      statusCode: null,
+    };
+  }
+}
+
+async function probeHealthEndpointWithNodeRequest(
+  endpointUrl: string,
+  checkedAt: string,
+  options: ProbeEndpointOptions,
+): Promise<PublicationProbeCheck> {
+  try {
+    const parsedUrl = new URL(endpointUrl);
+    const requestImpl =
+      parsedUrl.protocol === "https:"
+        ? https.request
+        : parsedUrl.protocol === "http:"
+          ? http.request
+          : undefined;
+
+    if (requestImpl === undefined) {
+      throw new Error(`Unsupported health probe protocol '${parsedUrl.protocol}'.`);
+    }
+
+    const statusCode = await new Promise<number>((resolve, reject) => {
+      const request = requestImpl(
+        parsedUrl,
+        {
+          headers: {},
+          method: "GET",
+          signal: AbortSignal.timeout(options.timeoutSeconds * 1000),
+        },
+        (response) => {
+          response.resume();
+          response.once("end", () => {
+            resolve(response.statusCode ?? 0);
+          });
+          response.once("error", reject);
+        },
+      );
+
+      request.once("error", reject);
+      request.end();
+    });
+
+    if (statusCode >= 200 && statusCode < 300) {
+      return {
+        checkedAt,
+        error: null,
+        ok: true,
+        statusCode,
+      };
+    }
+
+    return {
+      checkedAt,
+      error: formatProbeFailure(statusCode),
+      ok: false,
+      statusCode,
     };
   } catch (error) {
     return {
@@ -165,7 +268,9 @@ export class HealthProbeWorker {
 
   async start(): Promise<void> {
     if (typeof this.boss.createQueue === "function") {
-      await this.boss.createQueue(HEALTH_PROBE_JOB_NAME);
+      await this.boss.createQueue(HEALTH_PROBE_JOB_NAME, {
+        policy: "exclusive",
+      });
       await this.boss.createQueue(HEALTH_PROBE_RECONCILE_JOB_NAME);
     }
 
@@ -237,9 +342,13 @@ export class HealthProbeWorker {
     const publications = await this.repository.listApprovedPublicationsForProbing();
 
     for (const publication of publications) {
-      await this.boss.send(HEALTH_PROBE_JOB_NAME, {
-        publicationId: publication.publicationId,
-      });
+      await this.boss.send(
+        HEALTH_PROBE_JOB_NAME,
+        {
+          publicationId: publication.publicationId,
+        },
+        buildProbeSendOptions(publication.publicationId, this.config.intervalSeconds),
+      );
     }
   }
 }
