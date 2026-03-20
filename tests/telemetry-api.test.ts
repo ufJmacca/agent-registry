@@ -230,6 +230,8 @@ async function createTelemetryApiContext(): Promise<ApiTestContext> {
         "    memberships:",
         "      - subjectId: admin-alpha",
         "        roles: [tenant-admin]",
+        "      - subjectId: operator-alpha",
+        "        roles: [tenant-operator]",
         "      - subjectId: publisher-alpha",
         "        roles: [publisher]",
         "      - subjectId: caller-alpha",
@@ -922,6 +924,16 @@ test("telemetry writes and reads enforce tenant scoping and role checks", async 
       path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
       subjectId: "admin-alpha",
     });
+    const operatorVersionRead = await requestJson<VersionAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
+      subjectId: "operator-alpha",
+    });
+    const operatorAgentRead = await requestJson<AgentAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}:admin-detail`,
+      subjectId: "operator-alpha",
+    });
     const publisherRead = await requestJson<VersionAdminDetailResponse | ErrorResponseBody>(context, {
       method: "GET",
       path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
@@ -947,13 +959,98 @@ test("telemetry writes and reads enforce tenant scoping and role checks", async 
       findPublicationByEnvironment(adminRead.body.publications, "dev").telemetry.map((entry) => entry.invocationCount),
       [12],
     );
+    assert.equal(operatorVersionRead.status, 200);
+    assert.deepEqual(
+      findPublicationByEnvironment(operatorVersionRead.body.publications, "dev").telemetry.map(
+        (entry) => entry.invocationCount,
+      ),
+      [12],
+    );
+    assert.equal(operatorAgentRead.status, 200);
+    assert.deepEqual(
+      findPublicationByEnvironment(
+        operatorAgentRead.body.activeVersion?.publications ?? [],
+        "dev",
+      ).telemetry.map((entry) => entry.invocationCount),
+      [12],
+    );
     assert.equal(publisherRead.status, 403);
     assert.deepEqual((publisherRead.body as ErrorResponseBody).error, {
       code: "forbidden",
-      message: "Tenant admin role is required to view admin detail endpoints.",
+      message: "Tenant admin or tenant operator role is required to view admin detail endpoints.",
     });
     assert.equal(crossTenantRead.status, 403);
     assert.equal((crossTenantRead.body as ErrorResponseBody).error.code, "forbidden");
+  } finally {
+    await context.close();
+  }
+});
+
+test("telemetry detail endpoints return only the most recent 100 windows per publication", async () => {
+  // Arrange
+  const context = await createTelemetryApiContext();
+
+  try {
+    const approvedVersion = await createApprovedVersion(
+      context,
+      "tenant-alpha",
+      "publisher-alpha",
+      "admin-alpha",
+    );
+    const devPublication = findPublicationByEnvironment(approvedVersion.publications, "dev");
+    const telemetryRows = Array.from({ length: 105 }, (_, index) => ({
+      error_count: 0,
+      invocation_count: index,
+      p50_latency_ms: 100 + index,
+      p95_latency_ms: 200 + index,
+      publication_id: devPublication.publicationId,
+      success_count: index,
+      tenant_id: "tenant-alpha",
+      window_ended_at: `2026-03-14T${String(Math.floor(index / 12)).padStart(2, "0")}:${String(
+        (index % 12) * 5,
+      ).padStart(2, "0")}:00.000Z`,
+      window_started_at: `2026-03-14T${String(Math.floor(index / 12)).padStart(2, "0")}:${String(
+        (index % 12) * 5,
+      ).padStart(2, "0")}:00.000Z`,
+    }));
+
+    for (const row of telemetryRows) {
+      const end = new Date(row.window_ended_at);
+      end.setMinutes(end.getMinutes() + 5);
+      row.window_ended_at = end.toISOString();
+    }
+
+    await context.db.insertInto("publication_telemetry").values(telemetryRows).execute();
+
+    // Act
+    const versionDetail = await requestJson<VersionAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
+      subjectId: "operator-alpha",
+    });
+    const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}:admin-detail`,
+      subjectId: "operator-alpha",
+    });
+
+    // Assert
+    assert.equal(versionDetail.status, 200);
+    assert.equal(agentDetail.status, 200);
+    assert.equal(findPublicationByEnvironment(versionDetail.body.publications, "dev").telemetry.length, 100);
+    assert.deepEqual(
+      findPublicationByEnvironment(versionDetail.body.publications, "dev").telemetry.map(
+        (entry) => entry.invocationCount,
+      ),
+      Array.from({ length: 100 }, (_, index) => 104 - index),
+    );
+    assert.deepEqual(
+      findPublicationByEnvironment(
+        agentDetail.body.activeVersion?.publications ?? [],
+        "dev",
+      ).telemetry.map((entry) => entry.invocationCount),
+      Array.from({ length: 100 }, (_, index) => 104 - index),
+    );
   } finally {
     await context.close();
   }

@@ -16,9 +16,9 @@ function assertTenantMembershipScope(principal: ResolvedPrincipal, tenantId: str
 }
 
 function assertTenantAdminAccess(principal: ResolvedPrincipal): void {
-  if (!hasAnyRole(principal.roles, ["tenant-admin"])) {
+  if (!hasAnyRole(principal.roles, ["tenant-admin", "tenant-operator"])) {
     throw new AgentAdminDetailAuthorizationError(
-      "Tenant admin role is required to view admin detail endpoints.",
+      "Tenant admin or tenant operator role is required to view admin detail endpoints.",
     );
   }
 }

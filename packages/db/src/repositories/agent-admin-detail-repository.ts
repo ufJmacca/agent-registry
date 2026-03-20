@@ -1,3 +1,5 @@
+import { sql } from "kysely";
+
 import type { AgentRegistryDb } from "../index.js";
 import {
   AgentNotFoundError,
@@ -5,6 +7,7 @@ import {
 } from "./agent-repository-errors.js";
 
 type ApprovalState = "draft" | "pending_review" | "approved" | "rejected";
+const MAX_PUBLICATION_TELEMETRY_HISTORY = 100;
 
 export interface PublicationTelemetrySummaryRecord {
   errorCount: number;
@@ -139,7 +142,28 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
     }
 
     const telemetryRows = await this.db
-      .selectFrom("publication_telemetry")
+      .selectFrom((expressionBuilder) =>
+        expressionBuilder
+          .selectFrom("publication_telemetry")
+          .select([
+            "error_count",
+            "invocation_count",
+            "p50_latency_ms",
+            "p95_latency_ms",
+            "publication_id",
+            "recorded_at",
+            "success_count",
+            "window_ended_at",
+            "window_started_at",
+            sql<number>`row_number() over (
+              partition by publication_id
+              order by window_started_at desc, recorded_at desc, telemetry_id desc
+            )`.as("history_rank"),
+          ])
+          .where("tenant_id", "=", tenantId)
+          .where("publication_id", "in", publicationIds)
+          .as("ranked_publication_telemetry"),
+      )
       .select([
         "error_count",
         "invocation_count",
@@ -151,10 +175,10 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
         "window_ended_at",
         "window_started_at",
       ])
-      .where("tenant_id", "=", tenantId)
-      .where("publication_id", "in", publicationIds)
+      .where("history_rank", "<=", MAX_PUBLICATION_TELEMETRY_HISTORY)
       .orderBy("publication_id")
       .orderBy("window_started_at", "desc")
+      .orderBy("recorded_at", "desc")
       .execute();
 
     const telemetryByPublication = new Map<string, PublicationTelemetrySummaryRecord[]>();
