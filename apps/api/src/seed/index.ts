@@ -290,6 +290,7 @@ async function seedDemoAgentCatalog(db: AgentRegistryDb): Promise<{
     {
       deploymentMode: "self-hosted",
       requireHttps: false,
+      resolveProbeHostname: async () => ["198.51.100.20"],
     },
   );
   const healthRepository = new KyselyHealthRepository(db);

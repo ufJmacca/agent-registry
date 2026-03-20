@@ -29,6 +29,8 @@ export interface PublicationTelemetryHttpDependencies {
   service: PublicationTelemetryService;
 }
 
+export class InvalidPublicationTelemetryRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -77,10 +79,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidPublicationTelemetryRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidPublicationTelemetryRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -115,17 +123,27 @@ async function readTelemetryRequest(
   const body = (await readRequestBody(request)).trim();
 
   if (body === "") {
-    throw new Error("Request body must be a JSON object.");
+    throw new InvalidPublicationTelemetryRequestError("Request body must be a JSON object.");
   }
 
   return parseJsonObject(body, "Request body must be a JSON object.") as unknown as UpsertPublicationTelemetryRequest;
+}
+
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidPublicationTelemetryRequestError(
+      `${label} path segment must be valid URL encoding.`,
+    );
+  }
 }
 
 export function matchPublicationTelemetryRoute(
   pathname: string,
 ): PublicationTelemetryRouteMatch | null {
   const match =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/:]+):telemetry\/?$/.exec(
+    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/]+)\/telemetry\/?$/.exec(
       pathname,
     );
 
@@ -134,10 +152,10 @@ export function matchPublicationTelemetryRoute(
   }
 
   return {
-    agentId: decodeURIComponent(match[2]),
-    environmentKey: decodeURIComponent(match[4]),
-    tenantId: decodeURIComponent(match[1]),
-    versionId: decodeURIComponent(match[3]),
+    agentId: decodeRouteSegment(match[2], "Agent id"),
+    environmentKey: decodeRouteSegment(match[4], "Environment key"),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
+    versionId: decodeRouteSegment(match[3], "Version id"),
   };
 }
 
@@ -206,7 +224,7 @@ export async function handlePublicationTelemetryRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidPublicationTelemetryRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

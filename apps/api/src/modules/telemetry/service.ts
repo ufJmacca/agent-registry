@@ -9,6 +9,10 @@ export class PublicationTelemetryAuthorizationError extends Error {}
 
 export class PublicationTelemetryValidationError extends Error {}
 
+function hasExplicitUtcOffset(value: string): boolean {
+  return /(?:[zZ]|[+-]\d{2}:\d{2})$/.test(value);
+}
+
 function assertTenantMembershipScope(principal: ResolvedPrincipal, tenantId: string): void {
   if (principal.tenantId !== tenantId) {
     throw new PublicationTelemetryAuthorizationError(
@@ -44,9 +48,13 @@ function assertNullableNonNegativeInteger(value: unknown, fieldName: string): nu
 }
 
 function assertIsoTimestamp(value: unknown, fieldName: string): string {
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+  if (
+    typeof value !== "string" ||
+    !hasExplicitUtcOffset(value) ||
+    Number.isNaN(Date.parse(value))
+  ) {
     throw new PublicationTelemetryValidationError(
-      `${fieldName} must be a valid ISO-8601 timestamp.`,
+      `${fieldName} must be a valid ISO-8601 timestamp with a trailing 'Z' or UTC offset.`,
     );
   }
 

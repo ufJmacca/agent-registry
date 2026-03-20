@@ -10,6 +10,12 @@ import pg from "pg";
 
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  handlePublicationTelemetryRequest,
+  matchPublicationTelemetryRoute,
+  PublicationTelemetryService,
+} from "../apps/api/src/modules/telemetry/index.ts";
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -32,6 +38,11 @@ interface FreshRegistryDatabase {
 }
 
 interface ApiTestContext extends FreshRegistryDatabase {
+  baseUrl: string;
+  close(): Promise<void>;
+}
+
+interface TemporaryServerContext {
   baseUrl: string;
   close(): Promise<void>;
 }
@@ -219,6 +230,8 @@ async function createTelemetryApiContext(): Promise<ApiTestContext> {
         "    memberships:",
         "      - subjectId: admin-alpha",
         "        roles: [tenant-admin]",
+        "      - subjectId: operator-alpha",
+        "        roles: [tenant-operator]",
         "      - subjectId: publisher-alpha",
         "        roles: [publisher]",
         "      - subjectId: caller-alpha",
@@ -248,6 +261,10 @@ async function createTelemetryApiContext(): Promise<ApiTestContext> {
       createApiRequestListener({
         config,
         db: database.db,
+        reviewServiceOptions: {
+          // Keep telemetry tests deterministic and offline by default.
+          resolveProbeHostname: async () => ["203.0.113.10"],
+        },
       }),
     );
 
@@ -309,6 +326,38 @@ async function requestJson<TBody>(
   return {
     body: body as TBody,
     status: response.status,
+  };
+}
+
+async function createTemporaryServerContext(
+  listener: http.RequestListener,
+): Promise<TemporaryServerContext> {
+  const server = http.createServer(listener);
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
   };
 }
 
@@ -460,7 +509,7 @@ async function postTelemetry(
     body: options.body,
     path:
       `/tenants/${options.tenantId}/agents/${options.agentId}/versions/${options.versionId}` +
-      `/environments/${options.environmentKey}:telemetry`,
+      `/environments/${options.environmentKey}/telemetry`,
     subjectId: options.subjectId,
   });
 }
@@ -661,7 +710,7 @@ test("telemetry upserts one summary per publication window and exposes it in adm
     });
     const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
       method: "GET",
-      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}`,
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}:admin-detail`,
       subjectId: "admin-alpha",
     });
 
@@ -875,6 +924,16 @@ test("telemetry writes and reads enforce tenant scoping and role checks", async 
       path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
       subjectId: "admin-alpha",
     });
+    const operatorVersionRead = await requestJson<VersionAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
+      subjectId: "operator-alpha",
+    });
+    const operatorAgentRead = await requestJson<AgentAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}:admin-detail`,
+      subjectId: "operator-alpha",
+    });
     const publisherRead = await requestJson<VersionAdminDetailResponse | ErrorResponseBody>(context, {
       method: "GET",
       path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
@@ -900,13 +959,135 @@ test("telemetry writes and reads enforce tenant scoping and role checks", async 
       findPublicationByEnvironment(adminRead.body.publications, "dev").telemetry.map((entry) => entry.invocationCount),
       [12],
     );
+    assert.equal(operatorVersionRead.status, 200);
+    assert.deepEqual(
+      findPublicationByEnvironment(operatorVersionRead.body.publications, "dev").telemetry.map(
+        (entry) => entry.invocationCount,
+      ),
+      [12],
+    );
+    assert.equal(operatorAgentRead.status, 200);
+    assert.deepEqual(
+      findPublicationByEnvironment(
+        operatorAgentRead.body.activeVersion?.publications ?? [],
+        "dev",
+      ).telemetry.map((entry) => entry.invocationCount),
+      [12],
+    );
     assert.equal(publisherRead.status, 403);
     assert.deepEqual((publisherRead.body as ErrorResponseBody).error, {
       code: "forbidden",
-      message: "Tenant admin role is required to view admin detail endpoints.",
+      message: "Tenant admin or tenant operator role is required to view admin detail endpoints.",
     });
     assert.equal(crossTenantRead.status, 403);
     assert.equal((crossTenantRead.body as ErrorResponseBody).error.code, "forbidden");
+  } finally {
+    await context.close();
+  }
+});
+
+test("telemetry detail endpoints return only the most recent 100 windows per publication", async () => {
+  // Arrange
+  const context = await createTelemetryApiContext();
+
+  try {
+    const approvedVersion = await createApprovedVersion(
+      context,
+      "tenant-alpha",
+      "publisher-alpha",
+      "admin-alpha",
+    );
+    const devPublication = findPublicationByEnvironment(approvedVersion.publications, "dev");
+    const telemetryRows = Array.from({ length: 105 }, (_, index) => ({
+      error_count: 0,
+      invocation_count: index,
+      p50_latency_ms: 100 + index,
+      p95_latency_ms: 200 + index,
+      publication_id: devPublication.publicationId,
+      success_count: index,
+      tenant_id: "tenant-alpha",
+      window_ended_at: `2026-03-14T${String(Math.floor(index / 12)).padStart(2, "0")}:${String(
+        (index % 12) * 5,
+      ).padStart(2, "0")}:00.000Z`,
+      window_started_at: `2026-03-14T${String(Math.floor(index / 12)).padStart(2, "0")}:${String(
+        (index % 12) * 5,
+      ).padStart(2, "0")}:00.000Z`,
+    }));
+
+    for (const row of telemetryRows) {
+      const end = new Date(row.window_ended_at);
+      end.setMinutes(end.getMinutes() + 5);
+      row.window_ended_at = end.toISOString();
+    }
+
+    await context.db.insertInto("publication_telemetry").values(telemetryRows).execute();
+
+    // Act
+    const versionDetail = await requestJson<VersionAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}`,
+      subjectId: "operator-alpha",
+    });
+    const agentDetail = await requestJson<AgentAdminDetailResponse>(context, {
+      method: "GET",
+      path: `/tenants/tenant-alpha/agents/${approvedVersion.agentId}:admin-detail`,
+      subjectId: "operator-alpha",
+    });
+
+    // Assert
+    assert.equal(versionDetail.status, 200);
+    assert.equal(agentDetail.status, 200);
+    assert.equal(findPublicationByEnvironment(versionDetail.body.publications, "dev").telemetry.length, 100);
+    assert.deepEqual(
+      findPublicationByEnvironment(versionDetail.body.publications, "dev").telemetry.map(
+        (entry) => entry.invocationCount,
+      ),
+      Array.from({ length: 100 }, (_, index) => 104 - index),
+    );
+    assert.deepEqual(
+      findPublicationByEnvironment(
+        agentDetail.body.activeVersion?.publications ?? [],
+        "dev",
+      ).telemetry.map((entry) => entry.invocationCount),
+      Array.from({ length: 100 }, (_, index) => 104 - index),
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("telemetry rejects timestamps without explicit UTC offsets", async () => {
+  // Arrange
+  const context = await createTelemetryApiContext();
+
+  try {
+    const approvedVersion = await createApprovedVersion(
+      context,
+      "tenant-alpha",
+      "publisher-alpha",
+      "admin-alpha",
+    );
+
+    // Act
+    const response = await postTelemetry(context, {
+      agentId: approvedVersion.agentId,
+      body: buildTelemetryRequest({
+        windowEndedAt: "2026-03-14T00:05:00",
+        windowStartedAt: "2026-03-14T00:00:00",
+      }),
+      environmentKey: "dev",
+      subjectId: "publisher-alpha",
+      tenantId: "tenant-alpha",
+      versionId: approvedVersion.versionId,
+    });
+
+    // Assert
+    assert.equal(response.status, 400);
+    assert.deepEqual((response.body as ErrorResponseBody).error, {
+      code: "invalid_telemetry_request",
+      message:
+        "windowStartedAt must be a valid ISO-8601 timestamp with a trailing 'Z' or UTC offset.",
+    });
   } finally {
     await context.close();
   }
@@ -1063,5 +1244,107 @@ test("telemetry ingestion is advisory and leaves health, lifecycle, and publicat
     );
   } finally {
     await context.close();
+  }
+});
+
+test("malformed telemetry route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createTelemetryApiContext();
+
+  try {
+    const approvedVersion = await createApprovedVersion(
+      context,
+      "tenant-alpha",
+      "publisher-alpha",
+      "admin-alpha",
+    );
+
+    // Act
+    const malformedResponse = await requestJson<ErrorResponseBody>(context, {
+      body: buildTelemetryRequest(),
+      path:
+        `/tenants/%E0%A4%A/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}` +
+        "/environments/dev/telemetry",
+      subjectId: "publisher-alpha",
+    });
+    const followUpResponse = await postTelemetry(context, {
+      agentId: approvedVersion.agentId,
+      body: buildTelemetryRequest({
+        invocationCount: 18,
+        successCount: 17,
+      }),
+      environmentKey: "dev",
+      subjectId: "publisher-alpha",
+      tenantId: "tenant-alpha",
+      versionId: approvedVersion.versionId,
+    });
+
+    // Assert
+    assert.equal(malformedResponse.status, 400);
+    assert.deepEqual(malformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 200);
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses for telemetry", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      throw new Error("database unavailable");
+    },
+  });
+  const telemetryService = new PublicationTelemetryService({
+    async upsertPublicationTelemetry() {
+      throw new Error("telemetry repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const route = matchPublicationTelemetryRoute(url.pathname);
+
+    if (route === null) {
+      throw new Error(`Unexpected route: ${url.pathname}`);
+    }
+
+    await handlePublicationTelemetryRequest(request, response, route, {
+      principalResolver,
+      service: telemetryService,
+    });
+  });
+
+  try {
+    // Act
+    const response = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev/telemetry",
+        server.baseUrl,
+      ),
+      {
+        body: JSON.stringify(buildTelemetryRequest()),
+        headers: new Headers({
+          "content-type": "application/json",
+          "x-agent-registry-subject-id": "publisher-alpha",
+        }),
+        method: "POST",
+      },
+    );
+
+    // Assert
+    assert.equal(response.status, 500);
+    assert.deepEqual((await response.json()) as ErrorResponseBody, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
   }
 });

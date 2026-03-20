@@ -8,8 +8,19 @@ import test from "node:test";
 
 import pg from "pg";
 
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  AgentPublicationDetailService,
+  handleAgentDetailRequest,
+  matchAgentDetailRoute,
+} from "../apps/api/src/modules/detail/index.ts";
+import {
+  AgentPublicationPreflightService,
+  handleAgentPublicationPreflightRequest,
+  matchAgentPublicationPreflightRoute,
+} from "../apps/api/src/modules/preflight/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -31,6 +42,11 @@ interface FreshRegistryDatabase {
 }
 
 interface ApiTestContext extends FreshRegistryDatabase {
+  baseUrl: string;
+  close(): Promise<void>;
+}
+
+interface TemporaryServerContext {
   baseUrl: string;
   close(): Promise<void>;
 }
@@ -272,6 +288,38 @@ async function createDetailPreflightApiContext(): Promise<ApiTestContext> {
     await database.cleanup();
     throw error;
   }
+}
+
+async function createTemporaryServerContext(
+  handler: http.RequestListener,
+): Promise<TemporaryServerContext> {
+  const server = http.createServer(handler);
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    async close() {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        });
+      });
+    },
+  };
 }
 
 async function requestJson<TBody>(
@@ -599,6 +647,59 @@ test("active detail omits rawCard for authorized callers unless it is explicitly
       "Returns active publication detail without inlining cards by default.",
     );
     assert.equal("rawCard" in response.body.publication, false);
+  } finally {
+    await context.close();
+  }
+});
+
+test("active detail keeps the publication-detail schema stable for tenant-admins", async () => {
+  // Arrange
+  const context = await createDetailPreflightApiContext();
+
+  try {
+    await insertVersion(context, {
+      active: true,
+      agentId: "agent-detail-admin",
+      approvalState: "approved",
+      publications: [
+        {
+          environmentKey: "prod",
+          healthStatus: "healthy",
+          publicationId: "publication-detail-admin",
+        },
+      ],
+      publisherId: "publisher-alpha",
+      requiredRoles: ["tenant-admin"],
+      requiredScopes: [],
+      versionId: "version-detail-admin",
+      versionSequence: 1,
+    });
+
+    // Act
+    const detailResponse = await requestJson<ActivePublicationDetailResponse>(context, {
+      path: "/tenants/tenant-alpha/agents/agent-detail-admin",
+      subjectId: "admin-alpha",
+    });
+    const adminDetailResponse = await requestJson<{
+      activeVersionId: string | null;
+      versions: Array<{ versionId: string }>;
+    }>(context, {
+      path: "/tenants/tenant-alpha/agents/agent-detail-admin:admin-detail",
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(detailResponse.status, 200);
+    assert.equal(detailResponse.body.agentId, "agent-detail-admin");
+    assert.equal(detailResponse.body.activeVersionId, "version-detail-admin");
+    assert.equal(detailResponse.body.publication.environmentKey, "prod");
+    assert.equal("versions" in detailResponse.body, false);
+
+    assert.equal(adminDetailResponse.status, 200);
+    assert.equal(adminDetailResponse.body.activeVersionId, "version-detail-admin");
+    assert.deepEqual(adminDetailResponse.body.versions.map((version) => version.versionId), [
+      "version-detail-admin",
+    ]);
   } finally {
     await context.close();
   }
@@ -979,5 +1080,172 @@ test("preflight returns 200 for existing unauthorized or disabled publications a
     assert.equal(missingResponse.body.error.code, "publication_not_found");
   } finally {
     await context.close();
+  }
+});
+
+test("malformed detail and preflight route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createDetailPreflightApiContext();
+
+  try {
+    await insertVersion(context, {
+      active: true,
+      agentId: "agent-follow-up",
+      approvalState: "approved",
+      publications: [
+        {
+          environmentKey: "prod",
+          healthStatus: "healthy",
+          publicationId: "publication-follow-up",
+        },
+      ],
+      publisherId: "publisher-alpha",
+      versionId: "version-follow-up",
+      versionSequence: 1,
+    });
+
+    // Act
+    const detailMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      path: "/tenants/%E0%A4%A/agents/agent-follow-up?environmentKey=prod",
+      subjectId: "caller-authorized",
+    });
+    const preflightMalformedResponse = await requestJson<ErrorResponseBody>(context, {
+      body: {
+        context: {
+          client_id: "client-123",
+        },
+      },
+      method: "POST",
+      path: "/tenants/tenant-alpha/agents/agent-follow-up/environments/%E0%A4%A:preflight",
+      subjectId: "caller-authorized",
+    });
+    const followUpResponse = await requestJson<ActivePublicationDetailResponse>(context, {
+      path: "/tenants/tenant-alpha/agents/agent-follow-up?environmentKey=prod",
+      subjectId: "caller-authorized",
+    });
+
+    // Assert
+    assert.equal(detailMalformedResponse.status, 400);
+    assert.deepEqual(detailMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(preflightMalformedResponse.status, 400);
+    assert.deepEqual(preflightMalformedResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Environment key path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 200);
+    assert.equal(followUpResponse.body.agentId, "agent-follow-up");
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses for detail and preflight endpoints", async () => {
+  // Arrange
+  const principalResolver = new PrincipalResolver({
+    async getMembership() {
+      throw new Error("database unavailable");
+    },
+  });
+  const detailService = new AgentPublicationDetailService({
+    async getActiveApprovedPublication() {
+      throw new Error("detail repository should not be called");
+    },
+    async listActiveApprovedPublications() {
+      throw new Error("detail repository should not be called");
+    },
+    async listActiveApprovedPublicationsForAgent() {
+      throw new Error("detail repository should not be called");
+    },
+  });
+  const preflightService = new AgentPublicationPreflightService({
+    async getActiveApprovedPublication() {
+      throw new Error("preflight repository should not be called");
+    },
+    async listActiveApprovedPublications() {
+      throw new Error("preflight repository should not be called");
+    },
+    async listActiveApprovedPublicationsForAgent() {
+      throw new Error("preflight repository should not be called");
+    },
+  });
+  const server = await createTemporaryServerContext(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
+
+    if (preflightRoute !== null) {
+      await handleAgentPublicationPreflightRequest(request, response, preflightRoute, {
+        principalResolver,
+        service: preflightService,
+      });
+      return;
+    }
+
+    const detailRoute = matchAgentDetailRoute(url.pathname);
+
+    if (detailRoute !== null) {
+      await handleAgentDetailRequest(request, response, detailRoute, {
+        principalResolver,
+        service: detailService,
+      });
+      return;
+    }
+
+    throw new Error(`Unexpected route: ${url.pathname}`);
+  });
+
+  try {
+    // Act
+    const detailResponse = await fetch(
+      new URL("/tenants/tenant-alpha/agents/agent-alpha?environmentKey=prod", server.baseUrl),
+      {
+        headers: new Headers({
+          "x-agent-registry-subject-id": "caller-authorized",
+        }),
+        method: "GET",
+      },
+    );
+    const preflightResponse = await fetch(
+      new URL(
+        "/tenants/tenant-alpha/agents/agent-alpha/environments/prod:preflight",
+        server.baseUrl,
+      ),
+      {
+        body: JSON.stringify({
+          context: {
+            client_id: "client-123",
+          },
+        }),
+        headers: new Headers({
+          "content-type": "application/json",
+          "x-agent-registry-subject-id": "caller-authorized",
+        }),
+        method: "POST",
+      },
+    );
+
+    // Assert
+    assert.equal(detailResponse.status, 500);
+    assert.deepEqual(await detailResponse.json(), {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+    assert.equal(preflightResponse.status, 500);
+    assert.deepEqual(await preflightResponse.json(), {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await server.close();
   }
 });

@@ -55,7 +55,11 @@ function parsePositiveInteger(
     return defaultValue;
   }
 
-  const parsed = Number.parseInt(value, 10);
+  if (!/^\d+$/.test(value)) {
+    throw new AgentDiscoveryValidationError(`${fieldName} must be a positive integer.`);
+  }
+
+  const parsed = Number(value);
 
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new AgentDiscoveryValidationError(`${fieldName} must be a positive integer.`);

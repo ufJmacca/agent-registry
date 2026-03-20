@@ -10,6 +10,12 @@ import pg from "pg";
 
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { createApiRequestListener } from "../apps/api/src/http.ts";
+import {
+  TenantEnvironmentCatalogService,
+  handleTenantEnvironmentRequest,
+  matchTenantEnvironmentRoute,
+} from "../apps/api/src/modules/environments/index.ts";
+import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyBootstrapRepository,
@@ -375,5 +381,108 @@ test("environment endpoints use bootstrap memberships for the path tenant instea
     });
   } finally {
     await context.close();
+  }
+});
+
+test("malformed tenant route encoding returns 400 without taking down the API listener", async () => {
+  // Arrange
+  const context = await createEnvironmentApiContext();
+
+  try {
+    // Act
+    const malformedRouteResponse = await requestJson<{ error: { code: string; message: string } }>(
+      context,
+      {
+        path: "/tenants/%E0%A4%A/environments",
+        subjectId: "admin-alpha",
+      },
+    );
+    const followUpResponse = await requestJson<ListTenantEnvironmentsResponse>(context, {
+      path: "/tenants/tenant-alpha/environments",
+      subjectId: "admin-alpha",
+    });
+
+    // Assert
+    assert.equal(malformedRouteResponse.status, 400);
+    assert.deepEqual(malformedRouteResponse.body, {
+      error: {
+        code: "invalid_request",
+        message: "Tenant id path segment must be valid URL encoding.",
+      },
+    });
+    assert.equal(followUpResponse.status, 200);
+    assert.deepEqual(followUpResponse.body, {
+      environments: [{ environmentKey: "dev" }],
+    });
+  } finally {
+    await context.close();
+  }
+});
+
+test("unexpected resolver failures return 500 internal_error responses", async () => {
+  // Arrange
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const route = matchTenantEnvironmentRoute(url.pathname);
+
+    if (route === null) {
+      throw new Error("Expected tenant environment route to match.");
+    }
+
+    await handleTenantEnvironmentRequest(request, response, route, {
+      principalResolver: new PrincipalResolver({
+        async getMembership() {
+          throw new Error("database unavailable");
+        },
+      }),
+      service: new TenantEnvironmentCatalogService({
+        async create() {
+          return { environmentKey: "unused" };
+        },
+        async listForTenant() {
+          return [];
+        },
+      }),
+    });
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected an IPv4 test server address");
+  }
+
+  try {
+    // Act
+    const response = await fetch(new URL("/tenants/tenant-alpha/environments", `http://127.0.0.1:${address.port}`), {
+      headers: new Headers({
+        "x-agent-registry-subject-id": "admin-alpha",
+      }),
+    });
+    const body = (await response.json()) as { error: { code: string; message: string } };
+
+    // Assert
+    assert.equal(response.status, 500);
+    assert.deepEqual(body, {
+      error: {
+        code: "internal_error",
+        message: "Internal server error.",
+      },
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
   }
 });

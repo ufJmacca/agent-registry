@@ -167,6 +167,9 @@ export class KyselyAgentDiscoveryRepository implements AgentDiscoveryRepository 
         "required_scopes",
       ])
       .where("tenant_id", "=", tenantId)
+      .$if(filter.agentId !== undefined, (overlayQuery) =>
+        overlayQuery.where("agent_id", "=", filter.agentId as string),
+      )
       .execute();
     const overlayMap = createOverlayMap(overlays);
 

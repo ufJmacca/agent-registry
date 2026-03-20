@@ -1,3 +1,5 @@
+import { sql } from "kysely";
+
 import type { AgentRegistryDb } from "../index.js";
 import {
   AgentNotFoundError,
@@ -5,6 +7,7 @@ import {
 } from "./agent-repository-errors.js";
 
 type ApprovalState = "draft" | "pending_review" | "approved" | "rejected";
+const MAX_PUBLICATION_TELEMETRY_HISTORY = 100;
 
 export interface PublicationTelemetrySummaryRecord {
   errorCount: number;
@@ -69,6 +72,7 @@ export interface VersionAdminDetailRecord {
   active: boolean;
   agentId: string;
   approvalState: ApprovalState;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;
@@ -88,6 +92,7 @@ export interface VersionAdminDetailRecord {
   review: VersionReviewMetadataRecord;
   summary: string;
   tags: string[];
+  publisherId: string;
   versionId: string;
   versionLabel: string;
   versionSequence: number;
@@ -138,7 +143,28 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
     }
 
     const telemetryRows = await this.db
-      .selectFrom("publication_telemetry")
+      .selectFrom((expressionBuilder) =>
+        expressionBuilder
+          .selectFrom("publication_telemetry")
+          .select([
+            "error_count",
+            "invocation_count",
+            "p50_latency_ms",
+            "p95_latency_ms",
+            "publication_id",
+            "recorded_at",
+            "success_count",
+            "window_ended_at",
+            "window_started_at",
+            sql<number>`row_number() over (
+              partition by publication_id
+              order by window_started_at desc, recorded_at desc, telemetry_id desc
+            )`.as("history_rank"),
+          ])
+          .where("tenant_id", "=", tenantId)
+          .where("publication_id", "in", publicationIds)
+          .as("ranked_publication_telemetry"),
+      )
       .select([
         "error_count",
         "invocation_count",
@@ -150,10 +176,10 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
         "window_ended_at",
         "window_started_at",
       ])
-      .where("tenant_id", "=", tenantId)
-      .where("publication_id", "in", publicationIds)
+      .where("history_rank", "<=", MAX_PUBLICATION_TELEMETRY_HISTORY)
       .orderBy("publication_id")
       .orderBy("window_started_at", "desc")
+      .orderBy("recorded_at", "desc")
       .execute();
 
     const telemetryByPublication = new Map<string, PublicationTelemetrySummaryRecord[]>();
@@ -326,10 +352,12 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
         "approval_state",
         "approved_at",
         "approved_by",
+        "capabilities",
         "card_profile_id",
         "context_contract",
         "display_name",
         "header_contract",
+        "publisher_id",
         "rejected_at",
         "rejected_by",
         "rejected_reason",
@@ -382,6 +410,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
       active: agent.active_version_id === versionId,
       agentId: agent.agent_id,
       approvalState: version.approval_state as ApprovalState,
+      capabilities: version.capabilities,
       cardProfileId: version.card_profile_id,
       contextContract: version.context_contract,
       displayName: version.display_name,
@@ -401,6 +430,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
       review: mapReviewMetadata(version),
       summary: version.summary,
       tags: version.tags,
+      publisherId: version.publisher_id,
       versionId: version.version_id,
       versionLabel: version.version_label,
       versionSequence: version.version_sequence,

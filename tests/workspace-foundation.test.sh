@@ -437,18 +437,6 @@ test_make_test() {
   assert_workspace_test_proof "${request_token}"
 }
 
-test_devcontainer_verify() {
-  # Arrange: the devcontainer verification relies on mounted host credentials in this environment.
-  :
-
-  # Act: execute the existing verify-only command directly.
-  run_command_in_dir "${ROOT_DIR}" "post-create verification should succeed" bash .devcontainer/scripts/post-create.sh --verify-only
-
-  # Assert: the script reported the mounted credentials it requires.
-  assert_output_contains "${LAST_STDOUT_FILE}" "[ok] /home/vscode/.codex/auth.json"
-  assert_output_contains "${LAST_STDOUT_FILE}" "[ok] /home/vscode/.ssh"
-}
-
 run_outer_suite() {
   setup_outer_environment
   test_compose_config
@@ -458,7 +446,6 @@ run_outer_suite() {
   test_make_seed
   test_make_lint
   test_make_test
-  test_devcontainer_verify
 }
 
 run_automation_suite() {

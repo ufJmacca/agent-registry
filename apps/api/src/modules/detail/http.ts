@@ -3,7 +3,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   MissingSubjectIdError,
   MissingTenantMembershipError,
-  hasAnyRole,
   type PrincipalResolver,
 } from "@agent-registry/auth";
 import {
@@ -12,10 +11,6 @@ import {
   AgentNotFoundError,
 } from "@agent-registry/db";
 
-import {
-  AgentAdminDetailAuthorizationError,
-  AgentAdminDetailService,
-} from "../admin-detail/service.js";
 import {
   AgentPublicationDetailAuthorizationError,
   AgentPublicationDetailService,
@@ -29,10 +24,11 @@ export interface AgentDetailRouteMatch {
 }
 
 export interface AgentDetailHttpDependencies {
-  adminDetailService: AgentAdminDetailService;
   principalResolver: PrincipalResolver;
   service: AgentPublicationDetailService;
 }
+
+export class InvalidAgentDetailRequestError extends Error {}
 
 interface ErrorResponseBody {
   error: {
@@ -82,10 +78,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidAgentDetailRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidAgentDetailRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -102,6 +104,14 @@ function parseOptionalUserContext(request: IncomingMessage): Record<string, unkn
     rawUserContext,
     "The x-agent-registry-user-context header must be a JSON object.",
   );
+}
+
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidAgentDetailRequestError(`${label} path segment must be valid URL encoding.`);
+  }
 }
 
 function parseIncludeRawCard(searchParams: URLSearchParams): boolean {
@@ -141,8 +151,8 @@ export function matchAgentDetailRoute(pathname: string): AgentDetailRouteMatch |
   }
 
   return {
-    agentId: decodeURIComponent(match[2]),
-    tenantId: decodeURIComponent(match[1]),
+    agentId: decodeRouteSegment(match[2], "Agent id"),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
   };
 }
 
@@ -171,19 +181,6 @@ export async function handleAgentDetailRequest(
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const query = parseDetailQuery(url.searchParams);
 
-    if (
-      hasAnyRole(principal.roles, ["tenant-admin"]) &&
-      query.environmentKey === null &&
-      !query.includeRawCard
-    ) {
-      writeJson(
-        response,
-        200,
-        await dependencies.adminDetailService.getAgentDetail(principal, route.tenantId, route.agentId),
-      );
-      return;
-    }
-
     writeJson(
       response,
       200,
@@ -200,10 +197,7 @@ export async function handleAgentDetailRequest(
       return;
     }
 
-    if (
-      error instanceof AgentAdminDetailAuthorizationError ||
-      error instanceof AgentPublicationDetailAuthorizationError
-    ) {
+    if (error instanceof AgentPublicationDetailAuthorizationError) {
       writeError(response, 403, "forbidden", error.message);
       return;
     }
@@ -226,7 +220,7 @@ export async function handleAgentDetailRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidAgentDetailRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

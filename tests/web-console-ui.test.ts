@@ -41,6 +41,11 @@ interface FreshRegistryDatabase {
   db: AgentRegistryDb;
 }
 
+interface EmptyRegistryDatabase {
+  cleanup(): Promise<void>;
+  databaseUrl: string;
+}
+
 interface WebConsoleContext extends FreshRegistryDatabase {
   baseUrl: string;
   close(): Promise<void>;
@@ -93,8 +98,38 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
   }
 }
 
+async function createEmptyRegistryDatabase(): Promise<EmptyRegistryDatabase> {
+  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
+  const adminPool = new Pool({
+    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
+  });
+
+  try {
+    await adminPool.query(`create database "${databaseName}" template template0`);
+  } catch (error) {
+    await adminPool.end();
+    throw error;
+  }
+
+  return {
+    async cleanup() {
+      await adminPool.query(
+        "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
+        [databaseName],
+      );
+      await adminPool.query(`drop database if exists "${databaseName}"`);
+      await adminPool.end();
+    },
+    databaseUrl: createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName),
+  };
+}
+
 async function createWebConsoleContext(options: {
   deploymentMode: "hosted" | "self-hosted";
+  reviewServiceOptions?: {
+    enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
+    resolveProbeHostname?: (hostname: string) => Promise<string[]>;
+  };
 }): Promise<WebConsoleContext> {
   const database = await createFreshRegistryDatabase();
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-web-console-"));
@@ -124,6 +159,8 @@ async function createWebConsoleContext(options: {
             "      - subjectId: admin-alpha",
             "        roles: [tenant-admin]",
             "      - subjectId: publisher-alpha",
+            "        roles: [publisher]",
+            "      - subjectId: publisher-bravo",
             "        roles: [publisher]",
             "  - tenantId: tenant-beta",
             "    displayName: Tenant Beta",
@@ -157,7 +194,9 @@ async function createWebConsoleContext(options: {
         config,
         db: database.db,
         reviewServiceOptions: {
-          resolveProbeHostname: async () => ["198.51.100.20"],
+          resolveProbeHostname:
+            options.reviewServiceOptions?.resolveProbeHostname ?? (async () => ["198.51.100.20"]),
+          enqueuePublicationProbe: options.reviewServiceOptions?.enqueuePublicationProbe,
         },
       }),
     );
@@ -456,6 +495,107 @@ async function seedHealthAndTelemetry(
   });
 }
 
+test("console root renders a setup page before schema bootstrap", async () => {
+  const database = await createEmptyRegistryDatabase();
+  const db = createKyselyDb(database.databaseUrl);
+  const config = loadRegistryConfig(
+    {
+      DATABASE_URL: database.databaseUrl,
+    },
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db,
+    }),
+  );
+
+  try {
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(html, /<h1>Agent Registry<\/h1>/);
+    assert.match(html, /Console Setup Pending/);
+    assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+    await destroyKyselyDb(db);
+    await database.cleanup();
+  }
+});
+
+test("unexpected console failures return 500 without exposing internal messages", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: {
+        selectFrom() {
+          throw new Error("database offline");
+        },
+      } as unknown as AgentRegistryDb,
+    }),
+  );
+
+  try {
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const html = await response.text();
+
+    assert.equal(response.status, 500);
+    assert.match(html, /Internal server error\./);
+    assert.doesNotMatch(html, /database offline/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
 test("publisher console creates a multi-environment draft and submits it for review", async () => {
   const context = await createWebConsoleContext({
     deploymentMode: "hosted",
@@ -466,6 +606,8 @@ test("publisher console creates a multi-environment draft and submits it for rev
     // Arrange
     const signInPage = await browser.get("/");
     const signInHtml = await signInPage.text();
+    const tenantBetaSignInPage = await browser.get("/?tenantId=tenant-beta");
+    const tenantBetaSignInHtml = await tenantBetaSignInPage.text();
 
     await signIn(browser, "tenant-alpha", "publisher-alpha");
 
@@ -567,7 +709,14 @@ test("publisher console creates a multi-environment draft and submits it for rev
 
     // Assert
     assert.equal(signInPage.status, 200);
+    assert.equal(tenantBetaSignInPage.status, 200);
     assert.match(signInHtml, /<select[^>]+name="tenantId"/);
+    assert.match(signInHtml, /admin-alpha/);
+    assert.match(signInHtml, /publisher-alpha/);
+    assert.doesNotMatch(signInHtml, /admin-beta/);
+    assert.match(tenantBetaSignInHtml, /admin-beta/);
+    assert.doesNotMatch(tenantBetaSignInHtml, /admin-alpha/);
+    assert.doesNotMatch(tenantBetaSignInHtml, /publisher-alpha/);
     assert.match(dashboardHtml, /New Draft Registration/);
     assert.doesNotMatch(dashboardHtml, /Review Queue/);
     assert.equal(newDraftPage.status, 200);
@@ -606,19 +755,172 @@ test("publisher console returns 403 for admin-only review and active agent detai
     });
 
     await approvePendingVersion(context, approvedFixture);
+    await seedHealthAndTelemetry(context.db, approvedFixture);
     await signIn(browser, "tenant-alpha", "publisher-alpha");
 
     // Act
     const reviewQueuePage = await browser.get("/tenants/tenant-alpha/review");
     const reviewQueueHtml = await reviewQueuePage.text();
+    const versionDetailPage = await browser.get(
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}`,
+    );
+    const versionDetailHtml = await versionDetailPage.text();
     const agentDetailPage = await browser.get(`/tenants/tenant-alpha/agents/${approvedFixture.agentId}`);
     const agentDetailHtml = await agentDetailPage.text();
 
     // Assert
     assert.equal(reviewQueuePage.status, 403);
     assert.match(reviewQueueHtml, /Tenant admin role is required/);
+    assert.equal(versionDetailPage.status, 200);
+    assert.doesNotMatch(versionDetailHtml, /Advisory Telemetry/);
+    assert.doesNotMatch(versionDetailHtml, /Invocation count: 12/);
     assert.equal(agentDetailPage.status, 403);
     assert.match(agentDetailHtml, /Tenant admin role is required/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publisher console returns 400 for malformed draft contract JSON", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+    const draftForm = new FormData();
+
+    draftForm.set("versionLabel", "v1");
+    draftForm.set("displayName", "Case Resolver");
+    draftForm.set("summary", "Handles support case routing.");
+    draftForm.set("capabilities", "shared-capability, case-routing");
+    draftForm.set("tags", "shared-tag, routing");
+    draftForm.set("requiredRoles", "support-agent");
+    draftForm.set("requiredScopes", "tickets.read");
+    draftForm.set("headerContract", "{");
+    draftForm.set(
+      "contextContract",
+      JSON.stringify([
+        {
+          description: "Selects the client partition.",
+          example: "client-123",
+          key: "client_id",
+          required: true,
+          type: "string",
+        },
+      ]),
+    );
+    draftForm.set("publication:dev:enabled", "on");
+    draftForm.set("publication:dev:healthEndpointUrl", "https://dev.health.example.com/status");
+    draftForm.set(
+      "publication:dev:rawCard",
+      new File(
+        [
+          createRawCard({
+            capabilities: ["card-search", "dev-capability"],
+            name: "Case Resolver",
+            summary: "Handles support case routing.",
+            tags: ["card-tag", "dev"],
+          }),
+        ],
+        "dev-card.json",
+        {
+          type: "application/json",
+        },
+      ),
+    );
+
+    // Act
+    const response = await browser.postForm("/tenants/tenant-alpha/drafts", draftForm);
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 400);
+    assert.match(html, /headerContract/);
+    assert.match(html, /valid JSON/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publisher console blocks version detail access to versions owned by another publisher", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const otherPublisherFixture = await createPendingVersion(context, {
+      displayName: "Escalation Router",
+      environments: ["dev"],
+      publisherId: "publisher-bravo",
+      summary: "Routes escalations for a different publisher.",
+      versionLabel: "v2",
+    });
+
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.get(
+      `/tenants/tenant-alpha/agents/${otherPublisherFixture.agentId}/versions/${otherPublisherFixture.versionId}`,
+    );
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 403);
+    assert.match(html, /versions they own/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin console approval enqueues initial publication probes", async () => {
+  const enqueuedPublicationIds: string[] = [];
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+    reviewServiceOptions: {
+      async enqueuePublicationProbe(publicationId) {
+        enqueuedPublicationIds.push(publicationId);
+      },
+    },
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const fixture = await createPendingVersion(context, {
+      displayName: "Case Router",
+      environments: ["dev", "prod"],
+      publisherId: "publisher-alpha",
+      summary: "Routes support cases.",
+      versionLabel: "v1",
+    });
+    const publicationIds = (
+      await context.db
+        .selectFrom("environment_publications")
+        .select("publication_id")
+        .where("tenant_id", "=", "tenant-alpha")
+        .where("agent_id", "=", fixture.agentId)
+        .where("version_id", "=", fixture.versionId)
+        .orderBy("environment_key")
+        .execute()
+    ).map((publication) => publication.publication_id);
+
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const response = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}/approve`,
+      {},
+    );
+
+    // Assert
+    assert.equal(response.status, 303);
+    assert.equal(getRedirectLocation(response), `/tenants/tenant-alpha/agents/${fixture.agentId}`);
+    assert.deepEqual(enqueuedPublicationIds.sort(), publicationIds.sort());
   } finally {
     await context.close();
   }

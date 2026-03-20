@@ -37,18 +37,24 @@ import {
   AgentVersionProbeTargetPolicyError,
   AgentVersionReviewAuthorizationError,
   AgentVersionReviewService,
+  type AgentVersionReviewServiceOptions,
   AgentVersionReviewValidationError,
   InvalidVersionTransitionError,
 } from "../../api/src/modules/review/service.js";
 
 const sessionCookieName = "agent_registry_console_session";
 
+class ConsoleAuthorizationError extends Error {}
+
+class ConsoleValidationError extends Error {}
+
 export interface WebRequestListenerOptions {
   config?: Pick<RegistryConfig, "deploymentMode" | "healthProbe" | "rawCardByteLimit">;
   db: AgentRegistryDb;
-  reviewServiceOptions?: {
-    resolveProbeHostname?: (hostname: string) => Promise<string[]>;
-  };
+  reviewServiceOptions?: Pick<
+    AgentVersionReviewServiceOptions,
+    "enqueuePublicationProbe" | "resolveProbeHostname"
+  >;
 }
 
 interface ConsoleSession {
@@ -284,6 +290,22 @@ function writeError(response: ServerResponse, statusCode: number, message: strin
   );
 }
 
+function writeConsoleHomePage(
+  response: ServerResponse,
+  body: string,
+): void {
+  writeHtml(
+    response,
+    200,
+    "Agent Registry",
+    `<section class="hero card stack">
+      <h1>Agent Registry</h1>
+      <p class="meta">Mock sign-in for tenant admins and publishers.</p>
+    </section>
+    ${body}`,
+  );
+}
+
 function redirect(
   response: ServerResponse,
   location: string,
@@ -362,12 +384,16 @@ function createExpiredSessionCookie(): string {
   return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
 }
 
+function getRequestUrl(request: IncomingMessage): URL {
+  return new URL(request.url ?? "/", "http://127.0.0.1");
+}
+
 function getPathname(request: IncomingMessage): string {
-  return new URL(request.url ?? "/", "http://127.0.0.1").pathname;
+  return getRequestUrl(request).pathname;
 }
 
 function createRequestForFormData(request: IncomingMessage): Request {
-  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const url = getRequestUrl(request);
   const method = request.method ?? "GET";
   const headers = new Headers();
 
@@ -417,20 +443,20 @@ function readStringField(
 
   if (rawValue === null) {
     if (options.required) {
-      throw new Error(`Field '${fieldName}' is required.`);
+      throw new ConsoleValidationError(`Field '${fieldName}' is required.`);
     }
 
     return options.fallback ?? "";
   }
 
   if (typeof rawValue !== "string") {
-    throw new Error(`Field '${fieldName}' must be a string.`);
+    throw new ConsoleValidationError(`Field '${fieldName}' must be a string.`);
   }
 
   const value = rawValue.trim();
 
   if (options.required && value === "") {
-    throw new Error(`Field '${fieldName}' is required.`);
+    throw new ConsoleValidationError(`Field '${fieldName}' is required.`);
   }
 
   return value === "" ? (options.fallback ?? "") : value;
@@ -448,11 +474,29 @@ function readJsonField<TValue>(formData: FormData, fieldName: string): TValue {
   return JSON.parse(rawValue) as TValue;
 }
 
+function readDraftJsonField<TValue>(formData: FormData, fieldName: string): TValue {
+  try {
+    return readJsonField<TValue>(formData, fieldName);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new AgentDraftRegistrationValidationError(
+        `Field '${fieldName}' must be valid JSON.`,
+      );
+    }
+
+    if (error instanceof Error) {
+      throw new AgentDraftRegistrationValidationError(error.message);
+    }
+
+    throw error;
+  }
+}
+
 async function readRawCardField(formData: FormData, fieldName: string): Promise<string> {
   const rawValue = formData.get(fieldName);
 
   if (rawValue === null) {
-    throw new Error(`Field '${fieldName}' is required.`);
+    throw new ConsoleValidationError(`Field '${fieldName}' is required.`);
   }
 
   if (typeof rawValue === "string") {
@@ -485,6 +529,14 @@ async function loadTenantConsoleOptions(db: AgentRegistryDb): Promise<TenantCons
   }));
 }
 
+function isMissingConsoleSchemaError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /relation "(tenant_memberships|tenants)" does not exist/.test(error.message);
+}
+
 async function resolvePrincipalFromSession(
   principalResolver: PrincipalResolver,
   request: IncomingMessage,
@@ -513,39 +565,60 @@ async function renderSignInPage(
   response: ServerResponse,
   db: AgentRegistryDb,
   deploymentMode: "hosted" | "self-hosted",
+  selectedHostedTenantId?: string,
 ): Promise<void> {
-  const tenants = await loadTenantConsoleOptions(db);
+  let tenants: TenantConsoleOption[];
+
+  try {
+    tenants = await loadTenantConsoleOptions(db);
+  } catch (error) {
+    if (isMissingConsoleSchemaError(error)) {
+      writeConsoleHomePage(
+        response,
+        `<section class="card stack">
+          <h2>Console Setup Pending</h2>
+          <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
+        </section>`,
+      );
+      return;
+    }
+
+    throw error;
+  }
 
   if (tenants.length === 0) {
-    writeError(response, 500, "No tenants are configured for the console.");
+    writeConsoleHomePage(
+      response,
+      `<section class="card stack">
+        <h2>Console Setup Pending</h2>
+        <p>Bootstrap tenant and membership data to enable console sign-in.</p>
+      </section>`,
+    );
     return;
   }
 
+  const selfHostedTenant = tenants[0];
+  const selectedHostedTenant =
+    deploymentMode === "hosted"
+      ? tenants.find((tenant) => tenant.tenantId === selectedHostedTenantId) ?? tenants[0]
+      : selfHostedTenant;
   const hostedTenantOptions = tenants
     .map(
       (tenant) =>
-        `<option value="${escapeHtml(tenant.tenantId)}">${escapeHtml(tenant.displayName)} (${escapeHtml(tenant.tenantId)})</option>`,
+        `<option value="${escapeHtml(tenant.tenantId)}"${tenant.tenantId === selectedHostedTenant.tenantId ? " selected" : ""}>${escapeHtml(tenant.displayName)} (${escapeHtml(tenant.tenantId)})</option>`,
     )
     .join("");
-  const selfHostedTenant = tenants[0];
-  const subjectOptions = tenants
-    .flatMap((tenant) =>
-      tenant.memberships.map(
-        (membership) =>
-          `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}] in ${escapeHtml(tenant.displayName)}</option>`,
-      ),
+  const visibleTenant = deploymentMode === "hosted" ? selectedHostedTenant : selfHostedTenant;
+  const subjectOptions = visibleTenant.memberships
+    .map(
+      (membership) =>
+        `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}]</option>`,
     )
     .join("");
 
-  writeHtml(
+  writeConsoleHomePage(
     response,
-    200,
-    "Agent Registry Console",
-    `<section class="hero card stack">
-      <h1>Agent Registry Console</h1>
-      <p class="meta">Mock sign-in for tenant admins and publishers.</p>
-    </section>
-    <section class="card stack">
+    `<section class="card stack">
       <h2>Mock Sign-In</h2>
       <form class="stack" action="/session" method="post">
         ${
@@ -554,14 +627,18 @@ async function renderSignInPage(
                <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
                <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
             : `<label>Tenant
-                 <select name="tenantId">
+                 <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
                    ${hostedTenantOptions}
                  </select>
                </label>`
         }
         <label>Subject
           <select name="subjectId">
-            ${subjectOptions}
+            ${
+              subjectOptions === ""
+                ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
+                : subjectOptions
+            }
           </select>
         </label>
         <button type="submit">Sign In</button>
@@ -726,13 +803,15 @@ async function requirePrincipal(
 
 function assertTenantAccess(principal: ResolvedPrincipal, tenantId: string): void {
   if (principal.tenantId !== tenantId) {
-    throw new Error(`Resolved principal does not belong to tenant '${tenantId}'.`);
+    throw new ConsoleAuthorizationError(
+      `Resolved principal does not belong to tenant '${tenantId}'.`,
+    );
   }
 }
 
 function assertTenantAdminAccess(principal: ResolvedPrincipal): void {
   if (!isTenantAdmin(principal)) {
-    throw new Error("Tenant admin role is required to access this page.");
+    throw new ConsoleAuthorizationError("Tenant admin role is required to access this page.");
   }
 }
 
@@ -810,7 +889,9 @@ async function renderDraftFormPage(
   assertTenantAccess(principal, tenantId);
 
   if (!canPublish(principal)) {
-    throw new Error("Publisher role is required to create draft agent registrations.");
+    throw new ConsoleAuthorizationError(
+      "Publisher role is required to create draft agent registrations.",
+    );
   }
 
   const environments = await environmentService.listEnvironments(principal, tenantId);
@@ -914,7 +995,9 @@ async function createDraftFromForm(
   assertTenantAccess(principal, tenantId);
 
   if (!canPublish(principal)) {
-    throw new Error("Publisher role is required to create draft agent registrations.");
+    throw new ConsoleAuthorizationError(
+      "Publisher role is required to create draft agent registrations.",
+    );
   }
 
   const [formData, environments] = await Promise.all([
@@ -922,45 +1005,67 @@ async function createDraftFromForm(
     environmentService.listEnvironments(principal, tenantId),
   ]);
 
-  const publications = [];
+  let draftInput: Parameters<AgentDraftRegistrationService["createDraftAgent"]>[2];
 
-  for (const environment of environments.environments) {
-    const prefix = `publication:${environment.environmentKey}:`;
+  try {
+    const publications = [];
 
-    if (formData.get(`${prefix}enabled`) === null) {
-      continue;
+    for (const environment of environments.environments) {
+      const prefix = `publication:${environment.environmentKey}:`;
+
+      if (formData.get(`${prefix}enabled`) === null) {
+        continue;
+      }
+
+      const invocationEndpoint = readStringField(formData, `${prefix}invocationEndpoint`);
+
+      publications.push({
+        environmentKey: environment.environmentKey,
+        healthEndpointUrl: readStringField(formData, `${prefix}healthEndpointUrl`, {
+          required: true,
+        }),
+        invocationEndpoint: invocationEndpoint === "" ? undefined : invocationEndpoint,
+        rawCard: await readRawCardField(formData, `${prefix}rawCard`),
+      });
     }
 
-    const invocationEndpoint = readStringField(formData, `${prefix}invocationEndpoint`);
-
-    publications.push({
-      environmentKey: environment.environmentKey,
-      healthEndpointUrl: readStringField(formData, `${prefix}healthEndpointUrl`, {
+    draftInput = {
+      capabilities: parseDelimitedStrings(
+        readStringField(formData, "capabilities", { required: true }),
+      ),
+      contextContract: readDraftJsonField(formData, "contextContract"),
+      displayName: readStringField(formData, "displayName", {
         required: true,
       }),
-      invocationEndpoint: invocationEndpoint === "" ? undefined : invocationEndpoint,
-      rawCard: await readRawCardField(formData, `${prefix}rawCard`),
-    });
+      headerContract: readDraftJsonField(formData, "headerContract"),
+      publications,
+      requiredRoles: parseDelimitedStrings(
+        readStringField(formData, "requiredRoles", { fallback: "" }),
+      ),
+      requiredScopes: parseDelimitedStrings(
+        readStringField(formData, "requiredScopes", { fallback: "" }),
+      ),
+      summary: readStringField(formData, "summary", {
+        required: true,
+      }),
+      tags: parseDelimitedStrings(readStringField(formData, "tags", { fallback: "" })),
+      versionLabel: readStringField(formData, "versionLabel", {
+        required: true,
+      }),
+    };
+  } catch (error) {
+    if (error instanceof AgentDraftRegistrationValidationError) {
+      throw error;
+    }
+
+    if (error instanceof Error) {
+      throw new AgentDraftRegistrationValidationError(error.message);
+    }
+
+    throw error;
   }
 
-  const draft = await draftService.createDraftAgent(principal, tenantId, {
-    capabilities: parseDelimitedStrings(readStringField(formData, "capabilities", { required: true })),
-    contextContract: readJsonField(formData, "contextContract"),
-    displayName: readStringField(formData, "displayName", {
-      required: true,
-    }),
-    headerContract: readJsonField(formData, "headerContract"),
-    publications,
-    requiredRoles: parseDelimitedStrings(readStringField(formData, "requiredRoles", { fallback: "" })),
-    requiredScopes: parseDelimitedStrings(readStringField(formData, "requiredScopes", { fallback: "" })),
-    summary: readStringField(formData, "summary", {
-      required: true,
-    }),
-    tags: parseDelimitedStrings(readStringField(formData, "tags", { fallback: "" })),
-    versionLabel: readStringField(formData, "versionLabel", {
-      required: true,
-    }),
-  });
+  const draft = await draftService.createDraftAgent(principal, tenantId, draftInput);
 
   redirect(
     response,
@@ -1052,10 +1157,19 @@ async function renderVersionDetailPage(
   assertTenantAccess(principal, tenantId);
 
   if (!canPublish(principal) && !isTenantAdmin(principal)) {
-    throw new Error("Publisher or tenant admin role is required to view version detail.");
+    throw new ConsoleAuthorizationError(
+      "Publisher or tenant admin role is required to view version detail.",
+    );
   }
 
   const detail = await adminRepository.getVersionDetail(tenantId, agentId, versionId);
+
+  if (!isTenantAdmin(principal) && detail.publisherId !== principal.subjectId) {
+    throw new ConsoleAuthorizationError(
+      "Publishers may only view version details for versions they own.",
+    );
+  }
+
   const healthDetails =
     isTenantAdmin(principal) && detail.approvalState === "approved"
       ? await Promise.all(
@@ -1087,21 +1201,25 @@ async function renderVersionDetailPage(
         ${renderPreformattedJson(publication.normalizedMetadata)}
         <h3>Raw Card</h3>
         <pre>${escapeHtml(publication.rawCard)}</pre>
-        <h3>Advisory Telemetry</h3>
         ${
-          publication.telemetry.length === 0
-            ? "<p>No advisory telemetry submitted.</p>"
-            : publication.telemetry
-                .map(
-                  (telemetry) =>
-                    `<div class="stack">
-                      <p>Invocation count: ${telemetry.invocationCount}</p>
-                      <p>Success count: ${telemetry.successCount}</p>
-                      <p>Error count: ${telemetry.errorCount}</p>
-                      <p>p95 latency: ${telemetry.p95LatencyMs ?? "n/a"}</p>
-                    </div>`,
-                )
-                .join("")
+          isTenantAdmin(principal)
+            ? `<h3>Advisory Telemetry</h3>
+               ${
+                 publication.telemetry.length === 0
+                   ? "<p>No advisory telemetry submitted.</p>"
+                   : publication.telemetry
+                       .map(
+                         (telemetry) =>
+                           `<div class="stack">
+                             <p>Invocation count: ${telemetry.invocationCount}</p>
+                             <p>Success count: ${telemetry.successCount}</p>
+                             <p>Error count: ${telemetry.errorCount}</p>
+                             <p>p95 latency: ${telemetry.p95LatencyMs ?? "n/a"}</p>
+                           </div>`,
+                       )
+                       .join("")
+               }`
+            : ""
         }
         ${
           health === undefined
@@ -1417,7 +1535,12 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
           return;
         }
 
-        await renderSignInPage(response, options.db, config.deploymentMode);
+        await renderSignInPage(
+          response,
+          options.db,
+          config.deploymentMode,
+          getRequestUrl(request).searchParams.get("tenantId") ?? undefined,
+        );
         return;
       }
 
@@ -1430,12 +1553,18 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
           required: true,
         });
 
-        await principalResolver.resolve({
-          auth: {
-            subjectId,
-          },
-          tenantId,
-        });
+        try {
+          await principalResolver.resolve({
+            auth: {
+              subjectId,
+            },
+            tenantId,
+          });
+        } catch {
+          throw new ConsoleAuthorizationError(
+            "The selected subject does not belong to the chosen tenant.",
+          );
+        }
         redirect(
           response,
           "/console",
@@ -1593,6 +1722,21 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
 
       writeError(response, 404, "Route not found.");
     } catch (error) {
+      if (error instanceof URIError) {
+        writeError(response, 400, "Invalid request path.");
+        return;
+      }
+
+      if (error instanceof ConsoleAuthorizationError) {
+        writeError(response, 403, error.message);
+        return;
+      }
+
+      if (error instanceof ConsoleValidationError) {
+        writeError(response, 400, error.message);
+        return;
+      }
+
       if (
         error instanceof EnvironmentCatalogAuthorizationError ||
         error instanceof AgentDraftRegistrationAuthorizationError ||
@@ -1629,7 +1773,7 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
       }
 
       if (error instanceof Error) {
-        writeError(response, 403, error.message);
+        writeError(response, 500, "Internal server error.");
         return;
       }
 

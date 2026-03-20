@@ -23,6 +23,8 @@ export interface TenantEnvironmentHttpDependencies {
   service: TenantEnvironmentCatalogService;
 }
 
+export class InvalidTenantEnvironmentRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -71,10 +73,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidTenantEnvironmentRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidTenantEnvironmentRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -109,19 +117,33 @@ async function readCreateEnvironmentRequest(
   const body = (await readRequestBody(request)).trim();
 
   if (body === "") {
-    throw new Error("Request body must be a JSON object with an environmentKey string.");
+    throw new InvalidTenantEnvironmentRequestError(
+      "Request body must be a JSON object with an environmentKey string.",
+    );
   }
 
   const parsed = parseJsonObject(body, "Request body must be a JSON object.");
   const environmentKey = parsed.environmentKey;
 
   if (typeof environmentKey !== "string") {
-    throw new Error("Request body must be a JSON object with an environmentKey string.");
+    throw new InvalidTenantEnvironmentRequestError(
+      "Request body must be a JSON object with an environmentKey string.",
+    );
   }
 
   return {
     environmentKey,
   };
+}
+
+function decodeTenantId(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidTenantEnvironmentRequestError(
+      "Tenant id path segment must be valid URL encoding.",
+    );
+  }
 }
 
 export function matchTenantEnvironmentRoute(pathname: string): TenantEnvironmentRouteMatch | null {
@@ -132,7 +154,7 @@ export function matchTenantEnvironmentRoute(pathname: string): TenantEnvironment
   }
 
   return {
-    tenantId: decodeURIComponent(match[1]),
+    tenantId: decodeTenantId(match[1]),
   };
 }
 
@@ -195,7 +217,7 @@ export async function handleTenantEnvironmentRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidTenantEnvironmentRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

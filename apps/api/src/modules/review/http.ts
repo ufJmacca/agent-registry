@@ -32,6 +32,8 @@ export interface AgentVersionReviewHttpDependencies {
   service: AgentVersionReviewService;
 }
 
+export class InvalidAgentVersionReviewRequestError extends Error {}
+
 interface ErrorResponseBody {
   error: {
     code: string;
@@ -80,10 +82,16 @@ function readHeader(request: IncomingMessage, headerName: string): string | unde
 }
 
 function parseJsonObject(value: string, errorMessage: string): Record<string, unknown> {
-  const parsed = JSON.parse(value);
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new InvalidAgentVersionReviewRequestError(errorMessage);
+  }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error(errorMessage);
+    throw new InvalidAgentVersionReviewRequestError(errorMessage);
   }
 
   return parsed as Record<string, unknown>;
@@ -116,18 +124,32 @@ async function readRejectRequest(request: IncomingMessage): Promise<RejectAgentV
   const body = (await readRequestBody(request)).trim();
 
   if (body === "") {
-    throw new Error("Request body must be a JSON object with a reason string.");
+    throw new InvalidAgentVersionReviewRequestError(
+      "Request body must be a JSON object with a reason string.",
+    );
   }
 
   const parsed = parseJsonObject(body, "Request body must be a JSON object.");
 
   if (typeof parsed.reason !== "string") {
-    throw new Error("Request body must be a JSON object with a reason string.");
+    throw new InvalidAgentVersionReviewRequestError(
+      "Request body must be a JSON object with a reason string.",
+    );
   }
 
   return {
     reason: parsed.reason,
   };
+}
+
+function decodeRouteSegment(segment: string, label: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new InvalidAgentVersionReviewRequestError(
+      `${label} path segment must be valid URL encoding.`,
+    );
+  }
 }
 
 export function matchAgentVersionReviewRoute(
@@ -144,9 +166,9 @@ export function matchAgentVersionReviewRoute(
 
   return {
     action: match[4] as ReviewAction,
-    agentId: decodeURIComponent(match[2]),
-    tenantId: decodeURIComponent(match[1]),
-    versionId: decodeURIComponent(match[3]),
+    agentId: decodeRouteSegment(match[2], "Agent id"),
+    tenantId: decodeRouteSegment(match[1], "Tenant id"),
+    versionId: decodeRouteSegment(match[3], "Version id"),
   };
 }
 
@@ -248,7 +270,7 @@ export async function handleAgentVersionReviewRequest(
       return;
     }
 
-    if (error instanceof Error) {
+    if (error instanceof InvalidAgentVersionReviewRequestError) {
       writeError(response, 400, "invalid_request", error.message);
       return;
     }

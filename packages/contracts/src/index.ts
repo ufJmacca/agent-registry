@@ -268,6 +268,7 @@ export interface VersionAdminDetailResponse {
   active: boolean;
   agentId: string;
   approvalState: ApprovalState;
+  capabilities: string[];
   cardProfileId: string;
   contextContract: unknown[];
   displayName: string;
@@ -285,6 +286,26 @@ export interface VersionAdminDetailResponse {
 
 export type HealthStatus = "unknown" | "healthy" | "degraded" | "unreachable";
 
+export interface PublicationHealthHistoryEntry {
+  checkedAt: string;
+  error: string | null;
+  ok: boolean;
+  statusCode: number | null;
+}
+
+export interface PublicationHealthDetailResponse {
+  current: {
+    consecutiveFailures: number;
+    healthStatus: HealthStatus;
+    lastCheckedAt: string | null;
+    lastError: string | null;
+    lastSuccessAt: string | null;
+    recentFailures: number;
+  };
+  environmentKey: string;
+  history: PublicationHealthHistoryEntry[];
+  publicationId: string;
+}
 export type DiscoveryPublicationStatus =
   | "approved_active"
   | "approved_inactive"
@@ -305,6 +326,16 @@ export interface DiscoveryPublication {
   headerContract: HeaderContractEntry[];
   healthStatus: DiscoveryHealthStatus;
   invocationEndpoint: string | null;
+  overlayRequirements: {
+    agent: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+    environment: {
+      requiredRoles: string[];
+      requiredScopes: string[];
+    };
+  };
   publisherId: string;
   rawCard?: string;
   rawCardAvailable: boolean;
@@ -345,25 +376,4 @@ export interface AgentPublicationPreflightResponse {
   rawCardAvailable: boolean;
   ready: boolean;
   unresolvedRequiredHeaderSources: string[];
-}
-
-export interface PublicationHealthHistoryEntry {
-  checkedAt: string;
-  error: string | null;
-  ok: boolean;
-  statusCode: number | null;
-}
-
-export interface PublicationHealthDetailResponse {
-  current: {
-    consecutiveFailures: number;
-    healthStatus: HealthStatus;
-    lastCheckedAt: string | null;
-    lastError: string | null;
-    lastSuccessAt: string | null;
-    recentFailures: number;
-  };
-  environmentKey: string;
-  history: PublicationHealthHistoryEntry[];
-  publicationId: string;
 }
