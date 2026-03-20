@@ -13,11 +13,16 @@ import {
   createKyselyDb,
   destroyKyselyDb,
   migrateToLatest,
+  normalizeLegacyTelemetryMigrationRows,
   type AgentRegistryDb,
 } from "@agent-registry/db";
 
 import { createPrincipalResolver } from "../auth/index.js";
-import { bootstrapFromConfig } from "../bootstrap/index.js";
+import {
+  bootstrapFromConfig,
+  loadBootstrapManifest,
+  type BootstrapTenantManifest,
+} from "../bootstrap/index.js";
 import { AgentDraftRegistrationService } from "../modules/agents/service.js";
 import { AgentVersionReviewService } from "../modules/review/service.js";
 import { PublicationTelemetryService } from "../modules/telemetry/service.js";
@@ -25,9 +30,6 @@ import { PublicationTelemetryService } from "../modules/telemetry/service.js";
 const defaultSelfHostedBootstrapFile = fileURLToPath(
   new URL("./self-hosted-bootstrap.yaml", import.meta.url),
 );
-const demoTenantId = "tenant-demo";
-const demoAdminSubjectId = "demo-admin";
-const demoPublisherSubjectId = "demo-publisher";
 
 interface DemoProbeCheck {
   checkedAt: string;
@@ -64,6 +66,12 @@ export interface DemoSeedSummary {
   probeCount: number;
   publicationCount: number;
   telemetryWindowCount: number;
+  tenantId: string;
+}
+
+interface DemoSeedContext {
+  adminSubjectId: string;
+  publisherSubjectId: string;
   tenantId: string;
 }
 
@@ -253,10 +261,50 @@ function createSeedConfigEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
   };
 }
 
-async function resetDemoAgentCatalog(db: AgentRegistryDb): Promise<void> {
+function selectManifestSubjectId(
+  tenant: BootstrapTenantManifest,
+  acceptedRoles: string[],
+): string | undefined {
+  return (tenant.memberships ?? []).find((membership) =>
+    acceptedRoles.some((role) => (membership.roles ?? []).includes(role))
+  )?.subjectId;
+}
+
+async function loadDemoSeedContext(selfHostedBootstrapFile: string): Promise<DemoSeedContext> {
+  const manifest = await loadBootstrapManifest(selfHostedBootstrapFile);
+
+  if (manifest.tenants.length !== 1) {
+    throw new Error("Self-hosted seed requires exactly one tenant manifest entry.");
+  }
+
+  const [tenant] = manifest.tenants;
+  const adminSubjectId = selectManifestSubjectId(tenant, ["tenant-admin"]);
+
+  if (adminSubjectId === undefined) {
+    throw new Error(
+      "Self-hosted seed requires at least one tenant-admin membership in the bootstrap manifest.",
+    );
+  }
+
+  const publisherSubjectId = selectManifestSubjectId(tenant, ["publisher", "tenant-admin"]);
+
+  if (publisherSubjectId === undefined) {
+    throw new Error(
+      "Self-hosted seed requires at least one publisher or tenant-admin membership in the bootstrap manifest.",
+    );
+  }
+
+  return {
+    adminSubjectId,
+    publisherSubjectId,
+    tenantId: tenant.tenantId,
+  };
+}
+
+async function resetDemoAgentCatalog(db: AgentRegistryDb, tenantId: string): Promise<void> {
   await db
     .deleteFrom("agents")
-    .where("tenant_id", "=", demoTenantId)
+    .where("tenant_id", "=", tenantId)
     .where(
       "display_name",
       "in",
@@ -265,7 +313,10 @@ async function resetDemoAgentCatalog(db: AgentRegistryDb): Promise<void> {
     .execute();
 }
 
-async function seedDemoAgentCatalog(db: AgentRegistryDb): Promise<{
+async function seedDemoAgentCatalog(
+  db: AgentRegistryDb,
+  context: DemoSeedContext,
+): Promise<{
   agentCount: number;
   probeCount: number;
   publicationCount: number;
@@ -274,15 +325,15 @@ async function seedDemoAgentCatalog(db: AgentRegistryDb): Promise<{
   const principalResolver = createPrincipalResolver(db);
   const publisher = await principalResolver.resolve({
     auth: {
-      subjectId: demoPublisherSubjectId,
+      subjectId: context.publisherSubjectId,
     },
-    tenantId: demoTenantId,
+    tenantId: context.tenantId,
   });
   const admin = await principalResolver.resolve({
     auth: {
-      subjectId: demoAdminSubjectId,
+      subjectId: context.adminSubjectId,
     },
-    tenantId: demoTenantId,
+    tenantId: context.tenantId,
   });
   const draftService = new AgentDraftRegistrationService(
     new KyselyAgentDraftRegistrationRepository(db),
@@ -327,13 +378,13 @@ async function seedDemoAgentCatalog(db: AgentRegistryDb): Promise<{
       tags: demoAgent.tags,
       versionLabel: demoAgent.versionLabel,
     };
-    const draft = await draftService.createDraftAgent(publisher, demoTenantId, draftRequest);
+    const draft = await draftService.createDraftAgent(publisher, context.tenantId, draftRequest);
     const publicationIds = new Map(
       draft.publications.map((publication) => [publication.environmentKey, publication.publicationId]),
     );
 
-    await reviewService.submitVersion(publisher, demoTenantId, draft.agentId, draft.versionId);
-    await reviewService.approveVersion(admin, demoTenantId, draft.agentId, draft.versionId);
+    await reviewService.submitVersion(publisher, context.tenantId, draft.agentId, draft.versionId);
+    await reviewService.approveVersion(admin, context.tenantId, draft.agentId, draft.versionId);
 
     publicationCount += draft.publications.length;
 
@@ -357,7 +408,7 @@ async function seedDemoAgentCatalog(db: AgentRegistryDb): Promise<{
       if (publication.telemetry !== undefined) {
         await telemetryService.upsertTelemetry(
           publisher,
-          demoTenantId,
+          context.tenantId,
           draft.agentId,
           draft.versionId,
           publication.environmentKey,
@@ -383,9 +434,18 @@ export async function seedDemoRegistry(env: NodeJS.ProcessEnv = process.env): Pr
     throw new Error("Demo seed data is only supported when DEPLOYMENT_MODE=self-hosted.");
   }
 
+  const selfHostedBootstrapFile = config.bootstrap.selfHostedBootstrapFile;
+
+  if (selfHostedBootstrapFile === undefined) {
+    throw new Error("Self-hosted seed requires a bootstrap manifest.");
+  }
+
+  const seedContext = await loadDemoSeedContext(selfHostedBootstrapFile);
+
   const db = createKyselyDb(config.databaseUrl);
 
   try {
+    await normalizeLegacyTelemetryMigrationRows(db);
     await migrateToLatest(db);
 
     const bootstrapSummary = await bootstrapFromConfig(
@@ -397,15 +457,15 @@ export async function seedDemoRegistry(env: NodeJS.ProcessEnv = process.env): Pr
       throw new Error("Self-hosted seed requires a bootstrap manifest.");
     }
 
-    await resetDemoAgentCatalog(db);
+    await resetDemoAgentCatalog(db, seedContext.tenantId);
 
-    const catalogSummary = await seedDemoAgentCatalog(db);
+    const catalogSummary = await seedDemoAgentCatalog(db, seedContext);
 
     return {
       ...catalogSummary,
       bootstrapMembershipCount: bootstrapSummary.membershipCount,
       bootstrapTenantCount: bootstrapSummary.tenantCount,
-      tenantId: demoTenantId,
+      tenantId: seedContext.tenantId,
     };
   } finally {
     await destroyKyselyDb(db);

@@ -43,6 +43,14 @@ interface FreshRegistryDatabase {
   db: AgentRegistryDb;
 }
 
+interface SelfHostedBootstrapManifestOptions {
+  adminSubjectId?: string;
+  callerSubjectId?: string;
+  displayName?: string;
+  publisherSubjectId?: string;
+  tenantId?: string;
+}
+
 function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
   const url = new URL(baseUrl);
   url.pathname = `/${databaseName}`;
@@ -84,37 +92,44 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
   }
 }
 
-async function createSelfHostedBootstrapManifest(): Promise<{
+async function createSelfHostedBootstrapManifest(
+  options: SelfHostedBootstrapManifestOptions = {},
+): Promise<{
   cleanup(): Promise<void>;
   manifestPath: string;
 }> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-seed-bootstrap-"));
   const manifestPath = path.join(tempDir, "self-hosted-bootstrap.yaml");
+  const tenantId = options.tenantId ?? "tenant-demo";
+  const displayName = options.displayName ?? "Demo Tenant";
+  const adminSubjectId = options.adminSubjectId ?? "demo-admin";
+  const publisherSubjectId = options.publisherSubjectId ?? "demo-publisher";
+  const callerSubjectId = options.callerSubjectId ?? "demo-caller";
 
   await writeFile(
     manifestPath,
     [
       "tenants:",
-      "  - tenantId: tenant-demo",
-      "    displayName: Demo Tenant",
+      `  - tenantId: ${tenantId}`,
+      `    displayName: ${displayName}`,
       "    environments: [dev, prod]",
       "    memberships:",
-      "      - subjectId: demo-admin",
+      `      - subjectId: ${adminSubjectId}`,
       "        roles: [tenant-admin]",
       "        userContext:",
-      "          id: demo-admin",
-      "          email: demo-admin@example.com",
-      "      - subjectId: demo-publisher",
+      `          id: ${adminSubjectId}`,
+      `          email: ${adminSubjectId}@example.com`,
+      `      - subjectId: ${publisherSubjectId}`,
       "        roles: [publisher]",
       "        userContext:",
-      "          id: demo-publisher",
-      "          email: demo-publisher@example.com",
-      "      - subjectId: demo-caller",
+      `          id: ${publisherSubjectId}`,
+      `          email: ${publisherSubjectId}@example.com`,
+      `      - subjectId: ${callerSubjectId}`,
       "        roles: [support-agent]",
       "        scopes: [cases.read, cases.write]",
       "        userContext:",
-      "          id: demo-caller",
-      "          email: demo-caller@example.com",
+      `          id: ${callerSubjectId}`,
+      `          email: ${callerSubjectId}@example.com`,
       "          department: support",
       "",
     ].join("\n"),
@@ -529,9 +544,112 @@ test("seed script preserves non-demo agents already registered in tenant-demo", 
   }
 });
 
+test("seed script derives tenant and operator principals from an overridden self-hosted manifest", async () => {
+  const database = await createFreshRegistryDatabase();
+  const bootstrapManifest = await createSelfHostedBootstrapManifest({
+    adminSubjectId: "operator-admin",
+    callerSubjectId: "operator-caller",
+    displayName: "Operator Tenant",
+    publisherSubjectId: "operator-publisher",
+    tenantId: "tenant-operator",
+  });
+
+  try {
+    const result = await runSeedScript({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: bootstrapManifest.manifestPath,
+    });
+
+    assert.match(result.stdout, /Seeded demo tenant 'tenant-operator'/);
+
+    const tenant = await database.db
+      .selectFrom("tenants")
+      .select(["deployment_mode", "display_name", "tenant_id"])
+      .executeTakeFirstOrThrow();
+
+    assert.deepEqual(tenant, {
+      deployment_mode: "self-hosted",
+      display_name: "Operator Tenant",
+      tenant_id: "tenant-operator",
+    });
+
+    const memberships = await database.db
+      .selectFrom("tenant_memberships")
+      .select("subject_id")
+      .where("tenant_id", "=", "tenant-operator")
+      .orderBy("subject_id")
+      .execute();
+
+    assert.deepEqual(
+      memberships.map((membership) => membership.subject_id),
+      ["operator-admin", "operator-caller", "operator-publisher"],
+    );
+
+    const agents = await database.db
+      .selectFrom("agents")
+      .select("display_name")
+      .where("tenant_id", "=", "tenant-operator")
+      .orderBy("display_name")
+      .execute();
+
+    assert.deepEqual(
+      agents.map((agent) => agent.display_name),
+      ["Case Resolution Copilot", "Policy Retrieval Assistant"],
+    );
+  } finally {
+    await bootstrapManifest.cleanup();
+    await database.cleanup();
+  }
+});
+
+test("seed script normalizes legacy telemetry migration rows before running migrations", async () => {
+  const database = await createFreshRegistryDatabase();
+  const bootstrapManifest = await createSelfHostedBootstrapManifest();
+
+  try {
+    await database.db
+      .deleteFrom("kysely_migration")
+      .where("name", "=", "007_publication_telemetry_unique_windows")
+      .execute();
+    await database.db
+      .insertInto("kysely_migration")
+      .values({
+        name: "005_publication_telemetry_unique_windows",
+        timestamp: Date.now().toString(),
+      })
+      .execute();
+
+    const result = await runSeedScript({
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "self-hosted",
+      SELF_HOSTED_BOOTSTRAP_FILE: bootstrapManifest.manifestPath,
+    });
+
+    assert.match(result.stdout, /Seeded demo tenant 'tenant-demo'/);
+
+    const migrations = await database.db
+      .selectFrom("kysely_migration")
+      .select("name")
+      .orderBy("name")
+      .execute();
+    const migrationNames = migrations.map((migration) => migration.name);
+
+    assert.ok(!migrationNames.includes("005_publication_telemetry_unique_windows"));
+    assert.ok(migrationNames.includes("007_publication_telemetry_unique_windows"));
+  } finally {
+    await bootstrapManifest.cleanup();
+    await database.cleanup();
+  }
+});
+
 test("compose defaults the demo self-hosted stack while allowing host overrides", async () => {
   const composeSource = await readFile(path.join(repositoryRoot, "compose.yaml"), "utf8");
 
+  assert.match(
+    composeSource,
+    /DATABASE_URL:\s+\$\{DATABASE_URL:-postgres:\/\/registry:registry@postgres:5432\/agent_registry\}/,
+  );
   assert.match(composeSource, /DEPLOYMENT_MODE:\s+\$\{DEPLOYMENT_MODE:-self-hosted\}/);
   assert.match(
     composeSource,

@@ -14,6 +14,7 @@ import pg from "pg";
 const { Pool } = pg;
 
 export * from "./repositories/index.js";
+export * from "./migration-helpers.js";
 
 export interface DatabaseConfig {
   database: string;
