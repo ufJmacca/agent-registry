@@ -53,8 +53,11 @@ function mapProbeHistoryRow(row: {
   ok: boolean;
   status_code: number | null;
 }): PublicationProbeCheck {
+  const checkedAt =
+    row.checked_at instanceof Date ? row.checked_at.toISOString() : row.checked_at;
+
   return {
-    checkedAt: row.checked_at instanceof Date ? row.checked_at.toISOString() : row.checked_at,
+    checkedAt,
     error: row.error,
     ok: row.ok,
     statusCode: row.status_code,

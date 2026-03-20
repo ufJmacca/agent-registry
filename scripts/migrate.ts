@@ -5,12 +5,18 @@ import {
   migrateToLatest,
 } from "@agent-registry/db";
 
+import { normalizeLegacyTelemetryMigrationRows } from "./migrate-helpers.js";
+
 const config = loadRegistryConfig(process.env, {
   requireBootstrapFile: false,
 });
 const db = createKyselyDb(config.databaseUrl);
 
 try {
+  // Normalize legacy telemetry migration rows from earlier slices so the
+  // current forward-only migration set can run against the shared compose DB.
+  await normalizeLegacyTelemetryMigrationRows(db);
+
   const results = await migrateToLatest(db);
 
   console.log(`Migrated ${config.databaseUrl}`);

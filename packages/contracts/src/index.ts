@@ -306,7 +306,6 @@ export interface PublicationHealthDetailResponse {
   history: PublicationHealthHistoryEntry[];
   publicationId: string;
 }
-
 export type DiscoveryPublicationStatus =
   | "approved_active"
   | "approved_inactive"

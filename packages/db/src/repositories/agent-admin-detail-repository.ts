@@ -92,6 +92,7 @@ export interface VersionAdminDetailRecord {
   review: VersionReviewMetadataRecord;
   summary: string;
   tags: string[];
+  publisherId: string;
   versionId: string;
   versionLabel: string;
   versionSequence: number;
@@ -356,6 +357,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
         "context_contract",
         "display_name",
         "header_contract",
+        "publisher_id",
         "rejected_at",
         "rejected_by",
         "rejected_reason",
@@ -428,6 +430,7 @@ export class KyselyAgentAdminDetailRepository implements AgentAdminDetailReposit
       review: mapReviewMetadata(version),
       summary: version.summary,
       tags: version.tags,
+      publisherId: version.publisher_id,
       versionId: version.version_id,
       versionLabel: version.version_label,
       versionSequence: version.version_sequence,
