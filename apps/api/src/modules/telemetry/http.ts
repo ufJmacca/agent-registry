@@ -143,7 +143,7 @@ export function matchPublicationTelemetryRoute(
   pathname: string,
 ): PublicationTelemetryRouteMatch | null {
   const match =
-    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/:]+):telemetry\/?$/.exec(
+    /^\/tenants\/([^/]+)\/agents\/([^/]+)\/versions\/([^/]+)\/environments\/([^/]+)\/telemetry\/?$/.exec(
       pathname,
     );
 

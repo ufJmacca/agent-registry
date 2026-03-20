@@ -507,7 +507,7 @@ async function postTelemetry(
     body: options.body,
     path:
       `/tenants/${options.tenantId}/agents/${options.agentId}/versions/${options.versionId}` +
-      `/environments/${options.environmentKey}:telemetry`,
+      `/environments/${options.environmentKey}/telemetry`,
     subjectId: options.subjectId,
   });
 }
@@ -1130,7 +1130,7 @@ test("malformed telemetry route encoding returns 400 without taking down the API
       body: buildTelemetryRequest(),
       path:
         `/tenants/%E0%A4%A/agents/${approvedVersion.agentId}/versions/${approvedVersion.versionId}` +
-        "/environments/dev:telemetry",
+        "/environments/dev/telemetry",
       subjectId: "publisher-alpha",
     });
     const followUpResponse = await postTelemetry(context, {
@@ -1189,7 +1189,7 @@ test("unexpected resolver failures return 500 internal_error responses for telem
     // Act
     const response = await fetch(
       new URL(
-        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev:telemetry",
+        "/tenants/tenant-alpha/agents/agent-alpha/versions/version-1/environments/dev/telemetry",
         server.baseUrl,
       ),
       {
