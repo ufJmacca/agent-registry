@@ -5,8 +5,9 @@ import {
   KyselyAgentAdminDetailRepository,
   KyselyAgentDiscoveryRepository,
   KyselyAgentDraftRegistrationRepository,
-  KyselyAgentReviewRepository,
   KyselyHealthRepository,
+  KyselyAgentReviewRepository,
+  KyselyPublicationTelemetryRepository,
   KyselyTenantEnvironmentRepository,
   KyselyTenantPolicyOverlayRepository,
   KyselyTenantRepository,
@@ -56,6 +57,12 @@ import {
   handleTenantPolicyOverlayRequest,
   matchTenantPolicyOverlayRoute,
 } from "./modules/overlays/index.js";
+import {
+  InvalidPublicationTelemetryRequestError,
+  handlePublicationTelemetryRequest,
+  matchPublicationTelemetryRoute,
+  PublicationTelemetryService,
+} from "./modules/telemetry/index.js";
 import {
   AgentPublicationPreflightService,
   InvalidAgentPublicationPreflightRequestError,
@@ -144,6 +151,9 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
   const overlayService = new TenantPolicyOverlayService(
     new KyselyTenantPolicyOverlayRepository(options.db),
   );
+  const telemetryService = new PublicationTelemetryService(
+    new KyselyPublicationTelemetryRepository(options.db),
+  );
   const adminDetailService = new AgentAdminDetailService(
     new KyselyAgentAdminDetailRepository(options.db),
   );
@@ -162,6 +172,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
       const discoveryRoute = matchDiscoveryRoute(url.pathname);
       const preflightRoute = matchAgentPublicationPreflightRoute(url.pathname);
       const healthRoute = matchAgentPublicationHealthRoute(url.pathname);
+      const telemetryRoute = matchPublicationTelemetryRoute(url.pathname);
       const detailRoute = matchAgentDetailRoute(url.pathname);
       const agentDraftRoute = matchAgentDraftRoute(url.pathname);
       const environmentRoute = matchTenantEnvironmentRoute(url.pathname);
@@ -211,6 +222,14 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         await handleAgentPublicationHealthRequest(request, response, healthRoute, {
           principalResolver,
           service: healthService,
+        });
+        return;
+      }
+
+      if (telemetryRoute !== null) {
+        await handlePublicationTelemetryRequest(request, response, telemetryRoute, {
+          principalResolver,
+          service: telemetryService,
         });
         return;
       }
@@ -266,6 +285,7 @@ export function createApiRequestListener(options: ApiRequestListenerOptions): ht
         error instanceof InvalidAgentPublicationPreflightRequestError ||
         error instanceof InvalidAgentVersionReviewRequestError ||
         error instanceof InvalidDiscoveryRequestError ||
+        error instanceof InvalidPublicationTelemetryRequestError ||
         error instanceof InvalidSearchRequestError ||
         error instanceof InvalidTenantEnvironmentRequestError ||
         error instanceof InvalidTenantPolicyOverlayRequestError

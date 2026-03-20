@@ -25,6 +25,26 @@ export class AgentVersionNotFoundError extends Error {
   }
 }
 
+export class AgentVersionEnvironmentPublicationNotFoundError extends Error {
+  readonly agentId: string;
+
+  readonly environmentKey: string;
+
+  readonly tenantId: string;
+
+  readonly versionId: string;
+
+  constructor(tenantId: string, agentId: string, versionId: string, environmentKey: string) {
+    super(
+      `Environment '${environmentKey}' does not exist on version '${versionId}' for agent '${agentId}' in tenant '${tenantId}'.`,
+    );
+    this.agentId = agentId;
+    this.environmentKey = environmentKey;
+    this.tenantId = tenantId;
+    this.versionId = versionId;
+  }
+}
+
 export class AgentEnvironmentPublicationNotFoundError extends Error {
   readonly agentId: string;
 
