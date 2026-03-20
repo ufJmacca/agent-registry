@@ -402,6 +402,32 @@ test("reducePublicationHealth derives unknown, degraded, healthy, and unreachabl
   assert.equal(unreachable.consecutiveFailures, 3);
 });
 
+test("reducePublicationHealth normalizes Date timestamps before sorting recent checks", () => {
+  // Arrange
+  const checks = [
+    {
+      checkedAt: new Date("2026-03-12T23:59:00.000Z"),
+      error: null,
+      ok: true,
+      statusCode: 204,
+    },
+    {
+      checkedAt: "2026-03-13T00:00:00.000Z",
+      error: "timeout",
+      ok: false,
+      statusCode: null,
+    },
+  ];
+
+  // Act
+  const reduced = reducePublicationHealth(checks);
+
+  // Assert
+  assert.equal(reduced.healthStatus, "degraded");
+  assert.equal(reduced.recentFailures, 1);
+  assert.equal(reduced.consecutiveFailures, 1);
+});
+
 test("health probe worker schedules recurring reconciliation and immediately enqueues every approved publication, including inactive and disabled ones", async () => {
   // Arrange
   const context = await createProbeWorkerContext();

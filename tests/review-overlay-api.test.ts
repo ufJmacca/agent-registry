@@ -280,6 +280,7 @@ async function createReviewApiContext(
   options: {
     allowPrivateTargets?: boolean;
     deploymentMode?: "hosted" | "self-hosted";
+    enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
     resolveProbeHostname?: (hostname: string) => Promise<string[]>;
   } = {},
 ): Promise<ApiTestContext> {
@@ -321,6 +322,7 @@ async function createReviewApiContext(
         config,
         db: database.db,
         reviewServiceOptions: {
+          enqueuePublicationProbe: options.enqueuePublicationProbe,
           // Keep review tests deterministic and offline by default.
           resolveProbeHostname:
             options.resolveProbeHostname ??
@@ -748,6 +750,33 @@ test("submit updates publisher_id to the submitting principal", async () => {
       publisher_id: "publisher-alpha",
       submitted_by: "publisher-alpha",
     });
+  } finally {
+    await context.close();
+  }
+});
+
+test("approvals enqueue an initial health probe for each approved publication", async () => {
+  // Arrange
+  const enqueuedPublicationIds: string[] = [];
+  const context = await createReviewApiContext({
+    async enqueuePublicationProbe(publicationId) {
+      enqueuedPublicationIds.push(publicationId);
+    },
+  });
+
+  try {
+    const draft = await createDraftVersion(context);
+    const expectedPublicationIds = [...draft.publications]
+      .map((publication) => publication.publicationId)
+      .sort();
+    await submitVersion(context, draft.agentId, draft.versionId);
+
+    // Act
+    const approveResponse = await approveVersion(context, draft.agentId, draft.versionId);
+
+    // Assert
+    assert.equal(approveResponse.status, 200);
+    assert.deepEqual(enqueuedPublicationIds.sort(), expectedPublicationIds);
   } finally {
     await context.close();
   }

@@ -29,6 +29,10 @@ export interface PublicationProbeCheck {
   statusCode: number | null;
 }
 
+type PublicationProbeCheckInput = Omit<PublicationProbeCheck, "checkedAt"> & {
+  checkedAt: Date | string;
+};
+
 export interface ReducedPublicationHealth {
   consecutiveFailures: number;
   healthStatus: HealthStatus;
@@ -267,6 +271,10 @@ function buildUnresolvableProbeTargetMessage(options: {
   return "Health endpoint hostnames must be resolvable.";
 }
 
+function normalizeCheckedAt(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 export async function assertHealthProbeTargetAllowed(
   endpointUrl: string,
   options: ProbeTargetPolicyOptions,
@@ -311,7 +319,7 @@ export async function assertHealthProbeTargetAllowed(
 }
 
 export function reducePublicationHealth(
-  checks: readonly PublicationProbeCheck[],
+  checks: readonly PublicationProbeCheckInput[],
   options: {
     degradedThreshold?: number;
     failureWindow?: number;
@@ -320,7 +328,9 @@ export function reducePublicationHealth(
   const degradedThreshold = options.degradedThreshold ?? 1;
   const failureWindow = options.failureWindow ?? 3;
   const recentChecks = [...checks]
-    .sort((left, right) => right.checkedAt.localeCompare(left.checkedAt))
+    .sort((left, right) =>
+      normalizeCheckedAt(right.checkedAt).localeCompare(normalizeCheckedAt(left.checkedAt)),
+    )
     .slice(0, failureWindow);
 
   if (recentChecks.length === 0) {

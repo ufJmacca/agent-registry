@@ -102,7 +102,10 @@ function writeError(
 export interface ApiRequestListenerOptions {
   config?: Pick<RegistryConfig, "deploymentMode" | "healthProbe" | "rawCardByteLimit">;
   db: AgentRegistryDb;
-  reviewServiceOptions?: Pick<AgentVersionReviewServiceOptions, "resolveProbeHostname">;
+  reviewServiceOptions?: Pick<
+    AgentVersionReviewServiceOptions,
+    "enqueuePublicationProbe" | "resolveProbeHostname"
+  >;
 }
 
 export function createApiRequestListener(options: ApiRequestListenerOptions): http.RequestListener {

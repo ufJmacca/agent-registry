@@ -48,13 +48,13 @@ export class PublicationHealthNotFoundError extends Error {
 }
 
 function mapProbeHistoryRow(row: {
-  checked_at: string;
+  checked_at: Date | string;
   error: string | null;
   ok: boolean;
   status_code: number | null;
 }): PublicationProbeCheck {
   return {
-    checkedAt: row.checked_at,
+    checkedAt: row.checked_at instanceof Date ? row.checked_at.toISOString() : row.checked_at,
     error: row.error,
     ok: row.ok,
     statusCode: row.status_code,

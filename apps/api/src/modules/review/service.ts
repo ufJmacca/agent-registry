@@ -13,6 +13,7 @@ import {
 export interface AgentVersionReviewServiceOptions {
   allowPrivateTargets?: boolean;
   deploymentMode?: "hosted" | "self-hosted";
+  enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
   requireHttps?: boolean;
   resolveProbeHostname?: ProbeHostnameResolver;
 }
@@ -57,6 +58,10 @@ export class AgentVersionReviewService {
 
   private readonly deploymentMode: "hosted" | "self-hosted";
 
+  private readonly enqueuePublicationProbe:
+    | ((publicationId: string) => Promise<void>)
+    | undefined;
+
   private readonly requireHttps: boolean;
 
   private readonly resolveProbeHostname: ProbeHostnameResolver | undefined;
@@ -69,9 +74,33 @@ export class AgentVersionReviewService {
   ) {
     this.allowPrivateTargets = options.allowPrivateTargets ?? false;
     this.deploymentMode = options.deploymentMode ?? "hosted";
+    this.enqueuePublicationProbe = options.enqueuePublicationProbe;
     this.requireHttps = options.requireHttps ?? this.deploymentMode === "hosted";
     this.resolveProbeHostname = options.resolveProbeHostname;
     this.repository = repository;
+  }
+
+  private async enqueueInitialProbes(publicationIds: readonly string[]): Promise<void> {
+    const enqueuePublicationProbe = this.enqueuePublicationProbe;
+
+    if (enqueuePublicationProbe === undefined) {
+      return;
+    }
+
+    const enqueueResults = await Promise.allSettled(
+      publicationIds.map((publicationId) => enqueuePublicationProbe(publicationId)),
+    );
+
+    for (const [index, result] of enqueueResults.entries()) {
+      if (result.status === "fulfilled") {
+        continue;
+      }
+
+      console.error("failed to enqueue initial health probe", {
+        error: result.reason,
+        publicationId: publicationIds[index],
+      });
+    }
   }
 
   async submitVersion(
@@ -115,12 +144,18 @@ export class AgentVersionReviewService {
       );
     }
 
-    return this.repository.approveVersion({
+    const approvedVersion = await this.repository.approveVersion({
       agentId,
       approvedBy: principal.subjectId,
       tenantId,
       versionId,
     });
+
+    await this.enqueueInitialProbes(
+      version.publications.map((publication) => publication.publicationId),
+    );
+
+    return approvedVersion;
   }
 
   async rejectVersion(
