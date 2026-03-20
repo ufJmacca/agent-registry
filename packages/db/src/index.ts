@@ -682,9 +682,7 @@ const migrationDefinitions: MigrationDefinition[] = [
           .addColumn("tenant_id", "text", (column) =>
             column.notNull().references("tenants.tenant_id").onDelete("cascade"),
           )
-          .addColumn("publication_id", "text", (column) =>
-            column.notNull().references("environment_publications.publication_id").onDelete("cascade"),
-          )
+          .addColumn("publication_id", "text", (column) => column.notNull())
           .addColumn("invocation_count", "integer", (column) => column.notNull())
           .addColumn("success_count", "integer", (column) => column.notNull())
           .addColumn("error_count", "integer", (column) => column.notNull())
@@ -699,6 +697,37 @@ const migrationDefinitions: MigrationDefinition[] = [
       }
 
       await sql`
+        do $$
+        begin
+          if not exists (
+            select 1
+            from pg_constraint
+            where conname = 'environment_publications_tenant_publication_key'
+              and conrelid = 'environment_publications'::regclass
+          ) then
+            alter table environment_publications
+            add constraint environment_publications_tenant_publication_key
+            unique (tenant_id, publication_id);
+          end if;
+        end
+        $$;
+      `.execute(db);
+      await sql`
+        alter table publication_telemetry
+        drop constraint if exists publication_telemetry_publication_tenant_fk
+      `.execute(db);
+      await sql`
+        drop index if exists publication_telemetry_window_idx
+      `.execute(db);
+      await sql`
+        alter table publication_telemetry
+        add constraint publication_telemetry_publication_tenant_fk
+        foreign key (tenant_id, publication_id)
+        references environment_publications (tenant_id, publication_id)
+        on delete cascade
+      `.execute(db);
+
+      await sql`
         delete from publication_telemetry as older
         using publication_telemetry as newer
         where older.tenant_id = newer.tenant_id
@@ -706,9 +735,6 @@ const migrationDefinitions: MigrationDefinition[] = [
           and older.window_started_at = newer.window_started_at
           and older.window_ended_at = newer.window_ended_at
           and older.telemetry_id < newer.telemetry_id
-      `.execute(db);
-      await sql`
-        drop index if exists publication_telemetry_window_idx
       `.execute(db);
       await db.schema
         .createIndex("publication_telemetry_window_idx")

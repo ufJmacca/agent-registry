@@ -941,6 +941,32 @@ test("migrateToLatest upgrades the AR-03 agent_versions schema for draft registr
       version_sequence: 1,
     });
     await assert.rejects(duplicateInsert, /agent_versions_sequence_idx/);
+    await database.db
+      .insertInto("tenants")
+      .values({
+        deployment_mode: "hosted",
+        display_name: "Other Tenant",
+        tenant_id: "tenant-other",
+      })
+      .execute();
+    await assert.rejects(
+      () =>
+        database.db
+          .insertInto("publication_telemetry")
+          .values({
+            error_count: 0,
+            invocation_count: 1,
+            p50_latency_ms: 50,
+            p95_latency_ms: 50,
+            publication_id: "publication-legacy",
+            success_count: 1,
+            tenant_id: "tenant-other",
+            window_ended_at: "2026-03-12T00:10:00Z",
+            window_started_at: "2026-03-12T00:05:00Z",
+          })
+          .execute(),
+      /publication_telemetry_publication_tenant_fk/,
+    );
   } finally {
     await database.cleanup();
   }

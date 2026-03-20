@@ -959,6 +959,43 @@ test("telemetry writes and reads enforce tenant scoping and role checks", async 
   }
 });
 
+test("telemetry rejects timestamps without explicit UTC offsets", async () => {
+  // Arrange
+  const context = await createTelemetryApiContext();
+
+  try {
+    const approvedVersion = await createApprovedVersion(
+      context,
+      "tenant-alpha",
+      "publisher-alpha",
+      "admin-alpha",
+    );
+
+    // Act
+    const response = await postTelemetry(context, {
+      agentId: approvedVersion.agentId,
+      body: buildTelemetryRequest({
+        windowEndedAt: "2026-03-14T00:05:00",
+        windowStartedAt: "2026-03-14T00:00:00",
+      }),
+      environmentKey: "dev",
+      subjectId: "publisher-alpha",
+      tenantId: "tenant-alpha",
+      versionId: approvedVersion.versionId,
+    });
+
+    // Assert
+    assert.equal(response.status, 400);
+    assert.deepEqual((response.body as ErrorResponseBody).error, {
+      code: "invalid_telemetry_request",
+      message:
+        "windowStartedAt must be a valid ISO-8601 timestamp with a trailing 'Z' or UTC offset.",
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("telemetry ingestion is advisory and leaves health, lifecycle, and publication metadata unchanged", async () => {
   // Arrange
   const context = await createTelemetryApiContext();
