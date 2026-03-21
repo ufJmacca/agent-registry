@@ -12,6 +12,11 @@ RUN apt-get update \
         python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+ENV UV_INSTALL_DIR=/usr/local/bin
+ENV PATH=/home/vscode/.local/bin:${PATH}
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 RUN useradd --create-home --shell /bin/bash vscode \
     && mkdir -p /workspace /home/vscode/.npm \
     && chown -R vscode:vscode /workspace /home/vscode

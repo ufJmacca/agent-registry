@@ -4,6 +4,8 @@ set -euo pipefail
 VERIFY_ONLY="${1:-}"
 AI_NATIVE_TOOL="git+https://github.com/ufJmacca/ai-native"
 
+export PATH="/home/vscode/.local/bin:${PATH}"
+
 declare -a REQUIRED_FILES=(
   "/home/vscode/.codex/auth.json"
   "/home/vscode/.codex/config.toml"
@@ -68,6 +70,9 @@ if command -v uv >/dev/null 2>&1; then
   if [[ -f "pyproject.toml" ]]; then
     uv sync || true
   fi
+else
+  echo "[missing] uv"
+  echo "uv is required to install ${AI_NATIVE_TOOL}. Rebuild the devcontainer so Dockerfile.workspace changes are applied." >&2
 fi
 
 exit "${missing}"
