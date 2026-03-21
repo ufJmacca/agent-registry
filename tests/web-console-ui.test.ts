@@ -310,6 +310,44 @@ function assertShell(
   }
 }
 
+function extractEnvironmentCatalogSurface(html: string): string {
+  const match = html.match(
+    /<section class="environment-surfaces">\s*<div class="environment-catalog card stack">([\s\S]*?)<\/div>\s*<aside class="environment-create card stack" id="environment-creation-panel">/,
+  );
+
+  assert.notEqual(match, null, "Expected the environment catalog surface.");
+  const [, catalogHtml] = match;
+  return catalogHtml;
+}
+
+function extractEnvironmentCatalogList(html: string): string {
+  const catalogHtml = extractEnvironmentCatalogSurface(html);
+  const match = catalogHtml.match(/<div class="environment-catalog__list">([\s\S]*?)<\/div>\s*$/);
+
+  assert.notEqual(match, null, "Expected the environment catalog list.");
+  const [, catalogListHtml] = match;
+  return catalogListHtml;
+}
+
+function extractEnvironmentCreationPanel(html: string): string {
+  const match = html.match(
+    /<aside class="environment-create card stack" id="environment-creation-panel">([\s\S]*?)<\/aside>/,
+  );
+
+  assert.notEqual(match, null, "Expected the environment creation panel.");
+  const [, createPanelHtml] = match;
+  return createPanelHtml;
+}
+
+async function listTenantEnvironmentKeys(
+  db: AgentRegistryDb,
+  tenantId: string,
+): Promise<string[]> {
+  const environments = await new KyselyTenantEnvironmentRepository(db).listForTenant(tenantId);
+
+  return environments.map((environment) => environment.environmentKey);
+}
+
 test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", async () => {
   // Arrange
   const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
@@ -1114,6 +1152,80 @@ test("admin console approval enqueues initial publication probes", async () => {
   }
 });
 
+test("admin environment management keeps the catalog primary and preserves creation flow", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+    const initialEnvironmentKeys = await listTenantEnvironmentKeys(context.db, "tenant-alpha");
+
+    // Act
+    const environmentsPage = await browser.get("/tenants/tenant-alpha/environments");
+    const environmentsHtml = await environmentsPage.text();
+    const createEnvironmentResponse = await browser.postUrlEncoded(
+      "/tenants/tenant-alpha/environments",
+      {
+        environmentKey: "qa",
+      },
+    );
+    const updatedEnvironmentKeys = await listTenantEnvironmentKeys(context.db, "tenant-alpha");
+    const updatedEnvironmentsPage = await browser.get("/tenants/tenant-alpha/environments");
+    const updatedEnvironmentsHtml = await updatedEnvironmentsPage.text();
+    const initialCatalogSurface = extractEnvironmentCatalogSurface(environmentsHtml);
+    const initialCatalogList = extractEnvironmentCatalogList(environmentsHtml);
+    const creationPanel = extractEnvironmentCreationPanel(environmentsHtml);
+    const updatedCatalogList = extractEnvironmentCatalogList(updatedEnvironmentsHtml);
+
+    // Assert
+    assert.equal(environmentsPage.status, 200);
+    assertUsesConsoleDocument(environmentsHtml);
+    assertShell(environmentsHtml, {
+      currentNavHref: "/tenants/tenant-alpha/environments",
+      page: "environments",
+      shell: "authenticated",
+    });
+    assert.match(environmentsHtml, /Environment Management/);
+    assert.match(environmentsHtml, /href="\/console"/);
+    assert.match(environmentsHtml, /href="\/tenants\/tenant-alpha\/review"/);
+    assert.match(environmentsHtml, /href="\/tenants\/tenant-alpha\/drafts\/new"/);
+    assert.match(environmentsHtml, /href="#environment-creation-panel"/);
+    assert.match(
+      environmentsHtml,
+      /<section class="environment-surfaces">\s*<div class="environment-catalog card stack">[\s\S]*?<aside class="environment-create card stack" id="environment-creation-panel">/,
+    );
+    assert.match(initialCatalogSurface, /<p class="console-kicker">Primary Surface<\/p>/);
+    assert.match(initialCatalogSurface, /<h2>Environment Catalog<\/h2>/);
+    assert.match(
+      initialCatalogSurface,
+      /Configured environments are the publish targets available across draft registration, review, and overlay workflows\./,
+    );
+    assert.equal((initialCatalogList.match(/<article class="environment-entry">/g) ?? []).length, 3);
+    assert.match(initialCatalogList, /<h3>dev<\/h3>/);
+    assert.match(initialCatalogList, /<h3>prod<\/h3>/);
+    assert.match(initialCatalogList, /<h3>staging<\/h3>/);
+    assert.doesNotMatch(initialCatalogList, /<h3>qa<\/h3>/);
+    assert.match(creationPanel, /<p class="console-kicker">Secondary Panel<\/p>/);
+    assert.match(creationPanel, /<h2>Create Environment<\/h2>/);
+    assert.match(creationPanel, /action="\/tenants\/tenant-alpha\/environments"/);
+    assert.match(creationPanel, /name="environmentKey"/);
+    assert.deepEqual(initialEnvironmentKeys, ["dev", "prod", "staging"]);
+    assert.doesNotMatch(environmentsHtml, /Export Config \(JSON\)/);
+    assert.doesNotMatch(environmentsHtml, /Global Logs/);
+    assert.equal(createEnvironmentResponse.status, 303);
+    assert.equal(getRedirectLocation(createEnvironmentResponse), "/tenants/tenant-alpha/environments");
+    assert.equal(updatedEnvironmentsPage.status, 200);
+    assert.deepEqual(updatedEnvironmentKeys, ["dev", "prod", "qa", "staging"]);
+    assert.equal((updatedCatalogList.match(/<article class="environment-entry">/g) ?? []).length, 4);
+    assert.match(updatedCatalogList, /<h3>qa<\/h3>/);
+  } finally {
+    await context.close();
+  }
+});
+
 test("admin console manages environments, reviews pending versions, edits overlays, and inspects details", async () => {
   const context = await createWebConsoleContext({
     deploymentMode: "hosted",
@@ -1198,10 +1310,10 @@ test("admin console manages environments, reviews pending versions, edits overla
       page: "environments",
       shell: "authenticated",
     });
-    assert.match(environmentsHtml, /staging/);
+    assert.doesNotMatch(extractEnvironmentCatalogList(environmentsHtml), /<h3>qa<\/h3>/);
     assert.equal(createEnvironmentResponse.status, 303);
     assert.equal(getRedirectLocation(createEnvironmentResponse), "/tenants/tenant-alpha/environments");
-    assert.match(updatedEnvironmentsHtml, /qa/);
+    assert.match(extractEnvironmentCatalogList(updatedEnvironmentsHtml), /<h3>qa<\/h3>/);
     assertShell(reviewQueueHtml, {
       currentNavHref: "/tenants/tenant-alpha/review",
       page: "review-queue",
