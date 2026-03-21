@@ -632,6 +632,52 @@ async function listActiveAgents(
   }));
 }
 
+function renderDashboardVersions(
+  tenantId: string,
+  versions: DashboardVersionLink[],
+): string {
+  if (versions.length === 0) {
+    return '<p class="dashboard-empty">No versions are visible for this identity.</p>';
+  }
+
+  return versions
+    .map(
+      (version) =>
+        `<a class="dashboard-resource" href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(version.agentId)}/versions/${encodeURIComponent(version.versionId)}">
+          <div class="dashboard-resource__copy">
+            <p class="console-kicker">Version v${escapeHtml(version.versionSequence)}</p>
+            <h3>${escapeHtml(version.displayName)}</h3>
+            <p class="dashboard-resource__meta">Approval state: ${escapeHtml(version.approvalState)}</p>
+          </div>
+          <span class="dashboard-state-pill">${escapeHtml(version.approvalState.replaceAll("_", " "))}</span>
+        </a>`,
+    )
+    .join("");
+}
+
+function renderDashboardActiveAgents(
+  tenantId: string,
+  activeAgents: Array<{ agentId: string; displayName: string }>,
+): string {
+  if (activeAgents.length === 0) {
+    return '<p class="dashboard-empty">No active approved agents yet.</p>';
+  }
+
+  return activeAgents
+    .map(
+      (agent) =>
+        `<a class="dashboard-resource" href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agent.agentId)}">
+          <div class="dashboard-resource__copy">
+            <p class="console-kicker">Active Agent</p>
+            <h3>${escapeHtml(agent.displayName)}</h3>
+            <p class="dashboard-resource__meta">Open publication detail and overlay controls.</p>
+          </div>
+          <span class="dashboard-resource__action">Open</span>
+        </a>`,
+    )
+    .join("");
+}
+
 async function renderDashboard(
   response: ServerResponse,
   db: AgentRegistryDb,
@@ -642,65 +688,105 @@ async function renderDashboard(
     listDashboardVersions(db, principal),
     isTenantAdmin(principal) ? listActiveAgents(db, principal.tenantId) : Promise.resolve([]),
   ]);
+  const encodedTenantId = encodeURIComponent(principal.tenantId);
+  const roleSummary = principal.roles.join(", ") || "none";
+  const pendingReviewCount = versions.filter(
+    (version) => version.approvalState === "pending_review",
+  ).length;
+  const primaryActionPanel = canPublish(principal)
+    ? `<a class="dashboard-primary-link" href="/tenants/${encodedTenantId}/drafts/new">New Draft Registration</a>`
+    : '<p class="dashboard-empty">No publishing actions are available for this identity.</p>';
+  const versionsPanelClass = isTenantAdmin(principal)
+    ? "dashboard-panel dashboard-panel--versions"
+    : "dashboard-panel dashboard-panel--versions dashboard-panel--versions-wide";
 
   writeHtml(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-      <h1>Console Dashboard</h1>
-      <p class="meta">${escapeHtml(tenantDisplayName)} (${escapeHtml(principal.tenantId)})</p>
-      <p>Signed in as <strong>${escapeHtml(principal.subjectId)}</strong> with roles <strong>${escapeHtml(principal.roles.join(", ") || "none")}</strong>.</p>
-      <div class="inline-actions">
-        ${
-          canPublish(principal)
-            ? `<a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/drafts/new">New Draft Registration</a>`
-            : ""
-        }
+      body: `<section class="dashboard-grid" aria-label="Console dashboard">
+        <section class="dashboard-panel dashboard-panel--hero">
+          <p class="console-kicker">System Overview</p>
+          <h1>System Overview</h1>
+          <p class="dashboard-lead">Welcome back, <strong>${escapeHtml(principal.subjectId)}</strong>. You are working in the <strong>${escapeHtml(tenantDisplayName)}</strong> workspace.</p>
+          <div class="dashboard-stat-list">
+            <div class="dashboard-stat">
+              <span class="dashboard-stat__label">Visible Versions</span>
+              <strong class="dashboard-stat__value">${escapeHtml(versions.length)}</strong>
+            </div>
+            <div class="dashboard-stat">
+              <span class="dashboard-stat__label">${isTenantAdmin(principal) ? "Active Agents" : "Signed-In Role"}</span>
+              <strong class="dashboard-stat__value">${escapeHtml(isTenantAdmin(principal) ? activeAgents.length : roleSummary)}</strong>
+            </div>
+          </div>
+        </section>
+        <section class="dashboard-panel dashboard-panel--context">
+          <p class="console-kicker">Identity</p>
+          <h2>Tenant Context</h2>
+          <dl class="dashboard-context-list">
+            <div>
+              <dt>Tenant</dt>
+              <dd>${escapeHtml(tenantDisplayName)} (${escapeHtml(principal.tenantId)})</dd>
+            </div>
+            <div>
+              <dt>Signed-In Subject</dt>
+              <dd>${escapeHtml(principal.subjectId)}</dd>
+            </div>
+            <div>
+              <dt>Roles</dt>
+              <dd>${escapeHtml(roleSummary)}</dd>
+            </div>
+          </dl>
+        </section>
+        <section class="dashboard-panel dashboard-panel--primary">
+          <p class="console-kicker">Publishing Access</p>
+          <h2>New Draft Registration</h2>
+          <p class="dashboard-muted">Register a new draft with the current multipart contract and publication flow.</p>
+          ${primaryActionPanel}
+        </section>
         ${
           isTenantAdmin(principal)
-            ? `<a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/environments">Environment Management</a>
-               <a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/review">Review Queue</a>`
+            ? `<a class="dashboard-panel dashboard-panel--navigation" href="/tenants/${encodedTenantId}/environments">
+                 <p class="console-kicker">Tenant Administration</p>
+                 <h2>Environment Management</h2>
+                 <p class="dashboard-muted">Manage configured environments and add tenant targets without leaving the console shell.</p>
+               </a>
+               <a class="dashboard-panel dashboard-panel--navigation" href="/tenants/${encodedTenantId}/review">
+                 <p class="console-kicker">Decision Queue</p>
+                 <h2>Review Queue</h2>
+                 <p class="dashboard-muted">${escapeHtml(pendingReviewCount)} pending version${pendingReviewCount === 1 ? "" : "s"} currently require a review decision.</p>
+               </a>`
             : ""
         }
-      </div>
-    </section>
-    <section class="split">
-      <div class="card stack">
-        <h2>Visible Versions</h2>
-        <div class="link-list">
-          ${
-            versions.length === 0
-              ? "<p>No versions are visible for this identity.</p>"
-              : versions
-                  .map(
-                    (version) =>
-                      `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(version.agentId)}/versions/${encodeURIComponent(version.versionId)}">${escapeHtml(version.displayName)} v${version.versionSequence} (${escapeHtml(version.approvalState)})</a>`,
-                  )
-                  .join("")
-          }
-        </div>
-      </div>
-      ${
-        isTenantAdmin(principal)
-          ? `<div class="card stack">
-               <h2>Active Agents</h2>
-               <div class="link-list">
-                 ${
-                   activeAgents.length === 0
-                     ? "<p>No active approved agents yet.</p>"
-                     : activeAgents
-                         .map(
-                           (agent) =>
-                             `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(agent.agentId)}">${escapeHtml(agent.displayName)}</a>`,
-                         )
-                         .join("")
-                }
-               </div>
-             </div>`
-          : ""
-      }
-    </section>`,
+        <section class="${versionsPanelClass}">
+          <div class="dashboard-panel__header">
+            <div>
+              <p class="console-kicker">Current Inventory</p>
+              <h2>Visible Versions</h2>
+            </div>
+            <p class="dashboard-muted">${escapeHtml(versions.length)} version${versions.length === 1 ? "" : "s"} visible to this identity.</p>
+          </div>
+          <div class="dashboard-resource-list">
+            ${renderDashboardVersions(principal.tenantId, versions)}
+          </div>
+        </section>
+        ${
+          isTenantAdmin(principal)
+            ? `<section class="dashboard-panel dashboard-panel--agents">
+                 <div class="dashboard-panel__header">
+                   <div>
+                     <p class="console-kicker">Published Fleet</p>
+                     <h2>Active Agents</h2>
+                   </div>
+                   <p class="dashboard-muted">${escapeHtml(activeAgents.length)} active agent${activeAgents.length === 1 ? "" : "s"} currently have approved publications.</p>
+                 </div>
+                 <div class="dashboard-resource-list">
+                   ${renderDashboardActiveAgents(principal.tenantId, activeAgents)}
+                 </div>
+               </section>`
+            : ""
+        }
+      </section>`,
       currentNavigationKey: "dashboard",
       pageId: "dashboard",
       principal,
