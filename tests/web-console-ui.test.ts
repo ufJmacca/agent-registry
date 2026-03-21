@@ -1230,9 +1230,9 @@ test("admin console manages environments, reviews pending versions, edits overla
       page: "agent-detail",
       shell: "authenticated",
     });
-    assert.match(agentDetailHtml, /Overlay State/);
+    assert.match(agentDetailHtml, /Overlay Control Center/);
     assert.match(agentDetailHtml, /Environment overlay for prod/);
-    assert.match(agentDetailHtml, /Deprecated: yes/);
+    assert.match(agentDetailHtml, /Active Publication Surfaces/);
     assert.deepEqual(
       overlayRows.overlay.environments.find((overlay) => overlay.environmentKey === "prod"),
       {
@@ -1255,6 +1255,149 @@ test("admin console manages environments, reviews pending versions, edits overla
     });
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin active agent detail keeps overlay actions and version history in the curated layout", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const fixture = await createPendingVersion(context, {
+      displayName: "Resolution Fabric",
+      environments: ["dev", "prod"],
+      publisherId: "publisher-alpha",
+      summary: "Coordinates multi-stage resolution workflows.",
+      versionLabel: "v7",
+    });
+    const agentDetailPath = `/tenants/tenant-alpha/agents/${fixture.agentId}`;
+    const activeVersionPath = `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}`;
+    const deprecateAgentPath = `/tenants/tenant-alpha/agents/${fixture.agentId}/overlay/deprecate`;
+    const disableAgentPath = `/tenants/tenant-alpha/agents/${fixture.agentId}/overlay/disable`;
+    const deprecateEnvironmentPath =
+      `/tenants/tenant-alpha/agents/${fixture.agentId}/environments/prod/overlay/deprecate`;
+    const disableEnvironmentPath =
+      `/tenants/tenant-alpha/agents/${fixture.agentId}/environments/prod/overlay/disable`;
+
+    await approvePendingVersion(context, fixture);
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const initialAgentDetailPage = await browser.get(agentDetailPath);
+    const initialAgentDetailHtml = await initialAgentDetailPage.text();
+    const versionHistorySectionMatch = initialAgentDetailHtml.match(
+      /<aside class="card stack agent-detail-section">[\s\S]*?<h2>Version History<\/h2>[\s\S]*?<div class="agent-detail-history">([\s\S]*?)<\/div>\s*<\/aside>/,
+    );
+
+    if (versionHistorySectionMatch === null) {
+      throw new Error("Expected the Version History section to render on the active agent detail page.");
+    }
+
+    const versionHistoryLinkMatch = versionHistorySectionMatch[1].match(
+      new RegExp(`href="(${escapeRegExp(activeVersionPath)})"`),
+    );
+
+    if (versionHistoryLinkMatch === null) {
+      throw new Error("Expected Version History to link to the active version detail route.");
+    }
+
+    const versionHistoryPage = await browser.get(versionHistoryLinkMatch[1]);
+    const versionHistoryHtml = await versionHistoryPage.text();
+    const deprecateAgentResponse = await browser.postUrlEncoded(deprecateAgentPath, {});
+    const disableAgentResponse = await browser.postUrlEncoded(
+      disableAgentPath,
+      {},
+    );
+    const disableEnvironmentResponse = await browser.postUrlEncoded(disableEnvironmentPath, {});
+    const deprecateEnvironmentResponse = await browser.postUrlEncoded(
+      deprecateEnvironmentPath,
+      {},
+    );
+    const agentDetailPage = await browser.get(agentDetailPath);
+    const agentDetailHtml = await agentDetailPage.text();
+    const detail = await new KyselyAgentAdminDetailRepository(context.db).getAgentDetail(
+      "tenant-alpha",
+      fixture.agentId,
+    );
+
+    // Assert
+    assert.equal(initialAgentDetailPage.status, 200);
+    assertShell(initialAgentDetailHtml, {
+      currentNavHref: agentDetailPath,
+      page: "agent-detail",
+      shell: "authenticated",
+    });
+    assert.match(initialAgentDetailHtml, /Overlay Control Center/);
+    assert.match(initialAgentDetailHtml, /Active Publication Surfaces/);
+    assert.match(initialAgentDetailHtml, /Version History/);
+    assert.match(
+      initialAgentDetailHtml,
+      new RegExp(
+        `<form action="${escapeRegExp(deprecateAgentPath)}" method="post">[\\s\\S]*?<button[^>]*>Deprecate Agent</button>`,
+      ),
+    );
+    assert.match(
+      initialAgentDetailHtml,
+      new RegExp(
+        `<form action="${escapeRegExp(disableAgentPath)}" method="post">[\\s\\S]*?<button[^>]*>Disable Agent</button>`,
+      ),
+    );
+    assert.match(
+      initialAgentDetailHtml,
+      new RegExp(
+        `<form action="${escapeRegExp(deprecateEnvironmentPath)}" method="post">[\\s\\S]*?<button[^>]*>Deprecate Environment</button>`,
+      ),
+    );
+    assert.match(
+      initialAgentDetailHtml,
+      new RegExp(
+        `<form action="${escapeRegExp(disableEnvironmentPath)}" method="post">[\\s\\S]*?<button[^>]*>Disable Environment</button>`,
+      ),
+    );
+    assert.equal(versionHistoryPage.status, 200);
+    assertShell(versionHistoryHtml, {
+      currentNavHref: activeVersionPath,
+      page: "version-detail",
+      shell: "authenticated",
+    });
+    assert.match(versionHistoryHtml, /Approval state: approved/);
+    assert.equal(deprecateAgentResponse.status, 303);
+    assert.equal(getRedirectLocation(deprecateAgentResponse), agentDetailPath);
+    assert.equal(disableAgentResponse.status, 303);
+    assert.equal(getRedirectLocation(disableAgentResponse), agentDetailPath);
+    assert.equal(disableEnvironmentResponse.status, 303);
+    assert.equal(getRedirectLocation(disableEnvironmentResponse), agentDetailPath);
+    assert.equal(deprecateEnvironmentResponse.status, 303);
+    assert.equal(getRedirectLocation(deprecateEnvironmentResponse), agentDetailPath);
+    assert.equal(agentDetailPage.status, 200);
+    assertShell(agentDetailHtml, {
+      currentNavHref: agentDetailPath,
+      page: "agent-detail",
+      shell: "authenticated",
+    });
+    assert.doesNotMatch(agentDetailHtml, /Average Uptime/);
+    assert.doesNotMatch(agentDetailHtml, /Total Tokens/);
+    assert.deepEqual(detail.overlay.agent, {
+      deprecated: true,
+      disabled: true,
+      requiredRoles: [],
+      requiredScopes: [],
+    });
+    assert.deepEqual(
+      detail.overlay.environments.find((overlay) => overlay.environmentKey === "prod"),
+      {
+        deprecated: true,
+        disabled: true,
+        environmentKey: "prod",
+        requiredRoles: [],
+        requiredScopes: [],
+      },
+    );
   } finally {
     await context.close();
   }

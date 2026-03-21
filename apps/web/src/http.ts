@@ -1262,6 +1262,30 @@ async function renderVersionDetailPage(
   );
 }
 
+function renderAgentDetailPill(
+  label: string,
+  tone: "accent" | "alert" | "muted" | "neutral" = "neutral",
+): string {
+  return `<span class="pill agent-detail-pill agent-detail-pill--${tone}">${escapeHtml(label)}</span>`;
+}
+
+function renderAgentDetailDefinitionList(items: Array<{ label: string; value: string }>): string {
+  return `<dl class="agent-detail-definition-list">
+    ${items
+      .map(
+        (item) => `<div>
+          <dt>${escapeHtml(item.label)}</dt>
+          <dd>${escapeHtml(item.value)}</dd>
+        </div>`,
+      )
+      .join("")}
+  </dl>`;
+}
+
+function formatStatusLabel(value: string): string {
+  return value.replaceAll("_", " ");
+}
+
 function renderOverlaySummary(
   label: string,
   overlay: {
@@ -1270,14 +1294,52 @@ function renderOverlaySummary(
     requiredRoles: string[];
     requiredScopes: string[];
   },
+  options: {
+    actions?: string[];
+    description?: string;
+    eyebrow?: string;
+  } = {},
 ): string {
-  return `<section class="card stack">
-    <h3>${escapeHtml(label)}</h3>
-    <p>Deprecated: ${overlay.deprecated ? "yes" : "no"}</p>
-    <p>Disabled: ${overlay.disabled ? "yes" : "no"}</p>
-    <p>Required roles: ${escapeHtml(overlay.requiredRoles.join(", ") || "none")}</p>
-    <p>Required scopes: ${escapeHtml(overlay.requiredScopes.join(", ") || "none")}</p>
-  </section>`;
+  const stateChips = [
+    renderAgentDetailPill(
+      overlay.deprecated ? "Deprecated" : "Not deprecated",
+      overlay.deprecated ? "alert" : "muted",
+    ),
+    renderAgentDetailPill(
+      overlay.disabled ? "Disabled" : "Enabled",
+      overlay.disabled ? "alert" : "accent",
+    ),
+  ];
+
+  return `<article class="agent-detail-overlay-card stack">
+    <div class="stack">
+      <p class="console-kicker">${escapeHtml(options.eyebrow ?? "Overlay Summary")}</p>
+      <h3>${escapeHtml(label)}</h3>
+      ${
+        options.description === undefined
+          ? ""
+          : `<p>${escapeHtml(options.description)}</p>`
+      }
+      <div class="agent-detail-chip-row">
+        ${stateChips.join("")}
+      </div>
+      ${renderAgentDetailDefinitionList([
+        {
+          label: "Required roles",
+          value: overlay.requiredRoles.join(", ") || "none",
+        },
+        {
+          label: "Required scopes",
+          value: overlay.requiredScopes.join(", ") || "none",
+        },
+      ])}
+    </div>
+    ${
+      options.actions === undefined || options.actions.length === 0
+        ? ""
+        : `<div class="inline-actions agent-detail-actions">${options.actions.join("")}</div>`
+    }
+  </article>`;
 }
 
 async function renderAgentDetailPage(
@@ -1291,69 +1353,230 @@ async function renderAgentDetailPage(
   assertTenantAdminAccess(principal);
 
   const detail = await adminRepository.getAgentDetail(tenantId, agentId);
+  const environmentOverlaysByKey = new Map(
+    detail.overlay.environments.map((overlay) => [overlay.environmentKey, overlay]),
+  );
   const activePublicationMarkup =
     detail.activeVersion === null
-      ? "<p>No active approved version yet.</p>"
+      ? `<article class="agent-detail-publication-card stack">
+          <p class="console-kicker">Active Publication Surfaces</p>
+          <h3>No active approved version yet</h3>
+          <p>Approve a submitted version to populate live publication surfaces and environment actions.</p>
+        </article>`
       : detail.activeVersion.publications
-          .map(
-            (publication) =>
-              `<section class="card stack">
-                <h3>${escapeHtml(publication.environmentKey)}</h3>
-                <p>Health status: ${escapeHtml(publication.healthStatus ?? "unknown")}</p>
-                <p>Health endpoint: <code>${escapeHtml(publication.healthEndpointUrl)}</code></p>
-                <div class="inline-actions">
-                  <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/environments/${encodeURIComponent(publication.environmentKey)}/overlay/deprecate" method="post">
-                    <button type="submit">Deprecate Environment</button>
-                  </form>
-                  <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/environments/${encodeURIComponent(publication.environmentKey)}/overlay/disable" method="post">
-                    <button class="button-secondary" type="submit">Disable Environment</button>
-                  </form>
+          .map((publication) => {
+            const latestTelemetry = publication.telemetry[0];
+            const environmentOverlay = environmentOverlaysByKey.get(publication.environmentKey);
+            const overlayChips =
+              environmentOverlay === undefined
+                ? `<div class="agent-detail-chip-row">
+                     ${renderAgentDetailPill("No environment overlay", "muted")}
+                   </div>`
+                : `<div class="agent-detail-chip-row">
+                     ${renderAgentDetailPill(
+                       environmentOverlay.deprecated ? "Deprecated" : "Not deprecated",
+                       environmentOverlay.deprecated ? "alert" : "muted",
+                     )}
+                     ${renderAgentDetailPill(
+                       environmentOverlay.disabled ? "Disabled" : "Enabled",
+                       environmentOverlay.disabled ? "alert" : "accent",
+                     )}
+                   </div>`;
+
+            return `<article class="agent-detail-publication-card stack">
+              <div class="agent-detail-publication-card__header">
+                <div class="stack">
+                  <p class="console-kicker">Environment Surface</p>
+                  <h3>${escapeHtml(publication.environmentKey)}</h3>
                 </div>
-              </section>`,
+                ${renderAgentDetailPill(
+                  `Health ${publication.healthStatus ?? "unknown"}`,
+                  publication.healthStatus === "healthy" ? "accent" : "neutral",
+                )}
+              </div>
+              <p class="agent-detail-note">
+                Health endpoint: <code>${escapeHtml(publication.healthEndpointUrl)}</code>
+              </p>
+              ${overlayChips}
+              ${
+                latestTelemetry === undefined
+                  ? `<p class="agent-detail-note">No advisory telemetry has been recorded for this publication yet.</p>`
+                  : renderAgentDetailDefinitionList([
+                      {
+                        label: "Invocation count",
+                        value: String(latestTelemetry.invocationCount),
+                      },
+                      {
+                        label: "Error count",
+                        value: String(latestTelemetry.errorCount),
+                      },
+                      {
+                        label: "p95 latency",
+                        value:
+                          latestTelemetry.p95LatencyMs === null
+                            ? "n/a"
+                            : `${latestTelemetry.p95LatencyMs} ms`,
+                      },
+                    ])
+              }
+              <div class="inline-actions agent-detail-actions">
+                <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/environments/${encodeURIComponent(publication.environmentKey)}/overlay/deprecate" method="post">
+                  <button type="submit">Deprecate Environment</button>
+                </form>
+                <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/environments/${encodeURIComponent(publication.environmentKey)}/overlay/disable" method="post">
+                  <button class="button-secondary" type="submit">Disable Environment</button>
+                </form>
+              </div>
+            </article>`;
+          })
+          .join("");
+  const environmentOverlayMarkup =
+    detail.overlay.environments.length === 0
+      ? `<article class="agent-detail-overlay-card stack">
+          <div class="stack">
+            <p class="console-kicker">Environment Overlay Summary</p>
+            <h3>No environment overrides applied</h3>
+            <p>Per-environment overlay state will appear here as policy overrides are stored.</p>
+          </div>
+        </article>`
+      : detail.overlay.environments
+          .map((overlay) =>
+            renderOverlaySummary(`Environment overlay for ${overlay.environmentKey}`, overlay, {
+              description: "Current stored policy override for this publication surface.",
+              eyebrow: "Environment Overlay Summary",
+            }),
           )
           .join("");
+  const activeVersionSummary = detail.activeVersion;
+  const versionHistoryMarkup =
+    detail.versions.length === 0
+      ? `<p>No version history is available for this agent yet.</p>`
+      : detail.versions
+          .map(
+            (version) => `<a class="agent-detail-history__item" href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(version.versionId)}">
+              <div class="stack">
+                <p class="console-kicker">Version ${version.versionSequence}</p>
+                <h3>${detail.activeVersionId === version.versionId ? "Current release" : "Historical record"}</h3>
+                <p class="agent-detail-note"><code>${escapeHtml(version.versionId)}</code></p>
+              </div>
+              <div class="agent-detail-chip-row">
+                ${renderAgentDetailPill(formatStatusLabel(version.approvalState), "neutral")}
+                ${
+                  detail.activeVersionId === version.versionId
+                    ? renderAgentDetailPill("Active", "accent")
+                    : ""
+                }
+              </div>
+            </a>`,
+          )
+          .join("");
+  const heroLinks = [
+    `<a class="pill agent-detail-pill agent-detail-pill--muted" href="/console">Back to dashboard</a>`,
+  ];
+
+  if (activeVersionSummary !== null) {
+    heroLinks.push(
+      `<a class="pill agent-detail-pill agent-detail-pill--accent" href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(activeVersionSummary.versionId)}">Open active version detail</a>`,
+    );
+  }
 
   writeHtml(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-      <h1>Active Agent Detail</h1>
-      <p>Agent ID: <code>${escapeHtml(detail.agentId)}</code></p>
-      <p>Active version: ${escapeHtml(detail.activeVersionId ?? "none")}</p>
-      <p><a href="/console">Back to dashboard</a></p>
-    </section>
-    <section class="card stack">
-      <h2>Overlay State</h2>
-      ${renderOverlaySummary("Agent overlay", detail.overlay.agent)}
-      ${
-        detail.overlay.environments.length === 0
-          ? "<p>No environment overlays have been applied.</p>"
-          : detail.overlay.environments
-              .map((overlay) =>
-                renderOverlaySummary(`Environment overlay for ${overlay.environmentKey}`, overlay),
-              )
-              .join("")
-      }
-      <div class="inline-actions">
-        <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/overlay/deprecate" method="post">
-          <button type="submit">Deprecate Agent</button>
-        </form>
-        <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/overlay/disable" method="post">
-          <button class="button-secondary" type="submit">Disable Agent</button>
-        </form>
-      </div>
-    </section>
-    <section class="card stack">
-      <h2>Active Publications</h2>
-      ${activePublicationMarkup}
-    </section>
-    <section class="card stack">
-      <h2>Version History</h2>
-      <div class="link-list">
-        ${detail.versions.map((version) => `<a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(version.versionId)}">Version ${version.versionSequence} (${escapeHtml(version.approvalState)})</a>`).join("")}
-      </div>
-    </section>`,
+      body: `<section class="agent-detail-page stack">
+        <section class="agent-detail-hero card">
+          <div class="agent-detail-hero__copy stack">
+            <div class="stack">
+              <p class="console-kicker">Active Agent Detail</p>
+              <div class="agent-detail-chip-row">
+                <span class="agent-detail-pulse" aria-hidden="true"></span>
+                ${
+                  activeVersionSummary === null
+                    ? renderAgentDetailPill("Awaiting approved release", "muted")
+                    : renderAgentDetailPill("Active approved release", "accent")
+                }
+                ${
+                  activeVersionSummary === null
+                    ? ""
+                    : renderAgentDetailPill(`Version ${activeVersionSummary.versionSequence}`, "neutral")
+                }
+              </div>
+            </div>
+            <h1>${escapeHtml(detail.agentId)}</h1>
+            <p class="agent-detail-hero__lede">
+              Tenant-admin control surface for live publications, stored overlays, and version navigation.
+            </p>
+          </div>
+          <div class="agent-detail-hero__aside stack">
+            <div class="agent-detail-summary-grid">
+              <article class="agent-detail-summary-card">
+                <p class="console-kicker">Active Version</p>
+                <h2>${escapeHtml(detail.activeVersionId ?? "none")}</h2>
+              </article>
+              <article class="agent-detail-summary-card">
+                <p class="console-kicker">Approval State</p>
+                <h2>${escapeHtml(activeVersionSummary?.approvalState ?? "inactive")}</h2>
+              </article>
+              <article class="agent-detail-summary-card">
+                <p class="console-kicker">Published Environments</p>
+                <h2>${String(activeVersionSummary?.publications.length ?? 0)}</h2>
+              </article>
+              <article class="agent-detail-summary-card">
+                <p class="console-kicker">Approved By</p>
+                <h2>${escapeHtml(activeVersionSummary?.review.approvedBy ?? "not recorded")}</h2>
+              </article>
+            </div>
+            <div class="agent-detail-link-row">
+              ${heroLinks.join("")}
+            </div>
+          </div>
+        </section>
+        <section class="agent-detail-layout">
+          <section class="card stack agent-detail-section">
+            <div class="agent-detail-section__header stack">
+              <p class="console-kicker">Overlay Summary</p>
+              <h2>Overlay Control Center</h2>
+              <p>Apply stored agent-level controls here, then review each environment surface for publication-specific overrides.</p>
+            </div>
+            <div class="agent-detail-overlay-grid">
+              ${renderOverlaySummary("Agent overlay", detail.overlay.agent, {
+                actions: [
+                  `<form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/overlay/deprecate" method="post">
+                     <button type="submit">Deprecate Agent</button>
+                   </form>`,
+                  `<form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/overlay/disable" method="post">
+                     <button class="button-secondary" type="submit">Disable Agent</button>
+                   </form>`,
+                ],
+                description: "Current stored policy override for the active agent.",
+                eyebrow: "Agent Overlay Summary",
+              })}
+              ${environmentOverlayMarkup}
+            </div>
+          </section>
+          <aside class="card stack agent-detail-section">
+            <div class="agent-detail-section__header stack">
+              <p class="console-kicker">Audit Trail</p>
+              <h2>Version History</h2>
+              <p>Every saved version remains one click away from the current detail route.</p>
+            </div>
+            <div class="agent-detail-history">
+              ${versionHistoryMarkup}
+            </div>
+          </aside>
+        </section>
+        <section class="stack agent-detail-section">
+          <div class="agent-detail-section__header stack">
+            <p class="console-kicker">Publication Surface</p>
+            <h2>Active Publication Surfaces</h2>
+            <p>Truthful environment state only: health endpoint, latest advisory telemetry, and environment overlay actions.</p>
+          </div>
+          <div class="agent-detail-publication-grid">
+            ${activePublicationMarkup}
+          </div>
+        </section>
+      </section>`,
       contextualNavigationItem: {
         href: `/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}`,
         label: "Agent Detail",
