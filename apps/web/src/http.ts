@@ -1132,19 +1132,102 @@ async function renderVersionDetailPage(
   const healthByEnvironment = new Map(
     healthDetails.map((entry) => [entry.environmentKey, entry.detail]),
   );
+  const stateDescriptions = {
+    approved:
+      "Approved versions preserve the full dossier, including admin-only telemetry and recorded health history.",
+    draft:
+      "Draft versions stay editable through the existing submission flow while surfacing the current technical contract.",
+    pending_review:
+      "Pending versions are ready for tenant-admin review without introducing unsupported controls or proxy workflow steps.",
+    rejected:
+      "Rejected versions keep the stored rejection reason and historical review data without reopening unsupported actions.",
+  } satisfies Record<"approved" | "draft" | "pending_review" | "rejected", string>;
+  const approvalTone =
+    detail.approvalState === "approved"
+      ? "accent"
+      : detail.approvalState === "rejected"
+        ? "alert"
+        : detail.approvalState === "pending_review"
+          ? "neutral"
+          : "muted";
+  const contractSummaryMarkup = [
+    {
+      label: "Header Fields",
+      meta: "request boundary",
+      value: String(detail.headerContract.length),
+    },
+    {
+      label: "Context Keys",
+      meta: "execution context",
+      value: String(detail.contextContract.length),
+    },
+    {
+      label: "Publication Targets",
+      meta: "environment routes",
+      value: String(detail.publications.length),
+    },
+  ]
+    .map(
+      (item) => `<article class="version-detail-contract-card">
+        <p class="console-kicker">${escapeHtml(item.label)}</p>
+        <strong>${escapeHtml(item.value)}</strong>
+        <p class="version-detail-note">${escapeHtml(item.meta)}</p>
+      </article>`,
+    )
+    .join("");
+  const versionManifest = {
+    agentId: detail.agentId,
+    approvalState: detail.approvalState,
+    cardProfileId: detail.cardProfileId,
+    capabilities: detail.capabilities,
+    contextContract: detail.contextContract,
+    displayName: detail.displayName,
+    headerContract: detail.headerContract,
+    publications: detail.publications.map((publication) => ({
+      environmentKey: publication.environmentKey,
+      healthEndpointUrl: publication.healthEndpointUrl,
+      healthStatus: publication.healthStatus,
+      invocationEndpoint: publication.invocationEndpoint,
+    })),
+    publisherId: detail.publisherId,
+    requiredRoles: detail.requiredRoles,
+    requiredScopes: detail.requiredScopes,
+    tags: detail.tags,
+    versionId: detail.versionId,
+    versionLabel: detail.versionLabel,
+    versionSequence: detail.versionSequence,
+  };
   const publicationMarkup = detail.publications
     .map((publication) => {
       const health = healthByEnvironment.get(publication.environmentKey);
 
-      return `<section class="card stack">
-        <h2>Environment: ${escapeHtml(publication.environmentKey)}</h2>
-        <p>Health status: ${escapeHtml(publication.healthStatus ?? "unknown")}</p>
-        <p>Health endpoint: <code>${escapeHtml(publication.healthEndpointUrl)}</code></p>
-        <p>Invocation endpoint: <code>${escapeHtml(publication.invocationEndpoint ?? "none")}</code></p>
-        <h3>Normalized Metadata</h3>
-        ${renderPreformattedJson(publication.normalizedMetadata)}
-        <h3>Raw Card</h3>
-        <pre>${escapeHtml(publication.rawCard)}</pre>
+      return `<article class="card stack version-detail-publication-card">
+        <div class="version-detail-publication-card__header">
+          <div class="stack">
+            <p class="console-kicker">Environment Publication</p>
+            <h3>Environment: ${escapeHtml(publication.environmentKey)}</h3>
+          </div>
+          ${renderVersionDetailPill(
+            `Health ${publication.healthStatus ?? "unknown"}`,
+            publication.healthStatus === "healthy" ? "accent" : "neutral",
+          )}
+        </div>
+        <p class="version-detail-note">
+          Health endpoint: <code>${escapeHtml(publication.healthEndpointUrl)}</code>
+        </p>
+        <p class="version-detail-note">
+          Invocation endpoint: <code>${escapeHtml(publication.invocationEndpoint ?? "none")}</code>
+        </p>
+        <div class="version-detail-code-grid">
+          <article class="version-detail-code-panel stack">
+            <h3>Normalized Metadata</h3>
+            ${renderPreformattedJson(publication.normalizedMetadata)}
+          </article>
+          <article class="version-detail-code-panel stack">
+            <h3>Raw Card</h3>
+            <pre>${escapeHtml(publication.rawCard)}</pre>
+          </article>
+        </div>
         ${
           isTenantAdmin(principal)
             ? `<h3>Advisory Telemetry</h3>
@@ -1153,14 +1236,15 @@ async function renderVersionDetailPage(
                    ? "<p>No advisory telemetry submitted.</p>"
                    : publication.telemetry
                        .map(
-                         (telemetry) =>
-                           `<div class="stack">
+                          (telemetry) =>
+                            `<article class="version-detail-timeline__item stack">
+                             <p class="console-kicker">${escapeHtml(telemetry.windowStartedAt)} to ${escapeHtml(telemetry.windowEndedAt)}</p>
                              <p>Invocation count: ${telemetry.invocationCount}</p>
                              <p>Success count: ${telemetry.successCount}</p>
                              <p>Error count: ${telemetry.errorCount}</p>
                              <p>p95 latency: ${telemetry.p95LatencyMs ?? "n/a"}</p>
-                           </div>`,
-                       )
+                           </article>`,
+                        )
                        .join("")
                }`
             : ""
@@ -1174,20 +1258,31 @@ async function renderVersionDetailPage(
                    ? "<p>No probes recorded yet.</p>"
                    : health.history
                        .map(
-                         (entry) =>
-                           `<p>${escapeHtml(entry.checkedAt)} status ${entry.statusCode === null ? "n/a" : String(entry.statusCode)}${entry.error === null ? "" : ` error ${escapeHtml(entry.error)}`}</p>`,
-                       )
+                          (entry) =>
+                            `<article class="version-detail-timeline__item stack">
+                              <p class="console-kicker">${escapeHtml(entry.checkedAt)}</p>
+                              <p>Status ${entry.statusCode === null ? "n/a" : String(entry.statusCode)}</p>
+                              ${
+                                entry.error === null
+                                  ? ""
+                                  : `<p class="version-detail-note">Error ${escapeHtml(entry.error)}</p>`
+                              }
+                            </article>`,
+                        )
                        .join("")
                }`
         }
-      </section>`;
+      </article>`;
     })
     .join("");
   const actions = [];
+  const encodedTenantId = encodeURIComponent(tenantId);
+  const encodedAgentId = encodeURIComponent(agentId);
+  const encodedVersionId = encodeURIComponent(versionId);
 
   if (detail.approvalState === "draft" && canPublish(principal)) {
     actions.push(
-      `<form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/submit" method="post">
+      `<form action="/tenants/${encodedTenantId}/agents/${encodedAgentId}/versions/${encodedVersionId}/submit" method="post">
          <button type="submit">Submit for Review</button>
        </form>`,
     );
@@ -1195,12 +1290,12 @@ async function renderVersionDetailPage(
 
   if (detail.approvalState === "pending_review" && isTenantAdmin(principal)) {
     actions.push(
-      `<form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/approve" method="post">
+      `<form action="/tenants/${encodedTenantId}/agents/${encodedAgentId}/versions/${encodedVersionId}/approve" method="post">
          <button type="submit">Approve</button>
        </form>`,
     );
     actions.push(
-      `<form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}/reject" method="post">
+      `<form class="stack" action="/tenants/${encodedTenantId}/agents/${encodedAgentId}/versions/${encodedVersionId}/reject" method="post">
          <label>Reject reason
            <input name="reason" placeholder="Needs clearer scopes." />
          </label>
@@ -1208,50 +1303,174 @@ async function renderVersionDetailPage(
        </form>`,
     );
   }
+  const heroLinks = [
+    `<a class="pill version-detail-pill version-detail-pill--muted" href="/console">Back to dashboard</a>`,
+  ];
+
+  if (detail.active) {
+    heroLinks.push(
+      `<a class="pill version-detail-pill version-detail-pill--accent" href="/tenants/${encodedTenantId}/agents/${encodedAgentId}">Open active agent detail</a>`,
+    );
+  }
 
   writeHtml(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-      <h1>${escapeHtml(detail.displayName)}</h1>
-      <p>Approval state: ${escapeHtml(detail.approvalState)}</p>
-      <p>Version label: ${escapeHtml(detail.versionLabel)} | Version sequence: ${detail.versionSequence}</p>
-      <p><a href="/console">Back to dashboard</a></p>
-      ${
-        detail.active
-          ? `<p><a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}">Open active agent detail</a></p>`
-          : ""
-      }
-      ${
-        detail.review.rejectedReason === null
-          ? ""
-          : `<p>Rejected reason: ${escapeHtml(detail.review.rejectedReason)}</p>`
-      }
-    </section>
-    <section class="split">
-      <div class="card stack">
-        <h2>Header Contract</h2>
-        ${renderPreformattedJson(detail.headerContract)}
-      </div>
-      <div class="card stack">
-        <h2>Context Contract</h2>
-        ${renderPreformattedJson(detail.contextContract)}
-      </div>
-    </section>
-    ${
-      actions.length === 0
-        ? ""
-        : `<section class="card stack">
-             <h2>Version Actions</h2>
-             <div class="inline-actions">${actions.join("")}</div>
-           </section>`
-    }
-    <section class="stack">
-      ${publicationMarkup}
-    </section>`,
+      body: `<section class="version-detail-page stack" data-version-detail-view="dossier">
+        <section class="card version-detail-hero" data-version-detail-section="hero">
+          <div class="version-detail-hero__copy stack">
+            <div class="stack">
+              <p class="console-kicker">Current Publication Status</p>
+              <div class="version-detail-chip-row">
+                <span class="version-detail-pulse" aria-hidden="true"></span>
+                ${renderVersionDetailPill(formatStatusLabel(detail.approvalState), approvalTone)}
+                ${renderVersionDetailPill(`Version ${detail.versionSequence}`, "neutral")}
+                ${
+                  detail.active
+                    ? renderVersionDetailPill("Active release", "accent")
+                    : renderVersionDetailPill("Historical record", "muted")
+                }
+              </div>
+            </div>
+            <h1>${escapeHtml(detail.displayName)}</h1>
+            <p class="version-detail-hero__lede">${escapeHtml(detail.summary)}</p>
+            <p>Approval state: ${escapeHtml(detail.approvalState)}</p>
+          </div>
+          <div class="version-detail-hero__aside stack">
+            <div class="version-detail-summary-grid">
+              <article class="version-detail-summary-card">
+                <p class="console-kicker">Version Label</p>
+                <h2>${escapeHtml(detail.versionLabel)}</h2>
+              </article>
+              <article class="version-detail-summary-card">
+                <p class="console-kicker">Sequence</p>
+                <h2>${String(detail.versionSequence)}</h2>
+              </article>
+              <article class="version-detail-summary-card">
+                <p class="console-kicker">Environment Count</p>
+                <h2>${String(detail.publications.length)}</h2>
+              </article>
+              <article class="version-detail-summary-card">
+                <p class="console-kicker">Card Profile</p>
+                <h2>${escapeHtml(detail.cardProfileId)}</h2>
+              </article>
+            </div>
+            <div class="version-detail-link-row">
+              ${heroLinks.join("")}
+            </div>
+          </div>
+        </section>
+        <section class="version-detail-layout">
+          <div class="version-detail-main">
+            <section class="card stack version-detail-section" data-version-detail-section="contracts">
+              <div class="version-detail-section__header stack">
+                <p class="console-kicker">Publication Contracts</p>
+                <h2>Publication Contracts</h2>
+                <p>Truthful contract counts and the stored header and context requirements for this version.</p>
+              </div>
+              <div class="version-detail-contract-grid">
+                ${contractSummaryMarkup}
+              </div>
+              <div class="version-detail-code-grid">
+                <article class="version-detail-code-panel stack">
+                  <h3>Header Contract</h3>
+                  ${renderPreformattedJson(detail.headerContract)}
+                </article>
+                <article class="version-detail-code-panel stack">
+                  <h3>Context Contract</h3>
+                  ${renderPreformattedJson(detail.contextContract)}
+                </article>
+              </div>
+            </section>
+            <section class="card stack version-detail-section version-detail-manifest-section" data-version-detail-section="manifest">
+              <div class="version-detail-section__header stack">
+                <p class="console-kicker">Technical Manifest</p>
+                <h2>Technical Manifest</h2>
+                <p>The technical dossier records only the version metadata, scope, and publication routes the registry actually stores.</p>
+              </div>
+              <article class="version-detail-manifest-panel stack">
+                ${renderPreformattedJson(versionManifest)}
+              </article>
+            </section>
+            <section class="stack version-detail-section" data-version-detail-section="publications">
+              <div class="version-detail-section__header stack">
+                <p class="console-kicker">Environment Publications</p>
+                <h2>Environment Publications</h2>
+                <p>Each environment panel keeps the raw card, normalized metadata, health surface, and admin-only diagnostics attached to the current route.</p>
+              </div>
+              <div class="version-detail-publication-grid">
+                ${publicationMarkup}
+              </div>
+            </section>
+          </div>
+          <aside class="version-detail-rail">
+            <section class="card stack version-detail-section version-detail-review-card" data-version-detail-section="review">
+              <div class="version-detail-section__header stack">
+                <div class="version-detail-chip-row">
+                  <p class="console-kicker">Review State</p>
+                  ${renderVersionDetailPill(formatStatusLabel(detail.approvalState), approvalTone)}
+                </div>
+                <h2>Review State</h2>
+                <p>${stateDescriptions[detail.approvalState]}</p>
+              </div>
+              ${
+                detail.review.rejectedReason === null
+                  ? ""
+                  : `<p>Rejected reason: ${escapeHtml(detail.review.rejectedReason)}</p>`
+              }
+              ${
+                actions.length === 0
+                  ? `<p class="version-detail-note">No review action is available for this version state.</p>`
+                  : `<div class="version-detail-action-cluster">${actions.join("")}</div>`
+              }
+              <div class="stack">
+                <h3>Review History</h3>
+                ${renderVersionDetailTimeline(detail.review, detail.active)}
+              </div>
+            </section>
+            <section class="card stack version-detail-section version-detail-metadata-card" data-version-detail-section="metadata">
+              <div class="version-detail-section__header stack">
+                <p class="console-kicker">Version Metadata</p>
+                <h2>Version Metadata</h2>
+                <p>Version identity, ownership, and publication scope without introducing mock operational fields.</p>
+              </div>
+              ${renderVersionDetailDefinitionList([
+                {
+                  label: "Agent ID",
+                  value: detail.agentId,
+                },
+                {
+                  label: "Version ID",
+                  value: detail.versionId,
+                },
+                {
+                  label: "Publisher",
+                  value: detail.publisherId,
+                },
+                {
+                  label: "Capabilities",
+                  value: formatDelimitedValue(detail.capabilities, "none declared"),
+                },
+                {
+                  label: "Tags",
+                  value: formatDelimitedValue(detail.tags, "none declared"),
+                },
+                {
+                  label: "Required roles",
+                  value: formatDelimitedValue(detail.requiredRoles, "none declared"),
+                },
+                {
+                  label: "Required scopes",
+                  value: formatDelimitedValue(detail.requiredScopes, "none declared"),
+                },
+              ])}
+            </section>
+          </aside>
+        </section>
+      </section>`,
       contextualNavigationItem: {
-        href: `/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}`,
+        href: `/tenants/${encodedTenantId}/agents/${encodedAgentId}/versions/${encodedVersionId}`,
         label: "Version Detail",
       },
       currentNavigationKey: "contextual",
@@ -1260,6 +1479,97 @@ async function renderVersionDetailPage(
       title: `Version ${detail.displayName}`,
     },
   );
+}
+
+function formatDelimitedValue(values: string[], emptyLabel: string): string {
+  return values.length === 0 ? emptyLabel : values.join(", ");
+}
+
+function renderVersionDetailPill(
+  label: string,
+  tone: "accent" | "alert" | "muted" | "neutral" = "neutral",
+): string {
+  return `<span class="pill version-detail-pill version-detail-pill--${tone}">${escapeHtml(label)}</span>`;
+}
+
+function renderVersionDetailDefinitionList(items: Array<{ label: string; value: string }>): string {
+  return `<dl class="version-detail-definition-list">
+    ${items
+      .map(
+        (item) => `<div>
+          <dt>${escapeHtml(item.label)}</dt>
+          <dd>${escapeHtml(item.value)}</dd>
+        </div>`,
+      )
+      .join("")}
+  </dl>`;
+}
+
+function renderVersionDetailTimeline(
+  review: {
+    approvedAt: string | null;
+    approvedBy: string | null;
+    rejectedAt: string | null;
+    rejectedBy: string | null;
+    rejectedReason: string | null;
+    submittedAt: string | null;
+    submittedBy: string | null;
+  },
+  active: boolean,
+): string {
+  const events = [];
+
+  if (review.approvedAt !== null) {
+    events.push({
+      at: String(review.approvedAt),
+      label: "Approved",
+      note: `Approved by ${review.approvedBy ?? "unknown reviewer"}.`,
+    });
+  }
+
+  if (review.rejectedAt !== null) {
+    events.push({
+      at: String(review.rejectedAt),
+      label: "Rejected",
+      note:
+        review.rejectedReason === null
+          ? `Rejected by ${review.rejectedBy ?? "unknown reviewer"}.`
+          : `Rejected by ${review.rejectedBy ?? "unknown reviewer"}: ${review.rejectedReason}`,
+    });
+  }
+
+  if (review.submittedAt !== null) {
+    events.push({
+      at: String(review.submittedAt),
+      label: "Submitted",
+      note: `Submitted by ${review.submittedBy ?? "unknown publisher"}.`,
+    });
+  }
+
+  if (active) {
+    events.push({
+      at: review.approvedAt === null ? String(review.submittedAt ?? "") : String(review.approvedAt),
+      label: "Active Release",
+      note: "This version is currently serving as the approved agent release.",
+    });
+  }
+
+  if (events.length === 0) {
+    return `<p class="version-detail-note">Draft has not entered review yet.</p>`;
+  }
+
+  return `<div class="version-detail-timeline">
+    ${events
+      .sort((left, right) => right.at.localeCompare(left.at))
+      .map(
+        (event) => `<article class="version-detail-timeline__item stack">
+          <p class="console-kicker">${escapeHtml(event.at === "" ? "Not recorded" : event.at)}</p>
+          <h3>${escapeHtml(event.label)}</h3>
+          <p class="version-detail-note">${escapeHtml(event.note)}</p>
+        </article>`,
+      )
+      .join("")}
+  </div>`;
 }
 
 function renderAgentDetailPill(

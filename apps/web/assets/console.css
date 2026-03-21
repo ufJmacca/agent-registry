@@ -665,6 +665,210 @@ dd {
   transform: translateY(-1px);
 }
 
+.version-detail-page {
+  gap: 2rem;
+}
+
+.version-detail-hero {
+  display: grid;
+  gap: 1.5rem;
+  align-items: start;
+  grid-template-columns: minmax(0, 1.35fr) minmax(18rem, 0.92fr);
+  padding: clamp(1.6rem, 3vw, 2.45rem);
+}
+
+.version-detail-hero__copy,
+.version-detail-hero__aside,
+.version-detail-section__header,
+.version-detail-main,
+.version-detail-rail,
+.version-detail-code-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.version-detail-hero__lede {
+  max-width: 40rem;
+  font-size: 1.02rem;
+}
+
+.version-detail-summary-grid,
+.version-detail-contract-grid,
+.version-detail-code-grid,
+.version-detail-publication-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.version-detail-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.version-detail-contract-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.version-detail-code-grid,
+.version-detail-publication-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.version-detail-summary-card,
+.version-detail-contract-card,
+.version-detail-code-panel,
+.version-detail-timeline__item {
+  padding: 1.15rem;
+  border-radius: 1.35rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(240, 244, 247, 0.72)),
+    rgba(255, 255, 255, 0.82);
+  box-shadow:
+    var(--shadow-ambient),
+    inset 0 0 0 1px rgba(169, 180, 185, 0.1);
+}
+
+.version-detail-summary-card h2 {
+  margin-bottom: 0;
+  font-size: clamp(1.05rem, 2vw, 1.4rem);
+  line-height: 1.2;
+}
+
+.version-detail-contract-card strong {
+  color: var(--text);
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  line-height: 1;
+}
+
+.version-detail-layout {
+  display: grid;
+  gap: 1.5rem;
+  align-items: start;
+  grid-template-columns: minmax(0, 1.2fr) minmax(19rem, 0.82fr);
+}
+
+.version-detail-rail {
+  position: sticky;
+  top: 7rem;
+  align-content: start;
+}
+
+.version-detail-manifest-panel {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 1.45rem;
+  background: #1e2329;
+  box-shadow:
+    0 20px 40px rgba(42, 52, 57, 0.16),
+    inset 0 0 0 1px rgba(218, 226, 253, 0.08);
+}
+
+.version-detail-manifest-panel pre,
+.version-detail-code-panel pre {
+  margin: 0;
+}
+
+.version-detail-manifest-panel pre {
+  color: #dde5eb;
+  background: transparent;
+  box-shadow: none;
+}
+
+.version-detail-link-row,
+.version-detail-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.version-detail-link-row a {
+  justify-content: center;
+}
+
+.version-detail-pill {
+  box-shadow: none;
+}
+
+.version-detail-pill--accent {
+  background: rgba(218, 226, 253, 0.88);
+}
+
+.version-detail-pill--alert {
+  background: rgba(254, 137, 131, 0.2);
+}
+
+.version-detail-pill--muted {
+  background: rgba(225, 233, 238, 0.94);
+}
+
+.version-detail-pill--neutral {
+  background: rgba(217, 228, 234, 0.92);
+}
+
+.version-detail-pulse {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: rgba(93, 93, 120, 0.92);
+  box-shadow: 0 0 0 0 rgba(93, 93, 120, 0.42);
+  animation: agent-detail-pulse 2.2s infinite;
+}
+
+.version-detail-publication-card {
+  align-content: start;
+}
+
+.version-detail-publication-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.version-detail-definition-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.version-detail-definition-list div {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.version-detail-definition-list dt {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.version-detail-definition-list dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.version-detail-note {
+  color: var(--text-soft);
+  font-size: 0.94rem;
+}
+
+.version-detail-action-cluster {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.version-detail-action-cluster form {
+  width: 100%;
+}
+
+.version-detail-timeline {
+  display: grid;
+  gap: 0.85rem;
+}
+
 .console-status {
   max-width: 40rem;
   padding: clamp(1.6rem, 3vw, 2.35rem);
@@ -703,6 +907,11 @@ dd {
   .agent-detail-summary-grid {
     grid-template-columns: 1fr;
   }
+
+  .version-detail-summary-grid,
+  .version-detail-contract-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 960px) {
@@ -738,5 +947,15 @@ dd {
   .agent-detail-hero,
   .agent-detail-layout {
     grid-template-columns: 1fr;
+  }
+
+  .version-detail-hero,
+  .version-detail-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .version-detail-rail {
+    position: static;
+    top: auto;
   }
 }

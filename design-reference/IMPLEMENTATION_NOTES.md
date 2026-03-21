@@ -27,7 +27,9 @@ When a reference includes content or controls that the current product cannot su
 
 | Route | Reference asset | Mock-only content or unsupported control | Truthful implementation replacement or omission | Reason |
 | --- | --- | --- | --- | --- |
-| `_TBD_` | `_TBD_` | `_TBD_` | `_TBD_` | Complete this row whenever a reference element cannot be implemented truthfully. |
+| `/tenants/:tenantId/agents/:agentId/versions/:versionId` | `version_detail` | Mock latency, throughput, and memory contract stats | Contract-summary cards derived from stored header-contract count, context-contract count, and publication-target count | The current version detail route does not store benchmark metrics for an individual version. |
+| `/tenants/:tenantId/agents/:agentId/versions/:versionId` | `version_detail` | Mock audit-history narrative entries | Review-history timeline built from submitted, approved, rejected, and active-release metadata already stored on the version | The app records review-state timestamps, not editorial audit annotations. |
+| `/tenants/:tenantId/agents/:agentId/versions/:versionId` | `version_detail` | Mock publisher, license, and production-readiness side metadata | Version-metadata panel exposing truthful publisher, version, capability, tag, role, and scope data | License and readiness fields are not available on the current route payload. |
 
 ## DESIGN.md Checklist
 
@@ -123,14 +125,14 @@ Each route below must be reviewed against both the reference `code.html` and `sc
 ### `/tenants/:tenantId/agents/:agentId/versions/:versionId`
 
 - Reference assets: `version_detail/code.html`, `version_detail/screen.png`
-- Shell composition and overall layout:
-- Headline scale and spacing:
-- CTA treatment and action-cluster hierarchy:
-- Card and background layering:
-- Navigation treatment:
-- Information density and grouping:
-- Functional constraints to preserve:
-- Intentional deviations and truthful substitutions:
+- Shell composition and overall layout: authenticated shell retained; page body remapped into a dossier hero, left technical column, and sticky right review/meta rail.
+- Headline scale and spacing: prominent headline with status chips and summary lead mirrors the reference hierarchy while keeping truthful version data.
+- CTA treatment and action-cluster hierarchy: existing submit, approve, and reject POST targets now sit inside the review-state rail and only render for the states that support them.
+- Card and background layering: dark manifest panel, soft contract cards, and layered publication panels replace the fallback split-card stack.
+- Navigation treatment: existing contextual `Version Detail` nav item remains active in the shared authenticated shell.
+- Information density and grouping: header/context contracts, manifest, review history, publication panels, telemetry, and health history are grouped into discrete dossier sections.
+- Functional constraints to preserve: publisher ownership checks, admin-only telemetry and health history, and current state transitions all remain on the existing routes.
+- Intentional deviations and truthful substitutions: mock reference metrics and metadata were replaced with stored contract counts, review timestamps, and version metadata that the current product actually exposes.
 
 ## Version Detail Deviation Table
 
@@ -138,4 +140,6 @@ The current version detail route has a dedicated `version_detail` reference. Thi
 
 | Reference mock detail | Truthful implementation replacement | Reason for deviation |
 | --- | --- | --- |
-| `_TBD_` | `_TBD_` | Complete this row when the dedicated `version_detail` reference includes content or controls that the current product does not expose. |
+| Latency, throughput, and memory tiles in the publication-contract bento | Header-field count, context-key count, and publication-target count | The current registry does not persist benchmark metrics for version-detail pages. |
+| Audit-history mock copy describing internal branch and baseline events | Review timeline built from stored submission, approval, rejection, and active-release records | Only review-state metadata is available on the current route. |
+| Publisher, license, and environment side metadata from the mock | Publisher, version identity, capability, tag, role, and scope metadata from the stored version record | License and production-readiness fields are not part of the current product payload. |

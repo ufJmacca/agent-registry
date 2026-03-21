@@ -310,6 +310,21 @@ function assertShell(
   }
 }
 
+function assertVersionDetailDossier(html: string): void {
+  assert.match(html, /data-version-detail-view="dossier"/);
+
+  for (const section of ["hero", "contracts", "manifest", "publications", "review", "metadata"]) {
+    assert.match(html, new RegExp(`data-version-detail-section="${section}"`));
+  }
+
+  assert.match(html, /Current Publication Status/);
+  assert.match(html, /Publication Contracts/);
+  assert.match(html, /Technical Manifest/);
+  assert.match(html, /Environment Publications/);
+  assert.match(html, /Review State/);
+  assert.match(html, /Version Metadata/);
+}
+
 test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", async () => {
   // Arrange
   const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
@@ -860,11 +875,20 @@ test("publisher console creates a multi-environment draft and submits it for rev
       page: "version-detail",
       shell: "authenticated",
     });
+    assertVersionDetailDossier(draftDetailHtml);
     assert.match(draftDetailHtml, /Approval state: draft/);
     assert.match(draftDetailHtml, /Environment: dev/);
     assert.match(draftDetailHtml, /Environment: prod/);
     assert.match(draftDetailHtml, /X-User-Id/);
     assert.match(draftDetailHtml, /client_id/);
+    assert.match(
+      draftDetailHtml,
+      new RegExp(
+        `<form action="${escapeRegExp(`/tenants/tenant-alpha/agents/${routeMatch[1]}/versions/${routeMatch[2]}/submit`)}" method="post">[\\s\\S]*?<button[^>]*>Submit for Review</button>`,
+      ),
+    );
+    assert.doesNotMatch(draftDetailHtml, />\s*Approve\s*</);
+    assert.doesNotMatch(draftDetailHtml, />\s*Reject\s*</);
     assert.equal(submitResponse.status, 303);
     assert.equal(getRedirectLocation(submitResponse), draftLocation);
     assertShell(submittedDetailHtml, {
@@ -872,7 +896,11 @@ test("publisher console creates a multi-environment draft and submits it for rev
       page: "version-detail",
       shell: "authenticated",
     });
+    assertVersionDetailDossier(submittedDetailHtml);
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
+    assert.doesNotMatch(submittedDetailHtml, />\s*Submit for Review\s*</);
+    assert.doesNotMatch(submittedDetailHtml, />\s*Approve\s*</);
+    assert.doesNotMatch(submittedDetailHtml, />\s*Reject\s*</);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
   } finally {
@@ -915,8 +943,19 @@ test("publisher console returns 403 for admin-only review and active agent detai
     assertUsesConsoleDocument(reviewQueueHtml);
     assert.match(reviewQueueHtml, /Tenant admin role is required/);
     assert.equal(versionDetailPage.status, 200);
+    assertShell(versionDetailHtml, {
+      currentNavHref: `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}`,
+      page: "version-detail",
+      shell: "authenticated",
+    });
+    assertVersionDetailDossier(versionDetailHtml);
+    assert.match(versionDetailHtml, /Approval state: approved/);
     assert.doesNotMatch(versionDetailHtml, /Advisory Telemetry/);
     assert.doesNotMatch(versionDetailHtml, /Invocation count: 12/);
+    assert.doesNotMatch(versionDetailHtml, /Health History/);
+    assert.doesNotMatch(versionDetailHtml, />\s*Submit for Review\s*</);
+    assert.doesNotMatch(versionDetailHtml, />\s*Approve\s*</);
+    assert.doesNotMatch(versionDetailHtml, />\s*Reject\s*</);
     assert.equal(agentDetailPage.status, 403);
     assert.match(agentDetailHtml, /Tenant admin role is required/);
   } finally {
@@ -1152,6 +1191,10 @@ test("admin console manages environments, reviews pending versions, edits overla
     const updatedEnvironmentsHtml = await updatedEnvironmentsPage.text();
     const reviewQueuePage = await browser.get("/tenants/tenant-alpha/review");
     const reviewQueueHtml = await reviewQueuePage.text();
+    const pendingVersionPage = await browser.get(
+      `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}`,
+    );
+    const pendingVersionHtml = await pendingVersionPage.text();
     const approveResponse = await browser.postUrlEncoded(
       `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}/approve`,
       {},
@@ -1209,6 +1252,27 @@ test("admin console manages environments, reviews pending versions, edits overla
     });
     assert.match(reviewQueueHtml, /Case Router/);
     assert.match(reviewQueueHtml, /Case Escalator/);
+    assert.equal(pendingVersionPage.status, 200);
+    assertShell(pendingVersionHtml, {
+      currentNavHref: `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}`,
+      page: "version-detail",
+      shell: "authenticated",
+    });
+    assertVersionDetailDossier(pendingVersionHtml);
+    assert.match(pendingVersionHtml, /Approval state: pending_review/);
+    assert.match(
+      pendingVersionHtml,
+      new RegExp(
+        `<form action="${escapeRegExp(`/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}/approve`)}" method="post">[\\s\\S]*?<button[^>]*>Approve</button>`,
+      ),
+    );
+    assert.match(
+      pendingVersionHtml,
+      new RegExp(
+        `<form class="stack" action="${escapeRegExp(`/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}/reject`)}" method="post">[\\s\\S]*?<button[^>]*>Reject</button>`,
+      ),
+    );
+    assert.doesNotMatch(pendingVersionHtml, />\s*Submit for Review\s*</);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
     assertShell(approvedVersionHtml, {
@@ -1216,10 +1280,15 @@ test("admin console manages environments, reviews pending versions, edits overla
       page: "version-detail",
       shell: "authenticated",
     });
+    assertVersionDetailDossier(approvedVersionHtml);
+    assert.match(approvedVersionHtml, /Approval state: approved/);
     assert.match(approvedVersionHtml, /Health History/);
     assert.match(approvedVersionHtml, /503/);
     assert.match(approvedVersionHtml, /Invocation count: 12/);
     assert.match(approvedVersionHtml, /p95 latency: 280/);
+    assert.doesNotMatch(approvedVersionHtml, />\s*Submit for Review\s*</);
+    assert.doesNotMatch(approvedVersionHtml, />\s*Approve\s*</);
+    assert.doesNotMatch(approvedVersionHtml, />\s*Reject\s*</);
     assert.equal(deprecateEnvironmentResponse.status, 303);
     assert.equal(
       getRedirectLocation(deprecateEnvironmentResponse),
@@ -1253,8 +1322,12 @@ test("admin console manages environments, reviews pending versions, edits overla
       page: "version-detail",
       shell: "authenticated",
     });
+    assertVersionDetailDossier(rejectedVersionHtml);
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
+    assert.doesNotMatch(rejectedVersionHtml, />\s*Submit for Review\s*</);
+    assert.doesNotMatch(rejectedVersionHtml, />\s*Approve\s*</);
+    assert.doesNotMatch(rejectedVersionHtml, />\s*Reject\s*</);
   } finally {
     await context.close();
   }
