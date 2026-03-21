@@ -397,6 +397,18 @@ async function listTenantEnvironmentKeys(
   return environments.map((environment) => environment.environmentKey);
 }
 
+function getTextareaContents(html: string, name: string): string {
+  const match = html.match(
+    new RegExp(`<textarea[^>]+name="${escapeRegExp(name)}"[^>]*>([\\s\\S]*?)<\\/textarea>`),
+  );
+
+  if (match === null) {
+    throw new Error(`Expected textarea ${name} to be rendered.`);
+  }
+
+  return match[1];
+}
+
 test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", async () => {
   // Arrange
   const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
@@ -432,6 +444,22 @@ test("dashboard stylesheet defines a responsive bento grid", async () => {
   assert.match(
     css,
     /@media \(max-width: 960px\)\s*\{[\s\S]*?\.dashboard-grid\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
+  );
+});
+
+test("draft registration stylesheet preserves narrow-width readability affordances", async () => {
+  // Arrange
+  const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
+
+  // Assert
+  assert.match(
+    css,
+    /\.draft-code-input\s*\{[\s\S]*?min-height:\s*14rem;[\s\S]*?overflow-x:\s*auto;[\s\S]*?white-space:\s*pre;[\s\S]*?\}/,
+  );
+  assert.match(css, /\.draft-file-input\s*\{[\s\S]*?max-width:\s*100%;[\s\S]*?\}/);
+  assert.match(
+    css,
+    /@media \(max-width: 960px\)\s*\{[\s\S]*?\.draft-hero,\s*\.draft-grid--metadata,\s*\.draft-grid--contracts,\s*\.draft-publication-panel__grid\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
   );
 });
 
@@ -1234,6 +1262,123 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publisher console renders grouped draft registration sections with preserved contract defaults and multipart field names", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+  const hostedEnvironmentKeys = ["dev", "prod", "staging"];
+
+  try {
+    // Arrange
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.get("/tenants/tenant-alpha/drafts/new");
+    const html = await response.text();
+    const generalMetadataIndex = html.indexOf("General Metadata");
+    const sharedContractsIndex = html.indexOf("Shared Contracts");
+    const environmentPublicationsIndex = html.indexOf("Environment Publications");
+    const actionFooterIndex = html.indexOf('data-draft-action-footer="true"');
+    const headerContract = getTextareaContents(html, "headerContract");
+    const contextContract = getTextareaContents(html, "contextContract");
+    const publicationPanels = html.match(/data-draft-publication-panel="[^"]+"/g) ?? [];
+
+    // Assert
+    assert.equal(response.status, 200);
+    assert.match(
+      html,
+      /<form[^>]+action="\/tenants\/tenant-alpha\/drafts"[^>]+method="post"[^>]+enctype="multipart\/form-data"[^>]*>/,
+    );
+    assert.match(html, /data-draft-form="true"/);
+    assert.match(html, /data-draft-section="general-metadata"/);
+    assert.match(html, /data-draft-section="shared-contracts"/);
+    assert.match(html, /data-draft-section="environment-publications"/);
+    assert.equal(publicationPanels.length, hostedEnvironmentKeys.length);
+    assert.match(html, /data-draft-action-footer="true"/);
+    assert.ok(generalMetadataIndex >= 0);
+    assert.ok(sharedContractsIndex > generalMetadataIndex);
+    assert.ok(environmentPublicationsIndex > sharedContractsIndex);
+    assert.ok(actionFooterIndex > environmentPublicationsIndex);
+    assert.match(html, /name="versionLabel"/);
+    assert.match(html, /name="displayName"/);
+    assert.match(html, /name="summary"/);
+    assert.match(html, /name="capabilities"/);
+    assert.match(html, /name="tags"/);
+    assert.match(html, /name="requiredRoles"/);
+    assert.match(html, /name="requiredScopes"/);
+    assert.match(html, /name="headerContract"/);
+    assert.match(html, /name="contextContract"/);
+    assert.match(
+      html,
+      /<textarea class="draft-code-input" name="headerContract" rows="10" spellcheck="false" wrap="off">/,
+    );
+    assert.match(
+      html,
+      /<textarea class="draft-code-input" name="contextContract" rows="10" spellcheck="false" wrap="off">/,
+    );
+    assert.equal(
+      headerContract,
+      [
+        "[",
+        "  {",
+        '    "name": "X-User-Id",',
+        '    "required": true,',
+        '    "source": "user.id",',
+        '    "description": "Identifies the calling user."',
+        "  }",
+        "]",
+      ].join("\n"),
+    );
+    assert.equal(
+      contextContract,
+      [
+        "[",
+        "  {",
+        '    "key": "client_id",',
+        '    "required": true,',
+        '    "type": "string",',
+        '    "description": "Selects the client partition.",',
+        '    "example": "client-123"',
+        "  }",
+        "]",
+      ].join("\n"),
+    );
+    for (const environmentKey of hostedEnvironmentKeys) {
+      assert.match(
+        html,
+        new RegExp(
+          `data-draft-publication-panel="${escapeRegExp(environmentKey)}"`,
+        ),
+      );
+      assert.match(
+        html,
+        new RegExp(`name="publication:${escapeRegExp(environmentKey)}:enabled"`),
+      );
+      assert.match(
+        html,
+        new RegExp(`name="publication:${escapeRegExp(environmentKey)}:healthEndpointUrl"`),
+      );
+      assert.match(
+        html,
+        new RegExp(`name="publication:${escapeRegExp(environmentKey)}:invocationEndpoint"`),
+      );
+      assert.match(
+        html,
+        new RegExp(`name="publication:${escapeRegExp(environmentKey)}:rawCard"`),
+      );
+      assert.match(
+        html,
+        new RegExp(
+          `<input class="draft-file-input" type="file" name="publication:${escapeRegExp(environmentKey)}:rawCard" \\/>`,
+        ),
+      );
+    }
   } finally {
     await context.close();
   }
