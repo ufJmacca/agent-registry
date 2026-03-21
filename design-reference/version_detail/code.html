@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Agent Detail: Neural-Flow-01</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "outline-variant": "#a9b4b9",
+              "on-tertiary-fixed": "#373851",
+              "surface-container-low": "#f0f4f7",
+              "on-secondary-fixed": "#314055",
+              "inverse-primary": "#dae2fd",
+              "on-background": "#2a3439",
+              "surface-dim": "#cfdce3",
+              "error-container": "#fe8983",
+              "surface-variant": "#d9e4ea",
+              "primary-container": "#dae2fd",
+              "on-tertiary": "#fbf7ff",
+              "primary-fixed-dim": "#ccd4ee",
+              "tertiary-container": "#d9d7f8",
+              "inverse-on-surface": "#9a9d9f",
+              "on-error": "#fff7f6",
+              "on-tertiary-fixed-variant": "#54546f",
+              "surface-container-highest": "#d9e4ea",
+              "on-secondary-container": "#435368",
+              "tertiary-fixed": "#d9d7f8",
+              "surface-bright": "#f7f9fb",
+              "inverse-surface": "#0b0f10",
+              "on-surface-variant": "#566166",
+              "tertiary-fixed-dim": "#cbc9e9",
+              "on-error-container": "#752121",
+              "on-primary-fixed": "#373f54",
+              "surface-tint": "#565e74",
+              "secondary-fixed-dim": "#c5d6f0",
+              "on-secondary-fixed-variant": "#4d5d73",
+              "secondary-container": "#d3e4fe",
+              "on-surface": "#2a3439",
+              "on-secondary": "#f7f9ff",
+              "secondary-fixed": "#d3e4fe",
+              "on-primary-container": "#4a5167",
+              "tertiary": "#5d5d78",
+              "primary-dim": "#4a5268",
+              "error-dim": "#4e0309",
+              "background": "#f7f9fb",
+              "surface-container-high": "#e1e9ee",
+              "on-primary-fixed-variant": "#535b71",
+              "on-primary": "#f7f7ff",
+              "on-tertiary-container": "#4a4a65",
+              "surface-container": "#e8eff3",
+              "secondary": "#506076",
+              "primary-fixed": "#dae2fd",
+              "primary": "#565e74",
+              "secondary-dim": "#44546a",
+              "outline": "#717c82",
+              "surface": "#f7f9fb",
+              "tertiary-dim": "#51516c",
+              "surface-container-lowest": "#ffffff",
+              "error": "#9f403d"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
+        }
+        .glass-header {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+        }
+        .primary-gradient {
+            background: linear-gradient(135deg, #565e74 0%, #4a5268 100%);
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface antialiased">
+<!-- SideNavBar -->
+<aside class="h-screen w-64 fixed left-0 top-0 z-40 bg-slate-100 dark:bg-slate-900 flex flex-col p-6 gap-y-8">
+<div class="flex flex-col gap-1">
+<span class="font-manrope font-extrabold text-slate-900 dark:text-white text-xl tracking-tighter">Technical Curator</span>
+<span class="font-inter text-[10px] font-semibold uppercase tracking-[0.2em] text-on-surface-variant opacity-60">v2.4.0</span>
+</div>
+<nav class="flex flex-col gap-y-2 mt-4">
+<a class="flex items-center gap-3 px-4 py-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm rounded-lg transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-[20px]">folder_managed</span>
+<span class="font-inter text-xs font-semibold uppercase tracking-widest">Registry</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-[20px]">insights</span>
+<span class="font-inter text-xs font-semibold uppercase tracking-widest">Analytics</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800 transition-all duration-300 hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-[20px]">settings</span>
+<span class="font-inter text-xs font-semibold uppercase tracking-widest">Settings</span>
+</a>
+</nav>
+<div class="mt-auto space-y-2">
+<button class="w-full py-3 primary-gradient text-white rounded-md font-label text-xs font-semibold uppercase tracking-wider shadow-sm active:scale-95 transition-transform">
+                Deploy New Agent
+            </button>
+<div class="h-px bg-slate-200 dark:bg-slate-800 my-4"></div>
+<a class="flex items-center gap-3 px-4 py-2 text-slate-500 hover:text-slate-700 transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">contact_support</span>
+<span class="font-inter text-[10px] font-semibold uppercase tracking-widest">Support</span>
+</a>
+<a class="flex items-center gap-3 px-4 py-2 text-slate-500 hover:text-slate-700 transition-colors" href="#">
+<span class="material-symbols-outlined text-[18px]">menu_book</span>
+<span class="font-inter text-[10px] font-semibold uppercase tracking-widest">Documentation</span>
+</a>
+</div>
+</aside>
+<main class="ml-64 min-h-screen">
+<!-- TopNavBar -->
+<header class="fixed top-0 right-0 left-64 z-50 h-16 glass-header flex items-center justify-between px-8 shadow-[0_20_40px_rgba(42,52,57,0.06)]">
+<div class="flex items-center gap-4">
+<h1 class="text-lg font-bold tracking-tighter text-slate-900">Agent Detail: Neural-Flow-01</h1>
+<span class="px-2 py-0.5 bg-surface-container-highest text-on-surface-variant text-[10px] font-bold rounded-full uppercase tracking-tighter">v4.3.0</span>
+</div>
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2">
+<button class="p-2 text-slate-500 hover:bg-slate-200/50 transition-colors rounded-full active:scale-95 duration-200">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 text-slate-500 hover:bg-slate-200/50 transition-colors rounded-full active:scale-95 duration-200">
+<span class="material-symbols-outlined">help_outline</span>
+</button>
+</div>
+<div class="h-8 w-8 rounded-full bg-surface-container-high overflow-hidden border border-white">
+<img alt="User profile avatar" class="h-full w-full object-cover" data-alt="Professional user avatar in soft lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAU_LBxGveV187KgJRGqUczjkalS6m1gyHlDVPF7ohVFliZZDJh-uCPKEnRGlWQQEqXZd3oDQZl2XR0qeBhhNAXsZBkNlRn_SaHxXzcEovZ0FLX_CHa8Ley6G2GhBSWihf2CORbwdE_NBdAorF7IHZMNCEmWYx7qAfoVjwG7HcmcvO1jhevtTbeMgeRKNbdj9S1bG3Ry0DZPXlqavNECSjUZuyKWwIVCZ04tcpdeeJOIS7VvjWHR2lPuDL3znm958WsnU8E2jJk"/>
+</div>
+</div>
+</header>
+<div class="pt-24 px-12 pb-12 max-w-7xl mx-auto">
+<!-- Hero Grid Layout -->
+<div class="grid grid-cols-12 gap-8 items-start">
+<!-- Left Column: Core Info -->
+<div class="col-span-12 lg:col-span-8 space-y-12">
+<!-- Identification Section -->
+<section>
+<div class="flex items-center gap-3 mb-2">
+<span class="w-3 h-3 rounded-full bg-tertiary shadow-[0_0_8px_rgba(93,93,120,0.4)]"></span>
+<span class="font-label text-xs uppercase tracking-[0.2em] text-on-surface-variant font-bold">Current Publication Status</span>
+</div>
+<h2 class="font-headline text-4xl font-extrabold text-on-surface tracking-tight mb-4">Neural-Flow-01</h2>
+<p class="font-body text-on-surface-variant max-w-2xl leading-relaxed">
+                            A highly optimized neural inference agent designed for sub-millisecond latency in financial risk processing. This version implements the R-33 optimization layer.
+                        </p>
+</section>
+<!-- Publication Contracts (Bento Style) -->
+<section>
+<h3 class="font-headline text-sm font-bold uppercase tracking-widest text-on-surface-variant mb-6">Publication Contracts</h3>
+<div class="grid grid-cols-3 gap-1">
+<div class="col-span-1 bg-surface-container-lowest p-8 rounded-xl shadow-[0_2px_15px_rgba(42,52,57,0.03)] flex flex-col justify-between aspect-square">
+<span class="material-symbols-outlined text-primary text-3xl">speed</span>
+<div>
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant opacity-60">Latency</p>
+<p class="text-2xl font-headline font-extrabold text-on-surface">12ms <span class="text-xs font-normal opacity-40">p99</span></p>
+</div>
+</div>
+<div class="col-span-1 bg-surface-container-low p-8 rounded-xl flex flex-col justify-between aspect-square">
+<span class="material-symbols-outlined text-tertiary text-3xl">bolt</span>
+<div>
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant opacity-60">Throughput</p>
+<p class="text-2xl font-headline font-extrabold text-on-surface">4.2k <span class="text-xs font-normal opacity-40">req/s</span></p>
+</div>
+</div>
+<div class="col-span-1 bg-surface-container-lowest p-8 rounded-xl shadow-[0_2px_15px_rgba(42,52,57,0.03)] flex flex-col justify-between aspect-square">
+<span class="material-symbols-outlined text-secondary text-3xl">memory</span>
+<div>
+<p class="text-[10px] font-bold uppercase tracking-[0.2em] text-on-surface-variant opacity-60">Memory</p>
+<p class="text-2xl font-headline font-extrabold text-on-surface">256 <span class="text-xs font-normal opacity-40">MB</span></p>
+</div>
+</div>
+</div>
+</section>
+<!-- Technical Manifest / Raw View -->
+<section>
+<div class="flex items-center justify-between mb-6">
+<h3 class="font-headline text-sm font-bold uppercase tracking-widest text-on-surface-variant">Technical Manifest</h3>
+<button class="text-[10px] font-bold uppercase tracking-widest text-primary hover:underline transition-all">Copy JSON</button>
+</div>
+<div class="bg-[#1e2329] rounded-xl p-8 font-mono text-xs text-slate-300 overflow-x-auto leading-relaxed border-l-4 border-primary">
+<pre><code>{
+  "agent_id": "Neural-Flow-01",
+  "version": "4.3.0",
+  "hash": "sha256:8f43a2c...",
+  "runtime": {
+    "engine": "v8-isolated",
+    "heap_limit": "256MiB",
+    "timeout": "500ms"
+  },
+  "permissions": [
+    "net:egress:internal-db",
+    "crypto:sign"
+  ],
+  "contract": {
+    "sla_tier": "gold",
+    "max_concurrent": 1000
+  }
+}</code></pre>
+</div>
+</section>
+</div>
+<!-- Right Column: Meta & Actions -->
+<div class="col-span-12 lg:col-span-4 space-y-8 sticky top-24">
+<!-- Review Status Card -->
+<div class="bg-surface-container-lowest p-8 rounded-xl shadow-[0_20_40px_rgba(42,52,57,0.06)] border-t-4 border-tertiary">
+<div class="flex items-center justify-between mb-6">
+<h4 class="font-headline text-xs font-bold uppercase tracking-widest">Review State</h4>
+<span class="px-3 py-1 bg-tertiary-container text-on-tertiary-container rounded-full text-[10px] font-bold uppercase">Pending</span>
+</div>
+<div class="space-y-4 mb-8">
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span>
+<div>
+<p class="text-xs font-bold text-on-surface">Unit Tests Passed</p>
+<p class="text-[10px] text-on-surface-variant">2,412 automated tests verified</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-green-600 text-[18px]">check_circle</span>
+<div>
+<p class="text-xs font-bold text-on-surface">Security Audit Clear</p>
+<p class="text-[10px] text-on-surface-variant">Scanned for 42 known vulnerabilities</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<span class="material-symbols-outlined text-tertiary text-[18px]">schedule</span>
+<div>
+<p class="text-xs font-bold text-on-surface">Manual Approval</p>
+<p class="text-[10px] text-on-surface-variant">Waiting for Senior Curator review</p>
+</div>
+</div>
+</div>
+<!-- Admin Actions -->
+<div class="grid grid-cols-2 gap-3">
+<button class="flex items-center justify-center gap-2 py-3 primary-gradient text-white rounded-md font-label text-[10px] font-bold uppercase tracking-widest active:scale-95 transition-all">
+<span class="material-symbols-outlined text-sm">verified</span>
+                                Approve
+                            </button>
+<button class="flex items-center justify-center gap-2 py-3 bg-surface-container-high text-on-surface rounded-md font-label text-[10px] font-bold uppercase tracking-widest hover:bg-red-50 hover:text-red-700 active:scale-95 transition-all">
+<span class="material-symbols-outlined text-sm">close</span>
+                                Reject
+                            </button>
+</div>
+</div>
+<!-- Audit History -->
+<div class="bg-surface-container-low p-8 rounded-xl">
+<h4 class="font-headline text-xs font-bold uppercase tracking-widest mb-6">Audit History</h4>
+<div class="space-y-6 relative before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-[2px] before:bg-surface-variant">
+<div class="relative pl-6">
+<span class="absolute left-0 top-1 w-[16px] h-[16px] bg-surface-container-low border-2 border-primary rounded-full"></span>
+<p class="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Today, 09:42 AM</p>
+<p class="text-xs text-on-surface font-medium">Version v4.3.0 submitted by Alex Chen</p>
+</div>
+<div class="relative pl-6">
+<span class="absolute left-0 top-1 w-[16px] h-[16px] bg-surface-variant rounded-full"></span>
+<p class="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Yesterday, 04:15 PM</p>
+<p class="text-xs text-on-surface-variant">Automated performance baseline established</p>
+</div>
+<div class="relative pl-6">
+<span class="absolute left-0 top-1 w-[16px] h-[16px] bg-surface-variant rounded-full"></span>
+<p class="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Oct 12, 11:20 AM</p>
+<p class="text-xs text-on-surface-variant">Branch neural-v4-hotfix merged into main</p>
+</div>
+</div>
+</div>
+<!-- Side metadata -->
+<div class="px-8 flex flex-col gap-4">
+<div class="flex justify-between items-center border-b border-surface-variant pb-3">
+<span class="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Publisher</span>
+<span class="text-xs font-medium">Core Intelligence Team</span>
+</div>
+<div class="flex justify-between items-center border-b border-surface-variant pb-3">
+<span class="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">License</span>
+<span class="text-xs font-medium">Proprietary</span>
+</div>
+<div class="flex justify-between items-center border-b border-surface-variant pb-3">
+<span class="text-[10px] uppercase font-bold tracking-widest text-on-surface-variant">Environment</span>
+<span class="text-xs font-medium">Production-Ready</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Contextual FAB (Suppressing as per mandate for detail pages) -->
+</body></html>

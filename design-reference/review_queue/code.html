@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Review Queue | Technical Curator</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-surface": "#2a3439",
+              "on-secondary": "#f7f9ff",
+              "primary-dim": "#4a5268",
+              "surface-dim": "#cfdce3",
+              "error": "#9f403d",
+              "on-tertiary": "#fbf7ff",
+              "on-surface-variant": "#566166",
+              "surface-container-highest": "#d9e4ea",
+              "error-container": "#fe8983",
+              "primary-fixed-dim": "#ccd4ee",
+              "inverse-primary": "#dae2fd",
+              "secondary-fixed": "#d3e4fe",
+              "surface-variant": "#d9e4ea",
+              "surface": "#f7f9fb",
+              "inverse-surface": "#0b0f10",
+              "outline-variant": "#a9b4b9",
+              "secondary": "#506076",
+              "tertiary-container": "#d9d7f8",
+              "surface-container-low": "#f0f4f7",
+              "tertiary-dim": "#51516c",
+              "on-secondary-fixed": "#314055",
+              "on-primary-container": "#4a5167",
+              "tertiary-fixed-dim": "#cbc9e9",
+              "surface-tint": "#565e74",
+              "on-primary-fixed": "#373f54",
+              "on-tertiary-fixed": "#373851",
+              "tertiary-fixed": "#d9d7f8",
+              "surface-container-high": "#e1e9ee",
+              "tertiary": "#5d5d78",
+              "on-tertiary-fixed-variant": "#54546f",
+              "secondary-fixed-dim": "#c5d6f0",
+              "surface-container": "#e8eff3",
+              "error-dim": "#4e0309",
+              "on-background": "#2a3439",
+              "secondary-dim": "#44546a",
+              "on-secondary-fixed-variant": "#4d5d73",
+              "on-tertiary-container": "#4a4a65",
+              "outline": "#717c82",
+              "on-primary-fixed-variant": "#535b71",
+              "secondary-container": "#d3e4fe",
+              "primary-fixed": "#dae2fd",
+              "inverse-on-surface": "#9a9d9f",
+              "on-error-container": "#752121",
+              "background": "#f7f9fb",
+              "on-primary": "#f7f7ff",
+              "primary": "#565e74",
+              "surface-bright": "#f7f9fb",
+              "primary-container": "#dae2fd",
+              "on-secondary-container": "#435368",
+              "surface-container-lowest": "#ffffff",
+              "on-error": "#fff7f6"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            background-color: #f7f9fb;
+            color: #2a3439;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+        }
+    </script>
+</head>
+<body class="font-body selection:bg-primary-container selection:text-on-primary-container">
+
+    <!-- SideNavBar Anchor -->
+    <aside class="h-screen w-64 fixed left-0 top-0 flex flex-col p-4 space-y-6 bg-slate-50 dark:bg-slate-950 z-40">
+        <div class="px-2 py-4">
+            <h1 class="font-headline font-extrabold text-slate-900 dark:text-white tracking-tighter text-xl">Agent Console</h1>
+            <p class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 font-medium">Precision Intelligence</p>
+        </div>
+
+        <nav class="flex-1 space-y-1">
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 transition-transform duration-200 hover:translate-x-1 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="dashboard">dashboard</span>
+                <span>Dashboard</span>
+            </a>
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm rounded-md transition-transform duration-200 hover:translate-x-1 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="rule">rule</span>
+                <span>Review Queue</span>
+            </a>
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 transition-transform duration-200 hover:translate-x-1 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="database">database</span>
+                <span>Agent Registry</span>
+            </a>
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 transition-transform duration-200 hover:translate-x-1 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="edit_note">edit_note</span>
+                <span>Drafts</span>
+            </a>
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 transition-transform duration-200 hover:translate-x-1 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="settings">settings</span>
+                <span>Settings</span>
+            </a>
+        </nav>
+
+        <div class="pt-4 border-t border-slate-200 dark:border-slate-800">
+            <button class="w-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 py-2.5 px-4 rounded-md font-bold text-sm tracking-tight flex items-center justify-center space-x-2 active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-lg" data-icon="add">add</span>
+                <span>New Agent</span>
+            </button>
+        </div>
+
+        <div class="mt-auto space-y-1">
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 transition-transform duration-200 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="help">help</span>
+                <span>Support</span>
+            </a>
+            <a href="#" class="flex items-center space-x-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 transition-transform duration-200 font-inter text-sm font-medium">
+                <span class="material-symbols-outlined text-xl" data-icon="sensors">sensors</span>
+                <span>API Status</span>
+            </a>
+            <div class="flex items-center space-x-3 px-3 py-4 mt-2">
+                <div class="w-8 h-8 rounded bg-surface-container-highest flex items-center justify-center overflow-hidden">
+                    <img src="https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=100&auto=format&fit=crop" data-alt="User profile avatar with professional look" class="w-full h-full object-cover">
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-xs font-bold text-slate-900 dark:text-white">Admin User</span>
+                    <span class="text-[10px] text-slate-500">Curator Access</span>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Main Content Canvas -->
+    <main class="ml-64 min-h-screen bg-surface">
+        
+        <!-- Header Section with Large Spacing -->
+        <header class="px-12 pt-16 pb-12">
+            <div class="max-w-6xl mx-auto flex justify-between items-end">
+                <div>
+                    <h2 class="font-headline text-5xl font-extrabold text-on-surface tracking-tighter">Review Queue</h2>
+                    <p class="mt-4 text-on-surface-variant font-medium max-w-lg leading-relaxed">
+                        Validation authority required for 14 pending intelligence deployments. Architectural integrity must be verified before main registry exposure.
+                    </p>
+                </div>
+                <div class="flex items-center gap-4 bg-surface-container-low p-1.5 rounded-lg">
+                    <button class="px-4 py-2 bg-surface-container-lowest shadow-sm rounded-md text-sm font-bold text-on-surface">Pending (14)</button>
+                    <button class="px-4 py-2 hover:bg-surface-container-high rounded-md text-sm font-medium text-on-surface-variant transition-colors">History</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Search & Filter Bar (Minimalist) -->
+        <section class="px-12 mb-10">
+            <div class="max-w-6xl mx-auto">
+                <div class="flex items-center gap-6 bg-surface-container-lowest p-2 pl-6 rounded-xl border border-outline-variant/15 shadow-[0px_20px_40px_rgba(42,52,57,0.06)]">
+                    <span class="material-symbols-outlined text-on-surface-variant/60" data-icon="search">search</span>
+                    <input type="text" placeholder="Filter by agent ID, model, or contributor..." class="flex-1 bg-transparent border-none focus:ring-0 text-sm font-medium text-on-surface placeholder:text-on-surface-variant/40">
+                    <div class="h-6 w-[1px] bg-outline-variant/20"></div>
+                    <button class="flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-widest text-on-surface-variant hover:text-on-surface transition-colors">
+                        <span class="material-symbols-outlined text-lg" data-icon="filter_list">filter_list</span>
+                        Sort
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Review Queue List (High Density) -->
+        <section class="px-12 pb-24">
+            <div class="max-w-6xl mx-auto space-y-3">
+                
+                <!-- Review Item Card 1 -->
+                <div class="group flex items-center bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10 hover:border-outline-variant/40 transition-all duration-300 hover:shadow-[0px_20px_40px_rgba(42,52,57,0.04)]">
+                    <div class="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-primary-dim mr-6">
+                        <span class="material-symbols-outlined text-2xl" data-icon="memory">memory</span>
+                    </div>
+                    
+                    <div class="flex-1 grid grid-cols-12 items-center gap-4">
+                        <div class="col-span-4">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h3 class="font-headline font-bold text-on-surface text-lg">NeuralNode-7-Pro</h3>
+                                <span class="px-2 py-0.5 rounded-full bg-tertiary-container text-on-tertiary-container text-[10px] font-bold uppercase tracking-tighter">v.2.4.1</span>
+                            </div>
+                            <p class="text-xs text-on-surface-variant">Authored by <span class="font-semibold">Vector Systems</span> • 2h ago</p>
+                        </div>
+                        
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Latency</span>
+                            <div class="flex items-center gap-1.5">
+                                <div class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></div>
+                                <span class="text-sm font-semibold text-on-surface">18ms</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Architecture</span>
+                            <span class="text-sm font-semibold text-on-surface">Transformer</span>
+                        </div>
+
+                        <div class="col-span-4 flex justify-end gap-3">
+                            <button class="px-5 py-2 text-sm font-bold text-on-surface-variant hover:bg-surface-container-high rounded-md transition-colors">
+                                View Diff
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-error border border-error/20 hover:bg-error/5 rounded-md transition-colors">
+                                Reject
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-white bg-gradient-to-br from-primary to-primary-dim rounded-md shadow-sm active:scale-95 transition-all">
+                                Approve
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Review Item Card 2 -->
+                <div class="group flex items-center bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10 hover:border-outline-variant/40 transition-all duration-300 hover:shadow-[0px_20px_40px_rgba(42,52,57,0.04)]">
+                    <div class="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-primary-dim mr-6">
+                        <span class="material-symbols-outlined text-2xl" data-icon="database">database</span>
+                    </div>
+                    
+                    <div class="flex-1 grid grid-cols-12 items-center gap-4">
+                        <div class="col-span-4">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h3 class="font-headline font-bold text-on-surface text-lg">QuerySynth_Alpha</h3>
+                                <span class="px-2 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant text-[10px] font-bold uppercase tracking-tighter">v.1.0.0</span>
+                            </div>
+                            <p class="text-xs text-on-surface-variant">Authored by <span class="font-semibold">DeepLogistics</span> • 5h ago</p>
+                        </div>
+                        
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Throughput</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-sm font-semibold text-on-surface">4.2k req/s</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Validation</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="material-symbols-outlined text-sm text-green-600" data-icon="check_circle">check_circle</span>
+                                <span class="text-sm font-semibold text-on-surface text-green-600">Passed</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-4 flex justify-end gap-3 opacity-80 group-hover:opacity-100 transition-opacity">
+                            <button class="px-5 py-2 text-sm font-bold text-on-surface-variant hover:bg-surface-container-high rounded-md transition-colors">
+                                View Diff
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-error border border-error/20 hover:bg-error/5 rounded-md transition-colors">
+                                Reject
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-white bg-gradient-to-br from-primary to-primary-dim rounded-md shadow-sm active:scale-95 transition-all">
+                                Approve
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Review Item Card 3 -->
+                <div class="group flex items-center bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10 hover:border-outline-variant/40 transition-all duration-300 hover:shadow-[0px_20px_40px_rgba(42,52,57,0.04)]">
+                    <div class="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-primary-dim mr-6">
+                        <span class="material-symbols-outlined text-2xl" data-icon="visibility">visibility</span>
+                    </div>
+                    
+                    <div class="flex-1 grid grid-cols-12 items-center gap-4">
+                        <div class="col-span-4">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h3 class="font-headline font-bold text-on-surface text-lg">VisionKernel_4</h3>
+                                <span class="px-2 py-0.5 rounded-full bg-tertiary-container text-on-tertiary-container text-[10px] font-bold uppercase tracking-tighter">v.4.0.0-rc</span>
+                            </div>
+                            <p class="text-xs text-on-surface-variant">Authored by <span class="font-semibold">OpticLabs</span> • 12h ago</p>
+                        </div>
+                        
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Accuracy</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-sm font-semibold text-on-surface">99.8%</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Security</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-sm font-semibold text-on-surface text-error">Audit Req.</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-4 flex justify-end gap-3">
+                            <button class="px-5 py-2 text-sm font-bold text-on-surface-variant hover:bg-surface-container-high rounded-md transition-colors">
+                                View Diff
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-error border border-error/20 hover:bg-error/5 rounded-md transition-colors">
+                                Reject
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-white bg-gradient-to-br from-primary to-primary-dim rounded-md shadow-sm active:scale-95 transition-all">
+                                Approve
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Review Item Card 4 (New Pattern/High density metadata) -->
+                <div class="group flex items-center bg-surface-container-lowest p-6 rounded-xl border border-outline-variant/10 hover:border-outline-variant/40 transition-all duration-300 hover:shadow-[0px_20px_40px_rgba(42,52,57,0.04)]">
+                    <div class="w-12 h-12 rounded-lg bg-surface-container-high flex items-center justify-center text-primary-dim mr-6">
+                        <span class="material-symbols-outlined text-2xl" data-icon="language">language</span>
+                    </div>
+                    
+                    <div class="flex-1 grid grid-cols-12 items-center gap-4">
+                        <div class="col-span-4">
+                            <div class="flex items-center gap-2 mb-1">
+                                <h3 class="font-headline font-bold text-on-surface text-lg">LinguaStream_Edge</h3>
+                                <span class="px-2 py-0.5 rounded-full bg-surface-container-highest text-on-surface-variant text-[10px] font-bold uppercase tracking-tighter">v.0.9-beta</span>
+                            </div>
+                            <p class="text-xs text-on-surface-variant">Authored by <span class="font-semibold">BabelSoft</span> • Yesterday</p>
+                        </div>
+                        
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Footprint</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-sm font-semibold text-on-surface">420 MB</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-2">
+                            <span class="text-[10px] uppercase tracking-widest text-on-surface-variant/60 block mb-1 font-bold">Compliance</span>
+                            <div class="flex items-center gap-1.5 text-on-surface-variant/40">
+                                <span class="material-symbols-outlined text-sm" data-icon="verified_user">verified_user</span>
+                                <span class="text-sm font-semibold">Tier 1</span>
+                            </div>
+                        </div>
+
+                        <div class="col-span-4 flex justify-end gap-3">
+                            <button class="px-5 py-2 text-sm font-bold text-on-surface-variant hover:bg-surface-container-high rounded-md transition-colors">
+                                View Diff
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-error border border-error/20 hover:bg-error/5 rounded-md transition-colors">
+                                Reject
+                            </button>
+                            <button class="px-5 py-2 text-sm font-bold text-white bg-gradient-to-br from-primary to-primary-dim rounded-md shadow-sm active:scale-95 transition-all">
+                                Approve
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Asymmetric Loading State -->
+            <div class="max-w-6xl mx-auto mt-12 flex justify-center">
+                <button class="flex items-center gap-3 px-8 py-3 bg-surface-container p-4 rounded-xl text-on-surface-variant font-bold text-xs uppercase tracking-[0.2em] hover:bg-surface-container-high transition-all">
+                    Load More Technical Specifications
+                    <span class="material-symbols-outlined text-lg" data-icon="expand_more">expand_more</span>
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer Anchor -->
+    <footer class="ml-64 bg-slate-50 dark:bg-slate-950 w-full py-12 border-t border-slate-200/15 dark:border-slate-800/15">
+        <div class="flex flex-col md:flex-row justify-between items-center px-8 max-w-7xl mx-auto">
+            <p class="font-inter text-xs uppercase tracking-widest text-slate-400 dark:text-slate-500">© 2024 Technical Curator Registry. Architectural Precision.</p>
+            <div class="flex gap-8 mt-6 md:mt-0">
+                <a href="#" class="font-inter text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-opacity duration-200">Privacy Policy</a>
+                <a href="#" class="font-inter text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-opacity duration-200">Terms of Service</a>
+                <a href="#" class="font-inter text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-opacity duration-200">Security</a>
+                <a href="#" class="font-inter text-xs uppercase tracking-widest text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-opacity duration-200">Contact</a>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html></style></head><body></body></html>

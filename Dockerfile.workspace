@@ -18,7 +18,7 @@ ENV PATH=/home/vscode/.local/bin:${PATH}
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 RUN useradd --create-home --shell /bin/bash vscode \
-    && mkdir -p /workspace /home/vscode/.npm \
+    && mkdir -p /workspace /home/vscode/.codex /home/vscode/.npm \
     && chown -R vscode:vscode /workspace /home/vscode
 
 WORKDIR /workspace

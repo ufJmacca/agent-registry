@@ -3,6 +3,7 @@ set -euo pipefail
 
 VERIFY_ONLY="${1:-}"
 AI_NATIVE_TOOL="git+https://github.com/ufJmacca/ai-native"
+CODEX_HOME_DIR="/home/vscode/.codex"
 
 export PATH="/home/vscode/.local/bin:${PATH}"
 
@@ -13,6 +14,7 @@ declare -a REQUIRED_FILES=(
 )
 
 declare -a REQUIRED_DIRS=(
+  "${CODEX_HOME_DIR}"
   "/home/vscode/.ssh"
 )
 
@@ -40,6 +42,15 @@ for path in "${REQUIRED_DIRS[@]}"; do
   fi
 done
 
+if [[ -d "${CODEX_HOME_DIR}" ]]; then
+  if [[ -w "${CODEX_HOME_DIR}" ]]; then
+    echo "[writable] ${CODEX_HOME_DIR}"
+  else
+    echo "[not-writable] ${CODEX_HOME_DIR}"
+    missing=1
+  fi
+fi
+
 for path in "${OPTIONAL_DIRS[@]}"; do
   if [[ -d "${path}" ]]; then
     echo "[ok] ${path}"
@@ -55,8 +66,9 @@ if [[ -d "/mnt/host-config/gh" ]] && [[ ! -e "/home/vscode/.config/gh" ]]; then
 fi
 
 if [[ "${missing}" -eq 1 ]]; then
-  echo "Required host credentials were not mounted into the devcontainer." >&2
+  echo "Required devcontainer credentials or runtime directories are not available." >&2
   echo "Check .devcontainer/compose.yaml and confirm ~/.codex, ~/.ssh, and ~/.gitconfig exist on the host." >&2
+  echo "Codex also requires ${CODEX_HOME_DIR} to be writable by the vscode user so it can persist runtime state." >&2
 fi
 
 if [[ "${VERIFY_ONLY}" == "--verify-only" ]]; then

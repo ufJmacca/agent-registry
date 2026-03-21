@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Technical Curator - Agent Console</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-surface": "#2a3439",
+              "on-secondary": "#f7f9ff",
+              "primary-dim": "#4a5268",
+              "surface-dim": "#cfdce3",
+              "error": "#9f403d",
+              "on-tertiary": "#fbf7ff",
+              "on-surface-variant": "#566166",
+              "surface-container-highest": "#d9e4ea",
+              "error-container": "#fe8983",
+              "primary-fixed-dim": "#ccd4ee",
+              "inverse-primary": "#dae2fd",
+              "secondary-fixed": "#d3e4fe",
+              "surface-variant": "#d9e4ea",
+              "surface": "#f7f9fb",
+              "inverse-surface": "#0b0f10",
+              "outline-variant": "#a9b4b9",
+              "secondary": "#506076",
+              "tertiary-container": "#d9d7f8",
+              "surface-container-low": "#f0f4f7",
+              "tertiary-dim": "#51516c",
+              "on-secondary-fixed": "#314055",
+              "on-primary-container": "#4a5167",
+              "tertiary-fixed-dim": "#cbc9e9",
+              "surface-tint": "#565e74",
+              "on-primary-fixed": "#373f54",
+              "on-tertiary-fixed": "#373851",
+              "tertiary-fixed": "#d9d7f8",
+              "surface-container-high": "#e1e9ee",
+              "tertiary": "#5d5d78",
+              "on-tertiary-fixed-variant": "#54546f",
+              "secondary-fixed-dim": "#c5d6f0",
+              "surface-container": "#e8eff3",
+              "error-dim": "#4e0309",
+              "on-background": "#2a3439",
+              "secondary-dim": "#44546a",
+              "on-secondary-fixed-variant": "#4d5d73",
+              "on-tertiary-container": "#4a4a65",
+              "outline": "#717c82",
+              "on-primary-fixed-variant": "#535b71",
+              "secondary-container": "#d3e4fe",
+              "primary-fixed": "#dae2fd",
+              "inverse-on-surface": "#9a9d9f",
+              "on-error-container": "#752121",
+              "background": "#f7f9fb",
+              "on-primary": "#f7f7ff",
+              "primary": "#565e74",
+              "surface-bright": "#f7f9fb",
+              "primary-container": "#dae2fd",
+              "on-secondary-container": "#435368",
+              "surface-container-lowest": "#ffffff",
+              "on-error": "#fff7f6"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .no-line-rule { border: none !important; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface">
+<!-- TopNavBar -->
+<header class="fixed top-0 w-full z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md shadow-[0px_20px_40px_rgba(42,52,57,0.06)] no-line-rule">
+<div class="flex justify-between items-center h-16 px-8 max-w-full">
+<div class="flex items-center gap-8">
+<span class="text-xl font-bold tracking-tighter text-slate-900 dark:text-white font-headline">Technical Curator</span>
+<nav class="hidden md:flex items-center space-x-6">
+<a class="font-manrope tracking-tight font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" href="#">Registry</a>
+<a class="font-manrope tracking-tight font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" href="#">Intelligence</a>
+<a class="font-manrope tracking-tight font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" href="#">Performance</a>
+<a class="font-manrope tracking-tight font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors" href="#">Documentation</a>
+</nav>
+</div>
+<div class="flex items-center gap-4">
+<button class="px-4 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-800 rounded-md text-slate-800 dark:text-slate-100 transition-all hover:opacity-80">Sign In</button>
+<button class="px-4 py-2 text-sm font-semibold bg-primary text-on-primary rounded-md bg-gradient-to-br from-primary to-primary-dim transition-all hover:opacity-90">Console</button>
+</div>
+</div>
+</header>
+<!-- SideNavBar -->
+<aside class="h-screen w-64 fixed left-0 top-0 bg-slate-50 dark:bg-slate-950 z-40 hidden md:flex flex-col p-4 space-y-6 pt-20 no-line-rule">
+<div class="mb-4">
+<h2 class="font-manrope font-extrabold text-slate-900 dark:text-white text-lg px-2">Agent Console</h2>
+<p class="text-xs text-on-surface-variant px-2 opacity-70">Precision Intelligence</p>
+</div>
+<nav class="flex-1 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm rounded-md font-inter text-sm font-medium transition-all" href="#">
+<span class="material-symbols-outlined text-xl" data-icon="dashboard">dashboard</span>
+<span>Dashboard</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 font-inter text-sm font-medium transition-all hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-xl" data-icon="rule">rule</span>
+<span>Review Queue</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 font-inter text-sm font-medium transition-all hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-xl" data-icon="database">database</span>
+<span>Agent Registry</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 font-inter text-sm font-medium transition-all hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-xl" data-icon="edit_note">edit_note</span>
+<span>Drafts</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 font-inter text-sm font-medium transition-all hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-xl" data-icon="settings">settings</span>
+<span>Settings</span>
+</a>
+</nav>
+<div class="mt-auto pt-6 space-y-4 border-t border-slate-200/50 dark:border-slate-800/50">
+<button class="w-full flex items-center justify-center gap-2 py-2.5 bg-primary text-on-primary rounded-md text-sm font-semibold transition-all active:scale-95">
+<span class="material-symbols-outlined text-lg" data-icon="add">add</span>
+                New Agent
+            </button>
+<div class="space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 font-inter text-sm font-medium transition-all hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="help">help</span>
+<span>Support</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 font-inter text-sm font-medium transition-all hover:translate-x-1" href="#">
+<span class="material-symbols-outlined text-lg" data-icon="sensors">sensors</span>
+<span>API Status</span>
+</a>
+</div>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="md:ml-64 pt-16 min-h-screen">
+<div class="max-w-7xl mx-auto px-8 py-12">
+<!-- User & Tenant Context -->
+<header class="mb-14 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+<div>
+<h1 class="text-4xl font-extrabold tracking-tight font-headline text-on-surface mb-2">System Overview</h1>
+<p class="text-on-surface-variant body-md max-w-xl">Welcome back, <span class="font-semibold text-primary">Alex Sterling</span>. You are managing the <span class="font-semibold">Quantum Dynamics</span> tenant workspace.</p>
+</div>
+<div class="flex items-center gap-4 bg-surface-container-low p-4 rounded-xl shadow-sm">
+<img class="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm" data-alt="User profile portrait for Alex Sterling" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCYlYrWbmEFeZ5aNd9exsRV1ArflWFsF70gIHPOrP8yJobug1km4aNqbHQs3zVuMLXV0kWFfjSUuvYWpYlXT5LnKU5vhKDV5y_RiUx95cpy2hO8hE2DkL5vyEdlDf5fhojOeWAbMuBI6tRzq6rYuBvGYTRM8Juif4k4Qka1KINBBkXUCFkUyBR0evh4w3ZYe5tpodqjajjP4NsujUZSt0D97xbb-FcL5tPwJOJoNzsYI-IvoY4ex6ZF2bc66jXDO9-kTkSVINLz"/>
+<div class="flex flex-col">
+<span class="text-sm font-bold text-on-surface leading-tight">Alex Sterling</span>
+<span class="text-xs text-on-surface-variant font-medium">Administrator</span>
+</div>
+</div>
+</header>
+<!-- Bento Grid Dashboard -->
+<div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+<!-- Main CTA / Feature Card -->
+<div class="md:col-span-2 lg:col-span-2 bg-gradient-to-br from-primary to-primary-dim p-8 rounded-xl shadow-[0px_20px_40px_rgba(86,94,116,0.12)] text-on-primary flex flex-col justify-between aspect-video md:aspect-auto">
+<div>
+<div class="w-12 h-12 bg-white/20 backdrop-blur-md rounded-lg flex items-center justify-center mb-6">
+<span class="material-symbols-outlined text-2xl" data-icon="rocket_launch">rocket_launch</span>
+</div>
+<h3 class="text-2xl font-bold font-headline mb-2">Draft Creation</h3>
+<p class="text-on-primary/80 text-sm leading-relaxed max-w-sm">Architect a new autonomous entity with precision intelligence parameters. Initialize with pre-set templates or custom logic schemas.</p>
+</div>
+<div class="mt-8">
+<button class="px-6 py-3 bg-white text-primary font-bold rounded-md hover:bg-surface transition-all flex items-center gap-2 group">
+                            Start New Agent
+                            <span class="material-symbols-outlined text-lg transition-transform group-hover:translate-x-1" data-icon="arrow_forward">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Secondary Nav Card: Environment -->
+<div class="bg-surface-container-lowest p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow group cursor-pointer border border-transparent hover:border-outline-variant/20">
+<div class="flex justify-between items-start mb-10">
+<div class="w-10 h-10 bg-tertiary-container rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-on-tertiary-container" data-icon="cloud_sync">cloud_sync</span>
+</div>
+<span class="material-symbols-outlined text-outline-variant opacity-0 group-hover:opacity-100 transition-opacity" data-icon="open_in_new">open_in_new</span>
+</div>
+<h3 class="text-lg font-bold font-headline text-on-surface mb-2">Environment Management</h3>
+<p class="text-on-surface-variant text-sm">Control production, staging, and sandboxed simulation layers.</p>
+</div>
+<!-- Secondary Nav Card: Review Queue -->
+<div class="bg-surface-container-lowest p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow group cursor-pointer border border-transparent hover:border-outline-variant/20">
+<div class="flex justify-between items-start mb-10">
+<div class="w-10 h-10 bg-surface-container-high rounded-lg flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant" data-icon="fact_check">fact_check</span>
+</div>
+<div class="px-2 py-1 bg-error-container text-on-error-container text-[10px] font-bold rounded uppercase tracking-wider">4 Urgent</div>
+</div>
+<h3 class="text-lg font-bold font-headline text-on-surface mb-2">Review Queue</h3>
+<p class="text-on-surface-variant text-sm">Audit agent outputs and validate logic deployments before release.</p>
+</div>
+<!-- Version Tracking Card -->
+<div class="md:col-span-2 bg-surface-container-low p-8 rounded-xl flex flex-col justify-between">
+<div>
+<h4 class="text-xs font-bold uppercase tracking-[0.2em] text-on-surface-variant mb-6">Available Versions</h4>
+<div class="space-y-4">
+<div class="flex items-center justify-between p-3 bg-surface-container-lowest rounded-lg">
+<div class="flex items-center gap-3">
+<span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+<span class="font-mono text-sm font-bold">v4.2.0-stable</span>
+</div>
+<span class="text-[10px] font-bold py-1 px-2 bg-surface-container-highest rounded-full text-on-surface-variant">LATEST</span>
+</div>
+<div class="flex items-center justify-between p-3 bg-surface-container-lowest/50 rounded-lg">
+<div class="flex items-center gap-3 opacity-60">
+<span class="w-2 h-2 rounded-full bg-outline-variant"></span>
+<span class="font-mono text-sm">v4.1.9-legacy</span>
+</div>
+<span class="text-xs text-outline-variant">Mar 12, 2024</span>
+</div>
+</div>
+</div>
+<a class="mt-6 text-sm font-bold text-primary flex items-center gap-1 hover:underline" href="#">
+                        View Version History
+                        <span class="material-symbols-outlined text-sm" data-icon="chevron_right">chevron_right</span>
+</a>
+</div>
+<!-- Active Agents Summary Card -->
+<div class="md:col-span-2 bg-surface-container-lowest p-8 rounded-xl shadow-sm flex items-center gap-10">
+<div class="relative w-24 h-24 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90">
+<circle class="text-surface-container-highest" cx="48" cy="48" fill="transparent" r="40" stroke="currentColor" stroke-width="8"></circle>
+<circle class="text-primary" cx="48" cy="48" fill="transparent" r="40" stroke="currentColor" stroke-dasharray="251.2" stroke-dashoffset="60" stroke-width="8"></circle>
+</svg>
+<span class="absolute text-xl font-bold font-headline">86%</span>
+</div>
+<div>
+<h3 class="text-xl font-bold font-headline text-on-surface mb-1">Active Agents</h3>
+<p class="text-on-surface-variant text-sm mb-4">Current fleet performance is optimal across all zones.</p>
+<div class="flex gap-6">
+<div class="flex flex-col">
+<span class="text-2xl font-bold text-on-surface">124</span>
+<span class="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Online</span>
+</div>
+<div class="flex flex-col">
+<span class="text-2xl font-bold text-on-surface">3</span>
+<span class="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Alerts</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Recent Activity Asymmetric Layout -->
+<section class="mt-20">
+<div class="flex justify-between items-end mb-10">
+<h2 class="text-2xl font-bold font-headline">Recent Intelligence Activity</h2>
+<a class="text-sm font-semibold text-primary" href="#">Full Logs</a>
+</div>
+<div class="space-y-4 ml-0 md:ml-12 lg:mr-24">
+<!-- Activity Item 1 -->
+<div class="flex items-center gap-6 p-4 bg-surface rounded-lg hover:bg-surface-container-low transition-colors">
+<div class="text-xs font-mono text-outline-variant shrink-0 w-16">14:02:11</div>
+<div class="w-2 h-2 rounded-full bg-tertiary shrink-0"></div>
+<div class="flex-1 text-sm">
+<span class="font-bold text-on-surface">Agent-Sigma-7</span> successfully synchronized with <span class="italic">Elastic Cluster B</span>.
+                        </div>
+<div class="text-xs text-on-surface-variant bg-surface-container-highest px-3 py-1 rounded-full">Sync Success</div>
+</div>
+<!-- Activity Item 2 -->
+<div class="flex items-center gap-6 p-4 bg-surface rounded-lg hover:bg-surface-container-low transition-colors">
+<div class="text-xs font-mono text-outline-variant shrink-0 w-16">13:58:45</div>
+<div class="w-2 h-2 rounded-full bg-error shrink-0"></div>
+<div class="flex-1 text-sm">
+<span class="font-bold text-on-surface">Reviewer-Bot</span> flagged potential logic loop in <span class="font-bold">Draft-442</span>.
+                        </div>
+<div class="text-xs text-on-error-container bg-error-container/20 px-3 py-1 rounded-full">Manual Review</div>
+</div>
+<!-- Activity Item 3 -->
+<div class="flex items-center gap-6 p-4 bg-surface rounded-lg hover:bg-surface-container-low transition-colors">
+<div class="text-xs font-mono text-outline-variant shrink-0 w-16">13:45:00</div>
+<div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+<div class="flex-1 text-sm">
+                            New environment <span class="font-bold">Edge-Staging-04</span> provisioned for deployment testing.
+                        </div>
+<div class="text-xs text-on-primary-container bg-primary-container/40 px-3 py-1 rounded-full">Infra Update</div>
+</div>
+</div>
+</section>
+</div>
+</main>
+<!-- Footer -->
+<footer class="md:ml-64 bg-slate-50 dark:bg-slate-950 w-full py-12 border-t border-slate-200/15 dark:border-slate-800/15 tonal-shift">
+<div class="flex flex-col md:flex-row justify-between items-center px-8 max-w-7xl mx-auto">
+<div class="text-slate-400 dark:text-slate-500 font-inter text-xs uppercase tracking-widest mb-6 md:mb-0">
+                © 2024 Technical Curator Registry. Architectural Precision.
+            </div>
+<div class="flex gap-8">
+<a class="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-opacity duration-200 font-inter text-xs uppercase tracking-widest" href="#">Privacy Policy</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-opacity duration-200 font-inter text-xs uppercase tracking-widest" href="#">Terms of Service</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-opacity duration-200 font-inter text-xs uppercase tracking-widest" href="#">Security</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-opacity duration-200 font-inter text-xs uppercase tracking-widest" href="#">Contact</a>
+</div>
+</div>
+</footer>
+<!-- FAB Suppression: Contextual logic applies (Hidden on Dashboard based on prompt details/cleanliness focus) -->
+</body></html>

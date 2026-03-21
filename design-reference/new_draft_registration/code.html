@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>New Agent Draft | Technical Curator</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-secondary-container": "#435368",
+              "surface-bright": "#f7f9fb",
+              "on-tertiary-fixed": "#373851",
+              "surface-tint": "#565e74",
+              "secondary-container": "#d3e4fe",
+              "tertiary-dim": "#51516c",
+              "surface": "#f7f9fb",
+              "tertiary-fixed": "#d9d7f8",
+              "surface-variant": "#d9e4ea",
+              "error": "#9f403d",
+              "on-tertiary-container": "#4a4a65",
+              "on-primary-container": "#4a5167",
+              "surface-container": "#e8eff3",
+              "error-container": "#fe8983",
+              "on-surface-variant": "#566166",
+              "primary-container": "#dae2fd",
+              "tertiary-fixed-dim": "#cbc9e9",
+              "outline-variant": "#a9b4b9",
+              "secondary-fixed-dim": "#c5d6f0",
+              "on-secondary-fixed": "#314055",
+              "primary-dim": "#4a5268",
+              "secondary-dim": "#44546a",
+              "on-primary-fixed": "#373f54",
+              "primary-fixed-dim": "#ccd4ee",
+              "on-primary-fixed-variant": "#535b71",
+              "on-error-container": "#752121",
+              "on-background": "#2a3439",
+              "tertiary": "#5d5d78",
+              "secondary": "#506076",
+              "on-secondary-fixed-variant": "#4d5d73",
+              "background": "#f7f9fb",
+              "on-error": "#fff7f6",
+              "surface-container-high": "#e1e9ee",
+              "surface-container-lowest": "#ffffff",
+              "on-secondary": "#f7f9ff",
+              "surface-container-highest": "#d9e4ea",
+              "tertiary-container": "#d9d7f8",
+              "surface-container-low": "#f0f4f7",
+              "on-tertiary-fixed-variant": "#54546f",
+              "primary": "#565e74",
+              "inverse-surface": "#0b0f10",
+              "inverse-primary": "#dae2fd",
+              "primary-fixed": "#dae2fd",
+              "outline": "#717c82",
+              "on-tertiary": "#fbf7ff",
+              "on-primary": "#f7f7ff",
+              "error-dim": "#4e0309",
+              "secondary-fixed": "#d3e4fe",
+              "on-surface": "#2a3439",
+              "inverse-on-surface": "#9a9d9f",
+              "surface-dim": "#cfdce3"
+            },
+            fontFamily: {
+              "headline": ["Manrope"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+            color: #2a3439;
+        }
+        .font-manrope { font-family: 'Manrope', sans-serif; }
+    </style>
+</head>
+<body class="bg-surface text-on-surface antialiased">
+<!-- SideNavBar (Execution from JSON) -->
+<aside class="h-screen w-64 fixed left-0 top-0 z-50 bg-slate-100 dark:bg-slate-950 flex flex-col p-4 gap-2">
+<div class="mb-8 px-2">
+<h1 class="font-manrope font-extrabold text-slate-900 dark:text-slate-50 text-xl tracking-tighter">Registry Admin</h1>
+<p class="text-xs text-slate-500 font-medium">Technical Curator</p>
+</div>
+<nav class="flex-1 space-y-1">
+<!-- Dashboard -->
+<a class="text-slate-500 dark:text-slate-400 p-3 flex items-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-inter text-sm font-medium">Dashboard</span>
+</a>
+<!-- Review Queue -->
+<a class="text-slate-500 dark:text-slate-400 p-3 flex items-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined">rule</span>
+<span class="font-inter text-sm font-medium">Review Queue</span>
+</a>
+<!-- Agent Registry -->
+<a class="text-slate-500 dark:text-slate-400 p-3 flex items-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined">layers</span>
+<span class="font-inter text-sm font-medium">Agent Registry</span>
+</a>
+<!-- Drafts (ACTIVE STATE LOGIC applied) -->
+<a class="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 shadow-sm rounded-lg p-3 flex items-center gap-3 translate-x-1 duration-200" href="#">
+<span class="material-symbols-outlined">edit_note</span>
+<span class="font-inter text-sm font-medium">Drafts</span>
+</a>
+<!-- Settings -->
+<a class="text-slate-500 dark:text-slate-400 p-3 flex items-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="font-inter text-sm font-medium">Settings</span>
+</a>
+</nav>
+<div class="mt-auto pt-4 space-y-1">
+<button class="w-full bg-primary text-on-primary py-2.5 rounded-md font-medium text-sm mb-4 shadow-sm hover:opacity-90 transition-all flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-sm">add</span>
+                New Entry
+            </button>
+<a class="text-slate-500 dark:text-slate-400 p-3 flex items-center gap-3 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition-all group" href="#">
+<span class="material-symbols-outlined">help</span>
+<span class="font-inter text-sm font-medium">Help Center</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Canvas -->
+<main class="ml-64 min-h-screen p-12">
+<header class="max-w-5xl mx-auto mb-16">
+<div class="flex items-center gap-2 text-on-surface-variant mb-2">
+<span class="material-symbols-outlined text-sm">arrow_back</span>
+<span class="text-xs font-label uppercase tracking-widest">Back to Drafts</span>
+</div>
+<h2 class="font-headline font-extrabold text-5xl text-on-surface tracking-tight">New Agent Draft</h2>
+<p class="mt-4 text-on-surface-variant font-body max-w-2xl leading-relaxed">
+                Initialize a new autonomous agent configuration. Ensure all technical metadata complies with the curator guidelines before submitting for peer review.
+            </p>
+</header>
+<section class="max-w-5xl mx-auto space-y-12 pb-24">
+<!-- General Metadata Section -->
+<div class="bg-surface-container-low rounded-xl p-8 transition-all">
+<div class="flex items-baseline justify-between mb-8">
+<h3 class="font-headline font-bold text-xl text-on-surface">General Metadata</h3>
+<span class="text-[10px] font-bold px-2 py-0.5 bg-surface-container-highest text-on-surface-variant rounded-full tracking-tighter uppercase">Required</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
+<div class="space-y-2">
+<label class="text-xs font-label font-semibold text-on-surface-variant/80 uppercase tracking-wider ml-1">Agent Name</label>
+<input class="w-full bg-surface-container-lowest border-none outline outline-1 outline-outline-variant/15 rounded-md px-4 py-3 text-on-surface focus:outline-outline-variant/40 focus:bg-surface-container-high transition-all font-body text-sm" placeholder="e.g. Neural-Scribe-7" type="text"/>
+</div>
+<div class="space-y-2">
+<label class="text-xs font-label font-semibold text-on-surface-variant/80 uppercase tracking-wider ml-1">Version ID</label>
+<input class="w-full bg-surface-container-lowest border-none outline outline-1 outline-outline-variant/15 rounded-md px-4 py-3 text-on-surface focus:outline-outline-variant/40 focus:bg-surface-container-high transition-all font-body text-sm" placeholder="v1.2.0" type="text"/>
+</div>
+<div class="md:col-span-2 space-y-2">
+<label class="text-xs font-label font-semibold text-on-surface-variant/80 uppercase tracking-wider ml-1">Description</label>
+<textarea class="w-full bg-surface-container-lowest border-none outline outline-1 outline-outline-variant/15 rounded-md px-4 py-3 text-on-surface focus:outline-outline-variant/40 focus:bg-surface-container-high transition-all font-body text-sm resize-none" placeholder="Define the primary function and constraints of this agent..." rows="3"></textarea>
+</div>
+<div class="md:col-span-1 space-y-2">
+<label class="text-xs font-label font-semibold text-on-surface-variant/80 uppercase tracking-wider ml-1">Primary Model</label>
+<div class="relative">
+<select class="w-full appearance-none bg-surface-container-lowest border-none outline outline-1 outline-outline-variant/15 rounded-md px-4 py-3 text-on-surface focus:outline-outline-variant/40 focus:bg-surface-container-high transition-all font-body text-sm cursor-pointer">
+<option>GPT-4o (Standard)</option>
+<option>Claude 3.5 Sonnet</option>
+<option>Llama 3 70B</option>
+<option>Gemini 1.5 Pro</option>
+</select>
+<span class="material-symbols-outlined absolute right-4 top-3 pointer-events-none text-on-surface-variant">expand_more</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Environment Publication -->
+<div class="bg-surface-container-low rounded-xl p-8 transition-all">
+<h3 class="font-headline font-bold text-xl text-on-surface mb-8">Environment Publication</h3>
+<div class="space-y-4">
+<!-- Environment Row: Production -->
+<div class="flex items-center gap-6 p-4 bg-surface-container-lowest rounded-lg border border-transparent transition-all group">
+<div class="w-32">
+<span class="text-sm font-bold text-on-surface">Production</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</div>
+<span class="text-xs font-label text-on-surface-variant">Enable</span>
+</div>
+<div class="flex-1">
+<input class="w-full bg-surface-container-low border-none outline outline-1 outline-outline-variant/15 rounded px-4 py-2 text-on-surface text-xs focus:bg-surface-container-high transition-all" placeholder="https://api.agentregistry.com/v1/prod" type="text"/>
+</div>
+</div>
+<!-- Environment Row: Staging -->
+<div class="flex items-center gap-6 p-4 bg-surface-container-lowest rounded-lg border border-transparent transition-all group">
+<div class="w-32">
+<span class="text-sm font-bold text-on-surface">Staging</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</div>
+<span class="text-xs font-label text-on-surface-variant">Enable</span>
+</div>
+<div class="flex-1">
+<input class="w-full bg-surface-container-low border-none outline outline-1 outline-outline-variant/15 rounded px-4 py-2 text-on-surface text-xs focus:bg-surface-container-high transition-all" placeholder="https://staging.agentregistry.com/v1/beta" type="text"/>
+</div>
+</div>
+<!-- Environment Row: Development -->
+<div class="flex items-center gap-6 p-4 bg-surface-container-lowest rounded-lg border border-transparent transition-all group">
+<div class="w-32">
+<span class="text-sm font-bold text-on-surface">Development</span>
+</div>
+<div class="flex items-center gap-3">
+<div class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox"/>
+<div class="w-9 h-5 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+</div>
+<span class="text-xs font-label text-on-surface-variant">Enable</span>
+</div>
+<div class="flex-1">
+<input class="w-full bg-surface-container-low border-none outline outline-1 outline-outline-variant/15 rounded px-4 py-2 text-on-surface text-xs opacity-50 focus:bg-surface-container-high transition-all" placeholder="Internal endpoint URL..." type="text"/>
+</div>
+</div>
+</div>
+</div>
+<!-- Shared Contracts -->
+<div class="bg-surface-container-low rounded-xl p-8 transition-all">
+<h3 class="font-headline font-bold text-xl text-on-surface mb-8">Shared Contracts</h3>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+<!-- Capability Card 1 -->
+<div class="bg-surface-container-lowest p-5 rounded-xl border border-transparent hover:border-outline-variant/20 transition-all cursor-pointer group">
+<div class="flex items-center justify-between mb-4">
+<span class="material-symbols-outlined text-primary text-3xl">database</span>
+<div class="w-5 h-5 rounded border-2 border-outline-variant/30 flex items-center justify-center group-hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-white bg-primary w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">check</span>
+</div>
+</div>
+<h4 class="font-bold text-sm text-on-surface mb-1">Data Access</h4>
+<p class="text-xs text-on-surface-variant leading-relaxed">Permission to read/write to curated dataset nodes.</p>
+</div>
+<!-- Capability Card 2 -->
+<div class="bg-surface-container-lowest p-5 rounded-xl border border-primary/20 bg-primary/5 transition-all cursor-pointer group shadow-sm">
+<div class="flex items-center justify-between mb-4">
+<span class="material-symbols-outlined text-primary text-3xl">bolt</span>
+<div class="w-5 h-5 rounded border-2 border-primary bg-primary flex items-center justify-center">
+<span class="material-symbols-outlined text-[14px] text-white">check</span>
+</div>
+</div>
+<h4 class="font-bold text-sm text-on-surface mb-1">Inference</h4>
+<p class="text-xs text-on-surface-variant leading-relaxed">Access to shared GPU clusters for real-time processing.</p>
+</div>
+<!-- Capability Card 3 -->
+<div class="bg-surface-container-lowest p-5 rounded-xl border border-transparent hover:border-outline-variant/20 transition-all cursor-pointer group">
+<div class="flex items-center justify-between mb-4">
+<span class="material-symbols-outlined text-primary text-3xl">verified_user</span>
+<div class="w-5 h-5 rounded border-2 border-outline-variant/30 flex items-center justify-center group-hover:border-primary transition-colors">
+<span class="material-symbols-outlined text-[14px] text-white bg-primary w-full h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">check</span>
+</div>
+</div>
+<h4 class="font-bold text-sm text-on-surface mb-1">Security Audit</h4>
+<p class="text-xs text-on-surface-variant leading-relaxed">Auto-triggered pentesting for all public endpoints.</p>
+</div>
+</div>
+</div>
+<!-- Action Footer -->
+<div class="flex items-center justify-between pt-8 mt-12 border-t border-outline-variant/10">
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="material-symbols-outlined">info</span>
+<p class="text-xs italic">Configuration changes are automatically saved to your drafts cloud storage.</p>
+</div>
+<div class="flex gap-4">
+<button class="px-8 py-3 bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-semibold text-sm rounded-md transition-all">
+                        Save as Draft
+                    </button>
+<button class="px-8 py-3 bg-gradient-to-br from-primary to-primary-dim text-white font-bold text-sm rounded-md shadow-[0px_10px_20px_rgba(86,94,116,0.2)] hover:scale-[1.02] active:scale-[0.98] transition-all">
+                        Submit for Review
+                    </button>
+</div>
+</div>
+</section>
+</main>
+<!-- Visual Accents (Editorial Elements) -->
+<div class="fixed top-0 right-0 w-1/3 h-full pointer-events-none overflow-hidden z-[-1] opacity-40">
+<div class="absolute top-[10%] right-[-10%] w-[500px] h-[500px] rounded-full blur-[120px] bg-secondary-container/30"></div>
+<div class="absolute bottom-[20%] right-[10%] w-[300px] h-[300px] rounded-full blur-[100px] bg-primary-container/20"></div>
+</div>
+</body></html>
