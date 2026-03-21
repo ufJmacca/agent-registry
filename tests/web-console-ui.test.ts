@@ -310,6 +310,142 @@ function assertShell(
   }
 }
 
+function matchHtmlFragment(html: string, pattern: RegExp, failureMessage: string): string {
+  const match = html.match(pattern);
+
+  assert.ok(match, failureMessage);
+  return match[0];
+}
+
+function countHtmlMatches(html: string, pattern: RegExp): number {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  return html.match(new RegExp(pattern.source, flags))?.length ?? 0;
+}
+
+function extractReviewQueueEntryHtml(html: string, entryKey: string): string {
+  return matchHtmlFragment(
+    html,
+    new RegExp(`<li[^>]+data-review-entry="${escapeRegExp(entryKey)}"[^>]*>[\\s\\S]*?<\\/li>`),
+    `Expected review queue row for ${entryKey}`,
+  );
+}
+
+function extractReviewQueueSectionHtml(html: string): string {
+  return matchHtmlFragment(
+    html,
+    /<section class="review-queue stack">[\s\S]*?<\/section>/,
+    "Expected review queue section",
+  );
+}
+
+function assertReviewQueueOmitsUnsupportedControls(html: string, entryCount: number): void {
+  const reviewQueueSectionHtml = extractReviewQueueSectionHtml(html);
+  const expectedReviewQueueStructure =
+    entryCount === 0
+      ? /^<section class="review-queue stack">\s*<header class="review-queue__hero card">[\s\S]*?<\/header>\s*<section class="review-queue__empty card stack">[\s\S]*?<\/section>\s*<\/section>$/
+      : /^<section class="review-queue stack">\s*<header class="review-queue__hero card">[\s\S]*?<\/header>\s*<ol class="review-queue__list" aria-label="Pending review decisions">[\s\S]*?<\/ol>\s*<\/section>$/;
+
+  assert.match(
+    reviewQueueSectionHtml,
+    expectedReviewQueueStructure,
+    entryCount === 0
+      ? "Expected review queue to render only the hero and empty state"
+      : "Expected review queue to render only the hero and decision list",
+  );
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<header\b/i), 1);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<section\b/i), entryCount === 0 ? 2 : 1);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<aside\b/i), 0);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<nav\b/i), 0);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<ol\b/i), entryCount === 0 ? 0 : 1);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<ul\b/i), 0);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<a\b/i), entryCount);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<button\b/i), entryCount * 2);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<form\b/), entryCount * 2);
+  assert.equal(countHtmlMatches(reviewQueueSectionHtml, /<textarea\b/), entryCount);
+  assert.equal(
+    countHtmlMatches(reviewQueueSectionHtml, /<input\b(?![^>]*type="hidden")[^>]*>/i),
+    0,
+  );
+  assert.doesNotMatch(reviewQueueSectionHtml, /<input\b[^>]*type="search"/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /\brole="search"\b/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /<select\b/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /\brole="button"\b/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /\brole="link"\b/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /\brole="toolbar"\b/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /\brole="tablist"\b/i);
+  assert.doesNotMatch(reviewQueueSectionHtml, /\brole="tab"\b/i);
+}
+
+function assertReviewQueueEntry(
+  html: string,
+  options: {
+    displayName: string;
+    fixture: PendingVersionFixture;
+    tenantId: string;
+  },
+): void {
+  const entryKey = `${options.fixture.agentId}:${options.fixture.versionId}`;
+  const versionDetailHref = `/tenants/${options.tenantId}/agents/${options.fixture.agentId}/versions/${options.fixture.versionId}`;
+  const rejectReasonId = `review-reject-reason-${options.fixture.agentId}-${options.fixture.versionId}`;
+  const rowHtml = extractReviewQueueEntryHtml(html, entryKey);
+
+  assert.equal(countHtmlMatches(rowHtml, /<section\b/i), 0);
+  assert.equal(countHtmlMatches(rowHtml, /<aside\b/i), 0);
+  assert.equal(countHtmlMatches(rowHtml, /<nav\b/i), 0);
+  assert.equal(countHtmlMatches(rowHtml, /<ol\b/i), 0);
+  assert.equal(countHtmlMatches(rowHtml, /<ul\b/i), 0);
+  assert.equal(countHtmlMatches(rowHtml, /<a\b/i), 1);
+  assert.equal(countHtmlMatches(rowHtml, /<button\b/i), 2);
+  assert.equal(countHtmlMatches(rowHtml, /<textarea\b/i), 1);
+  assert.equal(countHtmlMatches(rowHtml, /<input\b(?![^>]*type="hidden")[^>]*>/i), 0);
+  assert.equal(countHtmlMatches(rowHtml, /<select\b/i), 0);
+  assert.doesNotMatch(rowHtml, /\brole="button"\b/i);
+  assert.doesNotMatch(rowHtml, /\brole="link"\b/i);
+  const approveFormHtml = matchHtmlFragment(
+    rowHtml,
+    new RegExp(
+      `<form[^>]+action="${escapeRegExp(`${versionDetailHref}/approve`)}"[^>]*>[\\s\\S]*?<\\/form>`,
+    ),
+    `Expected approve form inside review queue row ${entryKey}`,
+  );
+  const rejectFormHtml = matchHtmlFragment(
+    rowHtml,
+    new RegExp(
+      `<form[^>]+action="${escapeRegExp(`${versionDetailHref}/reject`)}"[^>]*>[\\s\\S]*?<\\/form>`,
+    ),
+    `Expected reject form inside review queue row ${entryKey}`,
+  );
+
+  assert.match(
+    rowHtml,
+    new RegExp(`<h2>${escapeRegExp(options.displayName)}<\\/h2>`),
+  );
+  assert.match(
+    rowHtml,
+    new RegExp(`<a[^>]+href="${escapeRegExp(versionDetailHref)}"[^>]*>Inspect version detail<\\/a>`),
+  );
+  assert.match(approveFormHtml, /method="post"/);
+  assert.match(
+    approveFormHtml,
+    /<button[^>]+type="submit"[^>]*>Approve<\/button>/,
+  );
+  assert.match(rejectFormHtml, /method="post"/);
+  assert.match(
+    rejectFormHtml,
+    new RegExp(`<label[^>]+for="${escapeRegExp(rejectReasonId)}"[^>]*>Reject reason<\\/label>`),
+  );
+  assert.match(
+    rejectFormHtml,
+    new RegExp(
+      `<textarea[^>]+id="${escapeRegExp(rejectReasonId)}"[^>]+name="reason"[^>]+required`,
+    ),
+  );
+  assert.match(
+    rejectFormHtml,
+    /<button[^>]+type="submit"[^>]*>Reject<\/button>/,
+  );
+}
+
 test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", async () => {
   // Arrange
   const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
@@ -1207,8 +1343,19 @@ test("admin console manages environments, reviews pending versions, edits overla
       page: "review-queue",
       shell: "authenticated",
     });
-    assert.match(reviewQueueHtml, /Case Router/);
-    assert.match(reviewQueueHtml, /Case Escalator/);
+    assert.equal((reviewQueueHtml.match(/data-review-entry="/g) ?? []).length, 2);
+    assertReviewQueueEntry(reviewQueueHtml, {
+      displayName: "Case Router",
+      fixture: approveFixture,
+      tenantId: "tenant-alpha",
+    });
+    assertReviewQueueEntry(reviewQueueHtml, {
+      displayName: "Case Escalator",
+      fixture: rejectFixture,
+      tenantId: "tenant-alpha",
+    });
+    assert.match(reviewQueueHtml, /Submitted for review/);
+    assertReviewQueueOmitsUnsupportedControls(reviewQueueHtml, 2);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
     assertShell(approvedVersionHtml, {

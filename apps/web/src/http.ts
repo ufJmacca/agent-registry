@@ -125,6 +125,24 @@ function renderPreformattedJson(value: unknown): string {
   return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+function formatSubmittedAtLabel(value: string | null): string {
+  if (value === null) {
+    return "Submitted for review";
+  }
+
+  const submittedAt = new Date(value);
+
+  if (Number.isNaN(submittedAt.getTime())) {
+    return `Submitted for review · ${value}`;
+  }
+
+  return `Submitted for review · ${new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(submittedAt)} UTC`;
+}
+
 function buildAuthenticatedNavigation(
   principal: ResolvedPrincipal,
   currentNavigationKey: AuthenticatedNavigationKey,
@@ -1043,47 +1061,79 @@ async function renderReviewQueuePage(
   assertTenantAccess(principal, tenantId);
   assertTenantAdminAccess(principal);
 
-  const queue = await listReviewQueue(db, tenantId);
+  const [tenantDisplayName, queue] = await Promise.all([
+    loadTenantDisplayName(db, tenantId),
+    listReviewQueue(db, tenantId),
+  ]);
 
   writeHtml(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-      <h1>Review Queue</h1>
-      <p class="meta">Pending versions for ${escapeHtml(tenantId)}</p>
-      <p><a href="/console">Back to dashboard</a></p>
-    </section>
-    <section class="stack">
+      body: `<section class="review-queue stack">
+      <header class="review-queue__hero card">
+        <div class="review-queue__hero-copy stack">
+          <p class="console-kicker">Validation Authority</p>
+          <h1>Review Queue</h1>
+          <p class="review-queue__hero-summary-copy">Decision queue for submitted versions in ${escapeHtml(tenantDisplayName)}. Inspect each version detail, then approve or reject without leaving the queue.</p>
+        </div>
+        <div class="review-queue__hero-metric">
+          <p class="console-kicker">Awaiting decision</p>
+          <p class="review-queue__hero-count">${queue.length}</p>
+          <p class="review-queue__hero-caption">${queue.length === 1 ? "version needs review" : "versions need review"}</p>
+        </div>
+      </header>
       ${
         queue.length === 0
-          ? `<div class="card"><p>No versions are awaiting review.</p></div>`
-          : queue
+          ? `<section class="review-queue__empty card stack">
+               <p class="console-kicker">Queue Clear</p>
+               <h2>No versions are awaiting review.</h2>
+               <p>Submitted versions will appear here as soon as a publisher hands them off for tenant-admin approval.</p>
+             </section>`
+          : `<ol class="review-queue__list" aria-label="Pending review decisions">
+          ${queue
               .map(
-                (entry) =>
-                  `<div class="card stack">
-                    <h2>${escapeHtml(entry.displayName)}</h2>
-                    <p>Version ${entry.versionSequence}${entry.submittedAt === null ? "" : ` submitted at ${escapeHtml(entry.submittedAt)}`}</p>
-                    <p><a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(entry.agentId)}/versions/${encodeURIComponent(entry.versionId)}">Inspect version detail</a></p>
-                    <div class="inline-actions">
-                      <form action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(entry.agentId)}/versions/${encodeURIComponent(entry.versionId)}/approve" method="post">
+                (entry) => {
+                  const versionDetailPath = `/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(entry.agentId)}/versions/${encodeURIComponent(entry.versionId)}`;
+                  const rejectReasonId = `review-reject-reason-${entry.agentId}-${entry.versionId}`;
+
+                  return `<li class="review-queue__row card" data-review-entry="${escapeHtml(`${entry.agentId}:${entry.versionId}`)}">
+                    <div class="review-queue__row-main stack">
+                      <div class="review-queue__row-heading">
+                        <div class="stack">
+                          <p class="console-kicker">Pending review</p>
+                          <div class="review-queue__title-group">
+                            <h2>${escapeHtml(entry.displayName)}</h2>
+                            <span class="pill review-queue__version">Version ${entry.versionSequence}</span>
+                          </div>
+                        </div>
+                        <p class="review-queue__meta">
+                          <time datetime="${entry.submittedAt === null ? "" : escapeHtml(entry.submittedAt)}">${escapeHtml(formatSubmittedAtLabel(entry.submittedAt))}</time>
+                        </p>
+                      </div>
+                      <a class="pill review-queue__inspect" href="${versionDetailPath}">Inspect version detail</a>
+                    </div>
+                    <div class="review-queue__actions">
+                      <form class="review-queue__approve" action="${versionDetailPath}/approve" method="post">
                         <button type="submit">Approve</button>
                       </form>
-                      <form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(entry.agentId)}/versions/${encodeURIComponent(entry.versionId)}/reject" method="post">
-                        <label>Reject reason
-                          <input name="reason" placeholder="Needs clearer scopes." />
-                        </label>
+                      <form class="review-queue__reject" action="${versionDetailPath}/reject" method="post">
+                        <label class="review-queue__label" for="${rejectReasonId}">Reject reason</label>
+                        <textarea id="${rejectReasonId}" name="reason" required placeholder="Needs clearer scopes."></textarea>
                         <button class="button-secondary" type="submit">Reject</button>
                       </form>
                     </div>
-                  </div>`,
+                  </li>`;
+                },
               )
-              .join("")
+              .join("")}
+          </ol>`
       }
     </section>`,
       currentNavigationKey: "review",
       pageId: "review-queue",
       principal,
+      tenantLabel: tenantDisplayName,
       title: "Review Queue",
     },
   );
