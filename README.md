@@ -30,7 +30,9 @@ The seed installs one self-hosted tenant, `tenant-demo`, with memberships for `d
 
 ## Local Verification
 
-The devcontainer still uses the existing host-mount verification path:
+The devcontainer bind-mounts the repository root into `/workspace` so local development keeps live access to `.git`, `.ai-native`, and other host-managed files. The public `make` targets still use the copy-based workspace sync for reproducible compose and CI runs.
+
+To verify the host credential mounts inside the devcontainer:
 
 ```bash
 bash .devcontainer/scripts/post-create.sh --verify-only

@@ -1,6 +1,7 @@
 services:
   workspace:
     volumes:
+      - .:/workspace
       - ${HOME}/.codex/auth.json:/home/vscode/.codex/auth.json:ro
       - ${HOME}/.codex/config.toml:/home/vscode/.codex/config.toml:ro
       - ${HOME}/.ssh:/home/vscode/.ssh:ro
