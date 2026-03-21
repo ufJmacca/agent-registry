@@ -308,6 +308,7 @@ export async function startWebConsoleServer(options: {
 }
 
 export async function createWebConsoleContext(options: {
+  bootstrapManifest?: string;
   deploymentMode: "hosted" | "self-hosted";
   reviewServiceOptions?: ReviewServiceOptions;
 }): Promise<WebConsoleContext> {
@@ -317,7 +318,7 @@ export async function createWebConsoleContext(options: {
   const seed = getConsoleSeed(options.deploymentMode);
 
   try {
-    await writeFile(manifestPath, seed.manifest, "utf8");
+    await writeFile(manifestPath, options.bootstrapManifest ?? seed.manifest, "utf8");
 
     const config = loadRegistryConfig(
       options.deploymentMode === "self-hosted"
