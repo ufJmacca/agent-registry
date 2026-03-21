@@ -1,5 +1,9 @@
 services:
   workspace:
+    user: root
+    entrypoint:
+      - /bin/bash
+      - /workspace/.devcontainer/scripts/devcontainer-entrypoint.sh
     volumes:
       - .:/workspace
       - ${HOME}/.codex/auth.json:/home/vscode/.codex/auth.json:ro
