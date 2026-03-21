@@ -949,11 +949,12 @@ function assertTenantAdminAccess(principal: ResolvedPrincipal): void {
 }
 
 function renderEnvironmentForm(tenantId: string): string {
-  return `<form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/environments" method="post">
+  return `<form class="environment-create__form" action="/tenants/${encodeURIComponent(tenantId)}/environments" method="post">
     <label>Environment key
       <input name="environmentKey" placeholder="qa" />
     </label>
-    <button type="submit">Add Environment</button>
+    <p class="environment-create__hint">Use a stable key such as <code>qa</code> or <code>preview</code>.</p>
+    <button type="submit">Create Environment</button>
   </form>`;
 }
 
@@ -967,27 +968,91 @@ async function renderEnvironmentPage(
   assertTenantAdminAccess(principal);
 
   const environments = await environmentService.listEnvironments(principal, tenantId);
+  const environmentCount = environments.environments.length;
+  const environmentCatalog =
+    environmentCount === 0
+      ? `<article class="environment-entry environment-entry--empty">
+          <div class="stack">
+            <p class="environment-entry__order">Catalog Empty</p>
+            <h3>No environments configured yet</h3>
+            <p class="meta">Use the creation panel to add the first publication target for this tenant.</p>
+          </div>
+        </article>`
+      : environments.environments
+          .map(
+            (environment, index) => `
+              <article class="environment-entry">
+                <div class="environment-entry__body stack">
+                  <p class="environment-entry__order">Environment ${String(index + 1).padStart(2, "0")}</p>
+                  <div class="stack">
+                    <h3>${escapeHtml(environment.environmentKey)}</h3>
+                    <p class="meta">Available for tenant publication targeting and agent overlay controls.</p>
+                  </div>
+                </div>
+                <div class="environment-entry__meta">
+                  <span class="pill">Publication Target</span>
+                  <span class="pill">Overlay Controls</span>
+                </div>
+              </article>`,
+          )
+          .join("");
 
   writeHtml(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-      <h1>Environment Management</h1>
-      <p class="meta">Tenant ${escapeHtml(tenantId)}</p>
-      <p><a href="/console">Back to dashboard</a></p>
-    </section>
-    <section class="split">
-      <div class="card stack">
-        <h2>Configured Environments</h2>
-        <div class="section-list">
-          ${environments.environments.map((environment) => `<div class="pill">${escapeHtml(environment.environmentKey)}</div>`).join("")}
+      body: `<section class="environment-page">
+      <section class="environment-hero card">
+        <div class="environment-hero__copy stack">
+          <p class="console-kicker">Tenant Settings</p>
+          <h1>Environment Management</h1>
+          <p class="environment-hero__lede">Curate the tenant environment catalog used by draft registration, review, and overlay controls.</p>
+          <div class="environment-hero__meta">
+            <a href="/console">Return to Dashboard</a>
+            <span class="pill">Tenant ${escapeHtml(tenantId)}</span>
+          </div>
         </div>
-      </div>
-      <div class="card stack">
-        <h2>Add Environment</h2>
-        ${renderEnvironmentForm(tenantId)}
-      </div>
+        <div class="environment-hero__actions">
+          <a class="environment-hero__cta" href="#environment-creation-panel">Create Environment</a>
+        </div>
+      </section>
+      <section class="environment-overview" aria-label="Environment overview">
+        <article class="environment-overview__card card stack">
+          <p class="console-kicker">Configured</p>
+          <p class="environment-overview__value">${environmentCount}</p>
+          <p class="meta">${environmentCount === 1 ? "publication target" : "publication targets"} currently available for tenant drafts.</p>
+        </article>
+        <article class="environment-overview__card card stack">
+          <p class="console-kicker">Tenant Scope</p>
+          <p class="environment-overview__title">${escapeHtml(tenantId)}</p>
+          <p class="meta">Changes stay scoped to this tenant and preserve the current redirect flow.</p>
+        </article>
+        <article class="environment-overview__card card stack">
+          <p class="console-kicker">Access</p>
+          <p class="environment-overview__title">Tenant Admin</p>
+          <p class="meta">Environment creation stays limited to administrators. Publishers still receive the existing 403 response.</p>
+        </article>
+      </section>
+      <section class="environment-surfaces">
+        <div class="environment-catalog card stack">
+          <div class="environment-section-heading stack">
+            <p class="console-kicker">Primary Surface</p>
+            <h2>Environment Catalog</h2>
+            <p class="meta">Configured environments are the publish targets available across draft registration, review, and overlay workflows.</p>
+          </div>
+          <div class="environment-catalog__list">
+            ${environmentCatalog}
+          </div>
+        </div>
+        <aside class="environment-create card stack" id="environment-creation-panel">
+          <div class="environment-section-heading stack">
+            <p class="console-kicker">Secondary Panel</p>
+            <h2>Create Environment</h2>
+            <p class="meta">Add a new environment key using the existing catalog route. The created key returns here after redirect and becomes available to publication forms.</p>
+          </div>
+          ${renderEnvironmentForm(tenantId)}
+        </aside>
+      </section>
     </section>`,
       currentNavigationKey: "environments",
       pageId: "environments",
