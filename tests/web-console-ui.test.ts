@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -281,6 +281,54 @@ function assertUsesConsoleDocument(html: string): void {
   assert.doesNotMatch(html, /<style>/);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function assertShell(
+  html: string,
+  options: {
+    currentNavHref?: string;
+    page: string;
+    shell: "authenticated" | "public";
+  },
+): void {
+  assert.match(
+    html,
+    new RegExp(
+      `data-shell="${escapeRegExp(options.shell)}"[^>]*data-page="${escapeRegExp(options.page)}"`,
+    ),
+  );
+
+  if (options.currentNavHref !== undefined) {
+    assert.match(
+      html,
+      new RegExp(
+        `<a[^>]+href="${escapeRegExp(options.currentNavHref)}"[^>]+aria-current="page"`,
+      ),
+    );
+  }
+}
+
+test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", async () => {
+  // Arrange
+  const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
+
+  // Assert
+  assert.match(
+    css,
+    /@media \(max-width: 960px\)\s*\{[\s\S]*?\.console-public-shell,\s*\.console-workspace\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 960px\)\s*\{[\s\S]*?\.console-nav\s*\{\s*position:\s*static;\s*top:\s*auto;\s*\}/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 960px\)\s*\{[\s\S]*?\.console-nav__group\s*\{[\s\S]*?display:\s*flex;[\s\S]*?overflow-x:\s*auto;[\s\S]*?white-space:\s*nowrap;[\s\S]*?\}/,
+  );
+});
+
 class BrowserSession {
   private readonly baseUrl: string;
 
@@ -548,6 +596,10 @@ test("console root renders a setup page before schema bootstrap", async () => {
 
     assert.equal(response.status, 200);
     assertUsesConsoleDocument(html);
+    assertShell(html, {
+      page: "sign-in",
+      shell: "public",
+    });
     assert.match(html, /<h1>Agent Registry<\/h1>/);
     assert.match(html, /Console Setup Pending/);
     assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
@@ -774,6 +826,10 @@ test("publisher console creates a multi-environment draft and submits it for rev
     // Assert
     assert.equal(signInPage.status, 200);
     assert.equal(tenantBetaSignInPage.status, 200);
+    assertShell(signInHtml, {
+      page: "sign-in",
+      shell: "public",
+    });
     assert.match(signInHtml, /<select[^>]+name="tenantId"/);
     assert.match(signInHtml, /admin-alpha/);
     assert.match(signInHtml, /publisher-alpha/);
@@ -781,12 +837,29 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(tenantBetaSignInHtml, /admin-beta/);
     assert.doesNotMatch(tenantBetaSignInHtml, /admin-alpha/);
     assert.doesNotMatch(tenantBetaSignInHtml, /publisher-alpha/);
+    assertShell(dashboardHtml, {
+      currentNavHref: "/console",
+      page: "dashboard",
+      shell: "authenticated",
+    });
+    assert.match(dashboardHtml, /data-visual-mask="true"/);
+    assert.match(dashboardHtml, /<form[^>]+action="\/session\/logout"[^>]+method="post"/);
     assert.match(dashboardHtml, /New Draft Registration/);
     assert.doesNotMatch(dashboardHtml, /Review Queue/);
     assert.equal(newDraftPage.status, 200);
+    assertShell(newDraftHtml, {
+      currentNavHref: "/tenants/tenant-alpha/drafts/new",
+      page: "draft-registration",
+      shell: "authenticated",
+    });
     assert.match(newDraftHtml, /type="file"/);
     assert.match(newDraftHtml, /publication:dev:enabled/);
     assert.equal(createDraftResponse.status, 303);
+    assertShell(draftDetailHtml, {
+      currentNavHref: draftLocation,
+      page: "version-detail",
+      shell: "authenticated",
+    });
     assert.match(draftDetailHtml, /Approval state: draft/);
     assert.match(draftDetailHtml, /Environment: dev/);
     assert.match(draftDetailHtml, /Environment: prod/);
@@ -794,6 +867,11 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(draftDetailHtml, /client_id/);
     assert.equal(submitResponse.status, 303);
     assert.equal(getRedirectLocation(submitResponse), draftLocation);
+    assertShell(submittedDetailHtml, {
+      currentNavHref: draftLocation,
+      page: "version-detail",
+      shell: "authenticated",
+    });
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
@@ -1107,17 +1185,37 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
 
     // Assert
+    assertShell(dashboardHtml, {
+      currentNavHref: "/console",
+      page: "dashboard",
+      shell: "authenticated",
+    });
     assert.match(dashboardHtml, /Environment Management/);
     assert.match(dashboardHtml, /Review Queue/);
     assert.equal(environmentsPage.status, 200);
+    assertShell(environmentsHtml, {
+      currentNavHref: "/tenants/tenant-alpha/environments",
+      page: "environments",
+      shell: "authenticated",
+    });
     assert.match(environmentsHtml, /staging/);
     assert.equal(createEnvironmentResponse.status, 303);
     assert.equal(getRedirectLocation(createEnvironmentResponse), "/tenants/tenant-alpha/environments");
     assert.match(updatedEnvironmentsHtml, /qa/);
+    assertShell(reviewQueueHtml, {
+      currentNavHref: "/tenants/tenant-alpha/review",
+      page: "review-queue",
+      shell: "authenticated",
+    });
     assert.match(reviewQueueHtml, /Case Router/);
     assert.match(reviewQueueHtml, /Case Escalator/);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
+    assertShell(approvedVersionHtml, {
+      currentNavHref: `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}`,
+      page: "version-detail",
+      shell: "authenticated",
+    });
     assert.match(approvedVersionHtml, /Health History/);
     assert.match(approvedVersionHtml, /503/);
     assert.match(approvedVersionHtml, /Invocation count: 12/);
@@ -1127,6 +1225,11 @@ test("admin console manages environments, reviews pending versions, edits overla
       getRedirectLocation(deprecateEnvironmentResponse),
       `/tenants/tenant-alpha/agents/${approveFixture.agentId}`,
     );
+    assertShell(agentDetailHtml, {
+      currentNavHref: `/tenants/tenant-alpha/agents/${approveFixture.agentId}`,
+      page: "agent-detail",
+      shell: "authenticated",
+    });
     assert.match(agentDetailHtml, /Overlay State/);
     assert.match(agentDetailHtml, /Environment overlay for prod/);
     assert.match(agentDetailHtml, /Deprecated: yes/);
@@ -1145,6 +1248,11 @@ test("admin console manages environments, reviews pending versions, edits overla
       getRedirectLocation(rejectResponse),
       `/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}`,
     );
+    assertShell(rejectedVersionHtml, {
+      currentNavHref: `/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}`,
+      page: "version-detail",
+      shell: "authenticated",
+    });
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
   } finally {
@@ -1171,9 +1279,18 @@ test("self-hosted console collapses tenant selection while keeping tenant-scoped
 
     // Assert
     assert.equal(signInPage.status, 200);
+    assertShell(signInHtml, {
+      page: "sign-in",
+      shell: "public",
+    });
     assert.doesNotMatch(signInHtml, /<select[^>]+name="tenantId"/);
     assert.match(signInHtml, /type="hidden"[^>]+name="tenantId"[^>]+tenant-self-hosted/);
     assert.match(signInHtml, /Single-tenant deployment/);
+    assertShell(dashboardHtml, {
+      currentNavHref: "/console",
+      page: "dashboard",
+      shell: "authenticated",
+    });
     assert.match(dashboardHtml, /\/tenants\/tenant-self-hosted\/environments/);
     assert.match(dashboardHtml, /Tenant Self Hosted/);
   } finally {

@@ -42,7 +42,8 @@ import {
   InvalidVersionTransitionError,
 } from "../../api/src/modules/review/service.js";
 import { handleAssetRequest } from "./ui/assets.js";
-import { renderStatusPage, writeHtmlDocument } from "./ui/document.js";
+import { renderStatusPage } from "./ui/document.js";
+import { type ShellNavigationItem, writeAuthenticatedShell, writePublicShell } from "./ui/shell.js";
 
 const sessionCookieName = "agent_registry_console_session";
 
@@ -91,6 +92,26 @@ interface ReviewQueueEntry {
   versionSequence: number;
 }
 
+type AuthenticatedNavigationKey = "contextual" | "dashboard" | "drafts" | "environments" | "review";
+
+type AuthenticatedPageId =
+  | "agent-detail"
+  | "dashboard"
+  | "draft-registration"
+  | "environments"
+  | "review-queue"
+  | "version-detail";
+
+interface AuthenticatedPageOptions {
+  body: string;
+  contextualNavigationItem?: Omit<ShellNavigationItem, "current">;
+  currentNavigationKey: AuthenticatedNavigationKey;
+  pageId: AuthenticatedPageId;
+  principal: ResolvedPrincipal;
+  tenantLabel?: string;
+  title: string;
+}
+
 function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -104,26 +125,82 @@ function renderPreformattedJson(value: unknown): string {
   return `<pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+function buildAuthenticatedNavigation(
+  principal: ResolvedPrincipal,
+  currentNavigationKey: AuthenticatedNavigationKey,
+  contextualNavigationItem?: Omit<ShellNavigationItem, "current">,
+): ShellNavigationItem[] {
+  const tenantId = encodeURIComponent(principal.tenantId);
+  const items: ShellNavigationItem[] = [
+    {
+      current: currentNavigationKey === "dashboard",
+      href: "/console",
+      label: "Dashboard",
+    },
+  ];
+
+  if (canPublish(principal)) {
+    items.push({
+      current: currentNavigationKey === "drafts",
+      href: `/tenants/${tenantId}/drafts/new`,
+      label: "New Draft",
+    });
+  }
+
+  if (isTenantAdmin(principal)) {
+    items.push(
+      {
+        current: currentNavigationKey === "environments",
+        href: `/tenants/${tenantId}/environments`,
+        label: "Environments",
+      },
+      {
+        current: currentNavigationKey === "review",
+        href: `/tenants/${tenantId}/review`,
+        label: "Review",
+      },
+    );
+  }
+
+  if (contextualNavigationItem !== undefined) {
+    items.push({
+      ...contextualNavigationItem,
+      current: currentNavigationKey === "contextual",
+    });
+  }
+
+  return items;
+}
+
 function writeHtml(
   response: ServerResponse,
   statusCode: number,
-  title: string,
-  body: string,
+  options: AuthenticatedPageOptions,
   headers: Record<string, string> = {},
 ): void {
-  writeHtmlDocument(
+  writeAuthenticatedShell(
     response,
     statusCode,
     {
-      body,
-      title,
+      body: options.body,
+      navigation: buildAuthenticatedNavigation(
+        options.principal,
+        options.currentNavigationKey,
+        options.contextualNavigationItem,
+      ),
+      pageId: options.pageId,
+      roles: options.principal.roles,
+      subjectId: options.principal.subjectId,
+      tenantId: options.principal.tenantId,
+      tenantLabel: options.tenantLabel,
+      title: options.title,
     },
     headers,
   );
 }
 
 function writeError(response: ServerResponse, statusCode: number, message: string): void {
-  writeHtmlDocument(
+  writePublicShell(
     response,
     statusCode,
     {
@@ -134,7 +211,7 @@ function writeError(response: ServerResponse, statusCode: number, message: strin
         statusCode,
         title: "Console Error",
       }),
-      pageClassName: "console-page--public",
+      pageId: "status",
       title: "Console Error",
     },
   );
@@ -144,17 +221,12 @@ function writeConsoleHomePage(
   response: ServerResponse,
   body: string,
 ): void {
-  writeHtmlDocument(
+  writePublicShell(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-        <p class="console-kicker">Public Entry</p>
-        <h1>Agent Registry</h1>
-        <p class="meta">Mock sign-in for tenant admins and publishers.</p>
-      </section>
-      ${body}`,
-      pageClassName: "console-page--public",
+      body,
+      pageId: "sign-in",
       title: "Agent Registry",
     },
   );
@@ -574,8 +646,8 @@ async function renderDashboard(
   writeHtml(
     response,
     200,
-    "Console Dashboard",
-    `<section class="hero card stack">
+    {
+      body: `<section class="hero card stack">
       <h1>Console Dashboard</h1>
       <p class="meta">${escapeHtml(tenantDisplayName)} (${escapeHtml(principal.tenantId)})</p>
       <p>Signed in as <strong>${escapeHtml(principal.subjectId)}</strong> with roles <strong>${escapeHtml(principal.roles.join(", ") || "none")}</strong>.</p>
@@ -592,9 +664,6 @@ async function renderDashboard(
             : ""
         }
       </div>
-      <form action="/session/logout" method="post">
-        <button class="button-secondary" type="submit">Sign Out</button>
-      </form>
     </section>
     <section class="split">
       <div class="card stack">
@@ -626,12 +695,18 @@ async function renderDashboard(
                              `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(agent.agentId)}">${escapeHtml(agent.displayName)}</a>`,
                          )
                          .join("")
-                 }
+                }
                </div>
              </div>`
           : ""
       }
     </section>`,
+      currentNavigationKey: "dashboard",
+      pageId: "dashboard",
+      principal,
+      tenantLabel: tenantDisplayName,
+      title: "Console Dashboard",
+    },
   );
 }
 
@@ -692,8 +767,8 @@ async function renderEnvironmentPage(
   writeHtml(
     response,
     200,
-    "Environment Management",
-    `<section class="hero card stack">
+    {
+      body: `<section class="hero card stack">
       <h1>Environment Management</h1>
       <p class="meta">Tenant ${escapeHtml(tenantId)}</p>
       <p><a href="/console">Back to dashboard</a></p>
@@ -710,6 +785,11 @@ async function renderEnvironmentPage(
         ${renderEnvironmentForm(tenantId)}
       </div>
     </section>`,
+      currentNavigationKey: "environments",
+      pageId: "environments",
+      principal,
+      title: "Environment Management",
+    },
   );
 }
 
@@ -774,8 +854,8 @@ async function renderDraftFormPage(
   writeHtml(
     response,
     200,
-    "New Draft Registration",
-    `<section class="hero card stack">
+    {
+      body: `<section class="hero card stack">
       <h1>New Draft Registration</h1>
       <p class="meta">Create one immutable version snapshot with shared metadata and multiple environment-specific cards.</p>
       <p><a href="/console">Back to dashboard</a></p>
@@ -835,6 +915,11 @@ async function renderDraftFormPage(
       </section>
       <button type="submit">Create Draft</button>
     </form>`,
+      currentNavigationKey: "drafts",
+      pageId: "draft-registration",
+      principal,
+      title: "New Draft Registration",
+    },
   );
 }
 
@@ -963,8 +1048,8 @@ async function renderReviewQueuePage(
   writeHtml(
     response,
     200,
-    "Review Queue",
-    `<section class="hero card stack">
+    {
+      body: `<section class="hero card stack">
       <h1>Review Queue</h1>
       <p class="meta">Pending versions for ${escapeHtml(tenantId)}</p>
       <p><a href="/console">Back to dashboard</a></p>
@@ -996,6 +1081,11 @@ async function renderReviewQueuePage(
               .join("")
       }
     </section>`,
+      currentNavigationKey: "review",
+      pageId: "review-queue",
+      principal,
+      title: "Review Queue",
+    },
   );
 }
 
@@ -1122,8 +1212,8 @@ async function renderVersionDetailPage(
   writeHtml(
     response,
     200,
-    `Version ${detail.displayName}`,
-    `<section class="hero card stack">
+    {
+      body: `<section class="hero card stack">
       <h1>${escapeHtml(detail.displayName)}</h1>
       <p>Approval state: ${escapeHtml(detail.approvalState)}</p>
       <p>Version label: ${escapeHtml(detail.versionLabel)} | Version sequence: ${detail.versionSequence}</p>
@@ -1160,6 +1250,15 @@ async function renderVersionDetailPage(
     <section class="stack">
       ${publicationMarkup}
     </section>`,
+      contextualNavigationItem: {
+        href: `/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(versionId)}`,
+        label: "Version Detail",
+      },
+      currentNavigationKey: "contextual",
+      pageId: "version-detail",
+      principal,
+      title: `Version ${detail.displayName}`,
+    },
   );
 }
 
@@ -1217,8 +1316,8 @@ async function renderAgentDetailPage(
   writeHtml(
     response,
     200,
-    "Active Agent Detail",
-    `<section class="hero card stack">
+    {
+      body: `<section class="hero card stack">
       <h1>Active Agent Detail</h1>
       <p>Agent ID: <code>${escapeHtml(detail.agentId)}</code></p>
       <p>Active version: ${escapeHtml(detail.activeVersionId ?? "none")}</p>
@@ -1255,6 +1354,15 @@ async function renderAgentDetailPage(
         ${detail.versions.map((version) => `<a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(version.versionId)}">Version ${version.versionSequence} (${escapeHtml(version.approvalState)})</a>`).join("")}
       </div>
     </section>`,
+      contextualNavigationItem: {
+        href: `/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}`,
+        label: "Agent Detail",
+      },
+      currentNavigationKey: "contextual",
+      pageId: "agent-detail",
+      principal,
+      title: "Active Agent Detail",
+    },
   );
 }
 

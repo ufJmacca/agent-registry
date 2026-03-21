@@ -1,11 +1,9 @@
 import type { ServerResponse } from "node:http";
 
-import { renderConsoleMark, renderStatusMark } from "./icons.js";
+import { renderStatusMark } from "./icons.js";
 
 export interface HtmlDocumentOptions {
   body: string;
-  chromeLabel?: string;
-  chromeMeta?: string;
   pageClassName?: string;
   title: string;
 }
@@ -50,15 +48,6 @@ export function renderHtmlDocument(options: HtmlDocumentOptions): string {
     <div class="console-aura console-aura--secondary" aria-hidden="true"></div>
     <main class="console-main">
       <div class="console-shell">
-        <header class="console-chrome">
-          <div class="console-brand">
-            ${renderConsoleMark()}
-            <div class="console-brand-copy">
-              <p class="console-kicker">${escapeHtml(options.chromeLabel ?? "Agent Registry Console")}</p>
-              <p class="console-product">${escapeHtml(options.chromeMeta ?? "Technical Curator Foundation")}</p>
-            </div>
-          </div>
-        </header>
         <div class="${pageClassName}">
           ${options.body}
         </div>
