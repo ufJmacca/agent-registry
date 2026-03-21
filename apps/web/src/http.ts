@@ -41,6 +41,8 @@ import {
   AgentVersionReviewValidationError,
   InvalidVersionTransitionError,
 } from "../../api/src/modules/review/service.js";
+import { handleAssetRequest } from "./ui/assets.js";
+import { renderStatusPage, writeHtmlDocument } from "./ui/document.js";
 
 const sessionCookieName = "agent_registry_console_session";
 
@@ -109,184 +111,32 @@ function writeHtml(
   body: string,
   headers: Record<string, string> = {},
 ): void {
-  response.writeHead(statusCode, {
-    "content-type": "text/html; charset=utf-8",
-    ...headers,
-  });
-  response.end(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)}</title>
-    <style>
-      :root {
-        --paper: #f6efe4;
-        --ink: #13212f;
-        --muted: #dbcdb9;
-        --accent: #b74d2c;
-        --accent-strong: #7d2c17;
-        --panel: rgba(255, 255, 255, 0.7);
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-        color: var(--ink);
-        background:
-          radial-gradient(circle at top left, rgba(183, 77, 44, 0.18), transparent 35%),
-          linear-gradient(180deg, #fcf7ef 0%, var(--paper) 100%);
-      }
-
-      main {
-        max-width: 1100px;
-        margin: 0 auto;
-        padding: 2rem 1.25rem 4rem;
-      }
-
-      a {
-        color: var(--accent-strong);
-      }
-
-      form {
-        margin: 0;
-      }
-
-      h1, h2, h3 {
-        margin: 0 0 0.75rem;
-      }
-
-      p, li, dt, dd, label {
-        line-height: 1.45;
-      }
-
-      input, select, textarea, button {
-        width: 100%;
-        padding: 0.75rem;
-        border: 1px solid rgba(19, 33, 47, 0.18);
-        border-radius: 0.85rem;
-        background: white;
-        color: var(--ink);
-        font: inherit;
-      }
-
-      button {
-        cursor: pointer;
-        background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
-        color: white;
-        font-weight: 700;
-      }
-
-      .button-secondary {
-        background: white;
-        color: var(--accent-strong);
-      }
-
-      .stack {
-        display: grid;
-        gap: 1rem;
-      }
-
-      .split {
-        display: grid;
-        gap: 1rem;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      }
-
-      .card {
-        padding: 1rem;
-        border-radius: 1.1rem;
-        border: 1px solid rgba(19, 33, 47, 0.1);
-        background: var(--panel);
-        box-shadow: 0 12px 30px rgba(19, 33, 47, 0.08);
-      }
-
-      .hero {
-        margin-bottom: 1.5rem;
-      }
-
-      .meta {
-        color: rgba(19, 33, 47, 0.74);
-      }
-
-      .inline-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.75rem;
-      }
-
-      .inline-actions form {
-        flex: 1 1 180px;
-      }
-
-      .pill {
-        display: inline-block;
-        margin-right: 0.5rem;
-        margin-bottom: 0.5rem;
-        padding: 0.3rem 0.6rem;
-        border-radius: 999px;
-        background: rgba(183, 77, 44, 0.12);
-        color: var(--accent-strong);
-        font-size: 0.95rem;
-      }
-
-      code, pre {
-        font-family: "SFMono-Regular", "Liberation Mono", "Courier New", monospace;
-      }
-
-      pre {
-        overflow-x: auto;
-        padding: 0.9rem;
-        border-radius: 0.85rem;
-        background: #fffdfa;
-        border: 1px solid rgba(19, 33, 47, 0.08);
-      }
-
-      dl {
-        margin: 0;
-      }
-
-      dd {
-        margin: 0 0 0.75rem;
-      }
-
-      .section-list {
-        display: grid;
-        gap: 0.75rem;
-      }
-
-      .link-list {
-        display: grid;
-        gap: 0.5rem;
-      }
-
-      @media (max-width: 700px) {
-        main {
-          padding-inline: 1rem;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <main>${body}</main>
-  </body>
-</html>`);
+  writeHtmlDocument(
+    response,
+    statusCode,
+    {
+      body,
+      title,
+    },
+    headers,
+  );
 }
 
 function writeError(response: ServerResponse, statusCode: number, message: string): void {
-  writeHtml(
+  writeHtmlDocument(
     response,
     statusCode,
-    "Console Error",
-    `<section class="hero card stack">
-      <h1>Console Error</h1>
-      <p>${escapeHtml(message)}</p>
-      <p><a href="/">Return to sign-in</a></p>
-    </section>`,
+    {
+      body: renderStatusPage({
+        linkHref: "/",
+        linkLabel: "Return to sign-in",
+        message,
+        statusCode,
+        title: "Console Error",
+      }),
+      pageClassName: "console-page--public",
+      title: "Console Error",
+    },
   );
 }
 
@@ -294,15 +144,19 @@ function writeConsoleHomePage(
   response: ServerResponse,
   body: string,
 ): void {
-  writeHtml(
+  writeHtmlDocument(
     response,
     200,
-    "Agent Registry",
-    `<section class="hero card stack">
-      <h1>Agent Registry</h1>
-      <p class="meta">Mock sign-in for tenant admins and publishers.</p>
-    </section>
-    ${body}`,
+    {
+      body: `<section class="hero card stack">
+        <p class="console-kicker">Public Entry</p>
+        <h1>Agent Registry</h1>
+        <p class="meta">Mock sign-in for tenant admins and publishers.</p>
+      </section>
+      ${body}`,
+      pageClassName: "console-page--public",
+      title: "Agent Registry",
+    },
   );
 }
 
@@ -1526,6 +1380,10 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
   return async (request, response) => {
     try {
       const pathname = getPathname(request);
+
+      if (await handleAssetRequest(request, response, pathname)) {
+        return;
+      }
 
       if (request.method === "GET" && pathname === "/") {
         const principal = await resolvePrincipalFromSession(principalResolver, request).catch(() => null);

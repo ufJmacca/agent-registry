@@ -1,0 +1,371 @@
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/inter-variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/assets/fonts/manrope-variable.woff2") format("woff2");
+}
+
+:root {
+  --surface: #f7f9fb;
+  --surface-low: #f0f4f7;
+  --surface-high: #e1e9ee;
+  --surface-card: rgba(255, 255, 255, 0.84);
+  --text: #2a3439;
+  --text-soft: #4d5a61;
+  --text-muted: #566166;
+  --primary: #565e74;
+  --primary-dim: #4a5268;
+  --chip: rgba(217, 228, 234, 0.92);
+  --ghost: rgba(169, 180, 185, 0.16);
+  --shadow-ambient: 0 20px 40px rgba(42, 52, 57, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+}
+
+body.console-document {
+  position: relative;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--text);
+  font-family: "Inter", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(86, 94, 116, 0.16), transparent 36%),
+    radial-gradient(circle at 90% 14%, rgba(93, 93, 120, 0.12), transparent 24%),
+    linear-gradient(180deg, #fbfcfd 0%, var(--surface) 42%, #eef3f6 100%);
+}
+
+a {
+  color: var(--primary);
+  text-decoration-thickness: 0.08em;
+  text-underline-offset: 0.18em;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.8rem;
+  color: var(--text);
+  font-family: "Manrope", "Inter", sans-serif;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+}
+
+h1 {
+  font-size: clamp(2.3rem, 5vw, 3.8rem);
+}
+
+h2 {
+  font-size: clamp(1.45rem, 2.6vw, 2rem);
+}
+
+h3 {
+  font-size: 1.08rem;
+}
+
+p,
+li,
+dt,
+dd,
+label {
+  color: var(--text-soft);
+  line-height: 1.6;
+}
+
+p {
+  margin: 0;
+}
+
+form {
+  margin: 0;
+}
+
+label {
+  display: grid;
+  gap: 0.55rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+input,
+select,
+textarea,
+button {
+  width: 100%;
+  border: none;
+  border-radius: 1rem;
+  padding: 0.95rem 1rem;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: inset 0 0 0 1px var(--ghost);
+  font: inherit;
+  transition:
+    transform 140ms ease,
+    background-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  background: var(--surface-high);
+  box-shadow:
+    inset 0 0 0 1px rgba(86, 97, 102, 0.38),
+    0 0 0 4px rgba(86, 94, 116, 0.08);
+}
+
+textarea {
+  min-height: 8rem;
+  resize: vertical;
+}
+
+button {
+  cursor: pointer;
+  color: #fff;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dim) 100%);
+  box-shadow:
+    0 18px 30px rgba(74, 82, 104, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button.button-secondary {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: inset 0 0 0 1px var(--ghost);
+}
+
+code,
+pre {
+  font-family:
+    ui-monospace,
+    "SFMono-Regular",
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+}
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 1rem 1.1rem;
+  border-radius: 1.15rem;
+  color: var(--text);
+  background: rgba(240, 244, 247, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(86, 97, 102, 0.12);
+}
+
+dl {
+  margin: 0;
+}
+
+dd {
+  margin: 0 0 0.75rem;
+}
+
+.console-main {
+  position: relative;
+  min-height: 100vh;
+}
+
+.console-shell {
+  position: relative;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+.console-aura {
+  position: fixed;
+  border-radius: 999px;
+  pointer-events: none;
+  filter: blur(18px);
+  opacity: 0.72;
+}
+
+.console-aura--primary {
+  top: -12rem;
+  left: -8rem;
+  width: 34rem;
+  height: 34rem;
+  background: radial-gradient(circle, rgba(86, 94, 116, 0.2) 0%, transparent 70%);
+}
+
+.console-aura--secondary {
+  top: 8rem;
+  right: -10rem;
+  width: 28rem;
+  height: 28rem;
+  background: radial-gradient(circle, rgba(93, 93, 120, 0.14) 0%, transparent 70%);
+}
+
+.console-chrome {
+  position: sticky;
+  top: 1rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 0.95rem;
+  margin-bottom: 1.8rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow:
+    var(--shadow-ambient),
+    inset 0 0 0 1px rgba(169, 180, 185, 0.14);
+  backdrop-filter: blur(12px);
+}
+
+.console-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.console-brand-copy {
+  display: grid;
+  gap: 0.08rem;
+}
+
+.console-mark,
+.console-status-mark {
+  display: block;
+  width: 2.75rem;
+  height: 2.75rem;
+  color: var(--primary);
+}
+
+.console-kicker {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.console-product {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 0.95rem;
+}
+
+.console-page {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.console-page--public {
+  max-width: 1100px;
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.split {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.card {
+  padding: clamp(1.2rem, 2vw, 1.85rem);
+  border-radius: 1.6rem;
+  background: var(--surface-card);
+  box-shadow:
+    var(--shadow-ambient),
+    inset 0 0 0 1px rgba(169, 180, 185, 0.14);
+}
+
+.hero {
+  padding-block: clamp(1.55rem, 2.2vw, 2.4rem);
+}
+
+.meta {
+  color: var(--text-muted);
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.85rem;
+}
+
+.inline-actions form {
+  flex: 1 1 220px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.95rem;
+  border-radius: 999px;
+  color: var(--text);
+  text-decoration: none;
+  background: var(--chip);
+  box-shadow: inset 0 0 0 1px rgba(86, 97, 102, 0.12);
+}
+
+.section-list,
+.link-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.console-status {
+  max-width: 40rem;
+  padding: clamp(1.6rem, 3vw, 2.35rem);
+}
+
+.console-status__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.console-status__icon {
+  flex: none;
+  color: var(--primary);
+}
+
+@media (max-width: 760px) {
+  .console-shell {
+    padding-inline: 1rem;
+  }
+
+  .console-chrome {
+    border-radius: 1.25rem;
+    align-items: flex-start;
+  }
+
+  .inline-actions form {
+    flex-basis: 100%;
+  }
+
+  .split {
+    grid-template-columns: 1fr;
+  }
+}

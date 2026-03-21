@@ -262,6 +262,25 @@ function getRedirectLocation(response: Response): string {
   return location;
 }
 
+function assertUsesConsoleDocument(html: string): void {
+  const headMatch = html.match(/<head>([\s\S]*?)<\/head>/);
+
+  assert.notEqual(headMatch, null, "Expected the response to include a document head.");
+  const [, headHtml] = headMatch;
+
+  assert.match(
+    headHtml,
+    /<link rel="preload" href="\/assets\/fonts\/inter-variable\.woff2" as="font" type="font\/woff2"\s*\/?>/,
+  );
+  assert.match(
+    headHtml,
+    /<link rel="preload" href="\/assets\/fonts\/manrope-variable\.woff2" as="font" type="font\/woff2"\s*\/?>/,
+  );
+  assert.match(headHtml, /<link rel="stylesheet" href="\/assets\/console\.css"\s*\/?>/);
+  assert.doesNotMatch(headHtml, /<(?:link|script)\b[^>]+\b(?:href|src)=["'](?:https?:)?\/\//);
+  assert.doesNotMatch(html, /<style>/);
+}
+
 class BrowserSession {
   private readonly baseUrl: string;
 
@@ -528,6 +547,7 @@ test("console root renders a setup page before schema bootstrap", async () => {
     const html = await response.text();
 
     assert.equal(response.status, 200);
+    assertUsesConsoleDocument(html);
     assert.match(html, /<h1>Agent Registry<\/h1>/);
     assert.match(html, /Console Setup Pending/);
     assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
@@ -544,6 +564,49 @@ test("console root renders a setup page before schema bootstrap", async () => {
     });
     await destroyKyselyDb(db);
     await database.cleanup();
+  }
+});
+
+test("console assets are served without a session and strictly allowlist repo-local presentation assets", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+
+  try {
+    // Arrange
+    const cssUrl = new URL("/assets/console.css", context.baseUrl);
+    const fontUrl = new URL("/assets/fonts/inter-variable.woff2", context.baseUrl);
+    const rejectedAssetUrl = new URL("/assets/fonts/LICENSE-Inter.txt", context.baseUrl);
+
+    // Act
+    const cssResponse = await fetch(cssUrl, {
+      redirect: "manual",
+    });
+    const css = await cssResponse.text();
+    const fontResponse = await fetch(fontUrl, {
+      redirect: "manual",
+    });
+    const fontBytes = new Uint8Array(await fontResponse.arrayBuffer());
+    const rejectedAssetResponse = await fetch(rejectedAssetUrl, {
+      redirect: "manual",
+    });
+    const rejectedAssetBody = await rejectedAssetResponse.text();
+
+    // Assert
+    assert.equal(cssResponse.status, 200);
+    assert.match(cssResponse.headers.get("content-type") ?? "", /^text\/css(?:;|$)/);
+    assert.match(css, /@font-face/);
+    assert.match(css, /url\("\/assets\/fonts\/inter-variable\.woff2"\)/);
+    assert.match(css, /url\("\/assets\/fonts\/manrope-variable\.woff2"\)/);
+    assert.doesNotMatch(css, /https?:\/\//);
+    assert.equal(fontResponse.status, 200);
+    assert.match(fontResponse.headers.get("content-type") ?? "", /^font\/woff2(?:;|$)/);
+    assert.ok(fontBytes.byteLength > 0);
+    assert.equal(rejectedAssetResponse.status, 404);
+    assert.match(rejectedAssetResponse.headers.get("content-type") ?? "", /^text\/plain(?:;|$)/);
+    assert.equal(rejectedAssetBody, "Not found.");
+  } finally {
+    await context.close();
   }
 });
 
@@ -580,6 +643,7 @@ test("unexpected console failures return 500 without exposing internal messages"
     const html = await response.text();
 
     assert.equal(response.status, 500);
+    assertUsesConsoleDocument(html);
     assert.match(html, /Internal server error\./);
     assert.doesNotMatch(html, /database offline/);
   } finally {
@@ -770,6 +834,7 @@ test("publisher console returns 403 for admin-only review and active agent detai
 
     // Assert
     assert.equal(reviewQueuePage.status, 403);
+    assertUsesConsoleDocument(reviewQueueHtml);
     assert.match(reviewQueueHtml, /Tenant admin role is required/);
     assert.equal(versionDetailPage.status, 200);
     assert.doesNotMatch(versionDetailHtml, /Advisory Telemetry/);
@@ -838,6 +903,7 @@ test("publisher console returns 400 for malformed draft contract JSON", async ()
 
     // Assert
     assert.equal(response.status, 400);
+    assertUsesConsoleDocument(html);
     assert.match(html, /headerContract/);
     assert.match(html, /valid JSON/);
   } finally {
@@ -872,6 +938,50 @@ test("publisher console blocks version detail access to versions owned by anothe
     // Assert
     assert.equal(response.status, 403);
     assert.match(html, /versions they own/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("signed-in console renders shared document styling for 404 and 409 responses", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const fixture = await createPendingVersion(context, {
+      displayName: "Case Router",
+      environments: ["dev"],
+      publisherId: "publisher-alpha",
+      summary: "Routes support cases.",
+      versionLabel: "v1",
+    });
+
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+    const initialApproveResponse = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}/approve`,
+      {},
+    );
+
+    // Act
+    const notFoundResponse = await browser.get("/missing-route");
+    const notFoundHtml = await notFoundResponse.text();
+    const conflictResponse = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}/approve`,
+      {},
+    );
+    const conflictHtml = await conflictResponse.text();
+
+    // Assert
+    assert.equal(initialApproveResponse.status, 303);
+    assert.equal(notFoundResponse.status, 404);
+    assertUsesConsoleDocument(notFoundHtml);
+    assert.match(notFoundHtml, /Route not found\./);
+    assert.equal(conflictResponse.status, 409);
+    assertUsesConsoleDocument(conflictHtml);
+    assert.match(conflictHtml, /Only pending_review versions can be approved\./);
   } finally {
     await context.close();
   }
