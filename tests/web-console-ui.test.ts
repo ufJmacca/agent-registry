@@ -6,23 +6,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import pg from "pg";
-
-import { PrincipalResolver } from "../packages/auth/src/index.ts";
-import { loadRegistryConfig, type RegistryConfig } from "../packages/config/src/index.ts";
+import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyAgentAdminDetailRepository,
-  KyselyAgentDraftRegistrationRepository,
-  KyselyAgentReviewRepository,
-  KyselyBootstrapRepository,
-  KyselyHealthRepository,
-  KyselyPublicationTelemetryRepository,
-  KyselyTenantEnvironmentRepository,
-  KyselyTenantMembershipLookup,
-  KyselyTenantRepository,
   createKyselyDb,
   destroyKyselyDb,
-  migrateToLatest,
   type AgentRegistryDb,
 } from "../packages/db/src/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
@@ -960,25 +948,13 @@ test("console root renders a setup page before schema bootstrap", async () => {
       requireBootstrapFile: false,
     },
   );
-  const server = http.createServer(
-    createWebRequestListener({
-      config,
-      db,
-    }),
-  );
+  const server = await startWebConsoleServer({
+    config,
+    db,
+  });
 
   try {
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve());
-    });
-
-    const address = server.address();
-
-    if (address === null || typeof address === "string") {
-      throw new Error("Expected an IPv4 test server address");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const response = await fetch(`${server.baseUrl}/`);
     const html = await response.text();
 
     assert.equal(response.status, 200);
@@ -988,16 +964,7 @@ test("console root renders a setup page before schema bootstrap", async () => {
     assert.doesNotMatch(html, /relation "tenant_memberships" does not exist/);
     assertSessionSignInUnavailable(html);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve();
-      });
-    });
+    await server.close();
     await destroyKyselyDb(db);
     await database.cleanup();
   }
@@ -1207,29 +1174,17 @@ test("unexpected console failures return 500 without exposing internal messages"
       requireBootstrapFile: false,
     },
   );
-  const server = http.createServer(
-    createWebRequestListener({
-      config,
-      db: {
-        selectFrom() {
-          throw new Error("database offline");
-        },
-      } as unknown as AgentRegistryDb,
-    }),
-  );
+  const server = await startWebConsoleServer({
+    config,
+    db: {
+      selectFrom() {
+        throw new Error("database offline");
+      },
+    } as unknown as AgentRegistryDb,
+  });
 
   try {
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve());
-    });
-
-    const address = server.address();
-
-    if (address === null || typeof address === "string") {
-      throw new Error("Expected an IPv4 test server address");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const response = await fetch(`${server.baseUrl}/`);
     const html = await response.text();
 
     assert.equal(response.status, 500);
@@ -1237,16 +1192,158 @@ test("unexpected console failures return 500 without exposing internal messages"
     assert.match(html, /Internal server error\./);
     assert.doesNotMatch(html, /database offline/);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+    await server.close();
+  }
+});
 
-        resolve();
-      });
+test("shared fixtures expose seeded routes and telemetry-ready approved versions", async () => {
+  const hostedContext = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const selfHostedContext = await createWebConsoleContext({
+    deploymentMode: "self-hosted",
+  });
+  const detailRepository = new KyselyAgentAdminDetailRepository(hostedContext.db);
+
+  try {
+    // Arrange
+    const fixture = await createPendingVersion(hostedContext, {
+      agentId: "agent-case-router",
+      displayName: "Case Router",
+      environments: ["dev"],
+      publisherId: hostedContext.subjects.publisher,
+      summary: "Routes support cases.",
+      tenantId: hostedContext.tenants.primary,
+      versionLabel: "v1",
     });
+    const pendingDetail = await detailRepository.getVersionDetail(
+      fixture.tenantId,
+      fixture.agentId,
+      fixture.versionId,
+    );
+    const selfHostedBrowser = new BrowserSession(selfHostedContext.baseUrl);
+
+    // Act
+    await approvePendingVersion(hostedContext, fixture);
+    const approvedDetail = await detailRepository.getVersionDetail(
+      fixture.tenantId,
+      fixture.agentId,
+      fixture.versionId,
+    );
+    await seedHealthAndTelemetry(hostedContext.db, fixture);
+    const telemeteredDetail = await detailRepository.getVersionDetail(
+      fixture.tenantId,
+      fixture.agentId,
+      fixture.versionId,
+    );
+
+    const telemetryRows = await hostedContext.db
+      .selectFrom("publication_telemetry")
+      .select(["tenant_id", "publication_id"])
+      .where("tenant_id", "=", hostedContext.tenants.primary)
+      .execute();
+    const healthRows = await hostedContext.db
+      .selectFrom("publication_probe_history")
+      .select("publication_id")
+      .where("publication_id", "=", fixture.publicationIds.dev)
+      .execute();
+
+    await signIn(
+      selfHostedBrowser,
+      selfHostedContext.tenants.primary,
+      selfHostedContext.subjects.admin,
+    );
+    const selfHostedDashboard = await selfHostedBrowser.get("/console");
+    const selfHostedHtml = await selfHostedDashboard.text();
+
+    // Assert
+    assert.deepEqual(hostedContext.subjects, {
+      admin: "admin-alpha",
+      alternatePublisher: "publisher-bravo",
+      publisher: "publisher-alpha",
+      secondaryAdmin: "admin-beta",
+    });
+    assert.deepEqual(hostedContext.tenants, {
+      primary: "tenant-alpha",
+      secondary: "tenant-beta",
+    });
+    assert.deepEqual(selfHostedContext.subjects, {
+      admin: "admin-self-hosted",
+      publisher: "publisher-self-hosted",
+    });
+    assert.deepEqual(selfHostedContext.tenants, {
+      primary: "tenant-self-hosted",
+    });
+    assert.equal(fixture.agentId, "agent-case-router");
+    assert.equal(fixture.tenantId, hostedContext.tenants.primary);
+    assert.equal(pendingDetail.approvalState, "pending_review");
+    assert.equal(pendingDetail.active, false);
+    assert.equal(pendingDetail.review.submittedBy, hostedContext.subjects.publisher);
+    assert.equal(pendingDetail.review.approvedBy, null);
+    assert.equal(approvedDetail.approvalState, "approved");
+    assert.equal(approvedDetail.active, true);
+    assert.equal(approvedDetail.review.submittedBy, hostedContext.subjects.publisher);
+    assert.equal(approvedDetail.review.approvedBy, hostedContext.subjects.admin);
+    assert.notEqual(approvedDetail.review.approvedAt, null);
+    assert.deepEqual(
+      approvedDetail.publications.map((publication) => ({
+        environmentKey: publication.environmentKey,
+        healthStatus: publication.healthStatus,
+        publicationId: publication.publicationId,
+        telemetryCount: publication.telemetry.length,
+      })),
+      [
+        {
+          environmentKey: "dev",
+          healthStatus: "unknown",
+          publicationId: fixture.publicationIds.dev,
+          telemetryCount: 0,
+        },
+      ],
+    );
+    assert.equal(fixture.publicationIds.dev, telemetryRows[0]?.publication_id);
+    assert.equal(
+      fixture.routes.agentDetail,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}`,
+    );
+    assert.equal(
+      fixture.routes.versionDetail,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/versions/${fixture.versionId}`,
+    );
+    assert.equal(
+      fixture.routes.approve,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/versions/${fixture.versionId}/approve`,
+    );
+    assert.equal(
+      fixture.routes.submit,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/versions/${fixture.versionId}/submit`,
+    );
+    assert.equal(
+      fixture.routes.environmentOverlays.dev.deprecate,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/environments/dev/overlay/deprecate`,
+    );
+    assert.deepEqual(
+      telemeteredDetail.publications.map((publication) => ({
+        environmentKey: publication.environmentKey,
+        healthStatus: publication.healthStatus,
+        publicationId: publication.publicationId,
+        telemetryCount: publication.telemetry.length,
+      })),
+      [
+        {
+          environmentKey: "dev",
+          healthStatus: "degraded",
+          publicationId: fixture.publicationIds.dev,
+          telemetryCount: 1,
+        },
+      ],
+    );
+    assert.equal(healthRows.length, 2);
+    assert.equal(selfHostedDashboard.status, 200);
+    assert.match(selfHostedHtml, /Tenant Self Hosted/);
+  } finally {
+    await selfHostedContext.close();
+    await hostedContext.close();
   }
 });
 
