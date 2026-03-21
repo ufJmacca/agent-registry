@@ -832,21 +832,30 @@ async function renderDraftFormPage(
   const publicationFields = environments.environments
     .map(
       (environment) =>
-        `<section class="card stack">
-          <h3>${escapeHtml(environment.environmentKey)}</h3>
-          <label>
-            <input type="checkbox" name="publication:${escapeHtml(environment.environmentKey)}:enabled" />
-            Include this environment publication
-          </label>
-          <label>Health endpoint URL
-            <input name="publication:${escapeHtml(environment.environmentKey)}:healthEndpointUrl" placeholder="https://${escapeHtml(environment.environmentKey)}.health.example.com/status" />
-          </label>
-          <label>Optional invocation endpoint override
-            <input name="publication:${escapeHtml(environment.environmentKey)}:invocationEndpoint" placeholder="https://agent.example.com/invoke" />
-          </label>
-          <label>Raw card upload
-            <input type="file" name="publication:${escapeHtml(environment.environmentKey)}:rawCard" />
-          </label>
+        `<section class="draft-publication-panel card" data-draft-publication-panel="${escapeHtml(environment.environmentKey)}">
+          <div class="draft-publication-panel__header">
+            <div class="draft-publication-panel__summary">
+              <p class="console-kicker">Environment publication</p>
+              <h3>${escapeHtml(environment.environmentKey)}</h3>
+              <p class="meta">Configure rollout endpoints and attach the truthful raw card used for ${escapeHtml(environment.environmentKey)}.</p>
+            </div>
+            <label class="draft-toggle">
+              <input type="checkbox" name="publication:${escapeHtml(environment.environmentKey)}:enabled" />
+              <span>Enable publication</span>
+            </label>
+          </div>
+          <div class="draft-publication-panel__grid">
+            <label class="draft-field">Health endpoint URL
+              <input name="publication:${escapeHtml(environment.environmentKey)}:healthEndpointUrl" placeholder="https://${escapeHtml(environment.environmentKey)}.health.example.com/status" />
+            </label>
+            <label class="draft-field">Optional invocation endpoint override
+              <input name="publication:${escapeHtml(environment.environmentKey)}:invocationEndpoint" placeholder="https://agent.example.com/invoke" />
+            </label>
+            <label class="draft-field draft-field--full">Raw card upload
+              <input class="draft-file-input" type="file" name="publication:${escapeHtml(environment.environmentKey)}:rawCard" />
+              <span class="draft-field__hint">Upload the raw card JSON artifact for this environment publication.</span>
+            </label>
+          </div>
         </section>`,
     )
     .join("");
@@ -855,39 +864,64 @@ async function renderDraftFormPage(
     response,
     200,
     {
-      body: `<section class="hero card stack">
-      <h1>New Draft Registration</h1>
-      <p class="meta">Create one immutable version snapshot with shared metadata and multiple environment-specific cards.</p>
-      <p><a href="/console">Back to dashboard</a></p>
+      body: `<section class="draft-hero card">
+      <div class="draft-hero__copy">
+        <p class="console-kicker">Draft Composition</p>
+        <h1>New Draft Registration</h1>
+        <p class="meta">Create one immutable version snapshot with shared metadata and multiple environment-specific cards.</p>
+        <p><a href="/console">Back to dashboard</a></p>
+      </div>
+      <aside class="draft-hero__note stack">
+        <p class="console-kicker">Submission Pattern</p>
+        <h2>One multipart payload, grouped for review.</h2>
+        <p class="meta">General metadata, shared contracts, and per-environment publication inputs are organized into dedicated technical panels without changing how the draft is posted.</p>
+      </aside>
     </section>
-    <form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/drafts" method="post" enctype="multipart/form-data">
-      <section class="split">
-        <div class="card stack">
-          <label>Version label
+    <form class="draft-form" data-draft-form="true" action="/tenants/${encodeURIComponent(tenantId)}/drafts" method="post" enctype="multipart/form-data">
+      <section class="draft-section card" data-draft-section="general-metadata">
+        <div class="draft-section__header">
+          <div class="draft-section__copy">
+            <p class="console-kicker">General Metadata</p>
+            <h2>General Metadata</h2>
+            <p class="meta">Define the version identity, editorial summary, and shared access requirements used across every publication.</p>
+          </div>
+          <span class="pill">Required</span>
+        </div>
+        <div class="draft-grid draft-grid--metadata">
+          <label class="draft-field">Version label
             <input name="versionLabel" placeholder="v1" />
           </label>
-          <label>Display name
+          <label class="draft-field">Display name
             <input name="displayName" placeholder="Case Resolver" />
           </label>
-          <label>Summary
+          <label class="draft-field draft-field--full">Summary
             <textarea name="summary" rows="5" placeholder="Handles support case routing."></textarea>
           </label>
-          <label>Capabilities
+          <label class="draft-field">Capabilities
             <textarea name="capabilities" rows="4" placeholder="shared-capability, case-routing"></textarea>
           </label>
-          <label>Tags
+          <label class="draft-field">Tags
             <textarea name="tags" rows="3" placeholder="shared-tag, routing"></textarea>
           </label>
-          <label>Required roles
+          <label class="draft-field">Required roles
             <textarea name="requiredRoles" rows="3" placeholder="support-agent"></textarea>
           </label>
-          <label>Required scopes
+          <label class="draft-field">Required scopes
             <textarea name="requiredScopes" rows="3" placeholder="tickets.read, tickets.write"></textarea>
           </label>
         </div>
-        <div class="card stack">
-          <label>Header contract JSON
-            <textarea name="headerContract" rows="10">[
+      </section>
+      <section class="draft-section card" data-draft-section="shared-contracts">
+        <div class="draft-section__header">
+          <div class="draft-section__copy">
+            <p class="console-kicker">Shared Contracts</p>
+            <h2>Shared Contracts</h2>
+            <p class="meta">Keep reusable request constraints readable, even when the JSON payloads are long or reviewed on narrower screens.</p>
+          </div>
+        </div>
+        <div class="draft-grid draft-grid--contracts">
+          <label class="draft-field">Header contract JSON
+            <textarea class="draft-code-input" name="headerContract" rows="10" spellcheck="false" wrap="off">[
   {
     "name": "X-User-Id",
     "required": true,
@@ -896,8 +930,8 @@ async function renderDraftFormPage(
   }
 ]</textarea>
           </label>
-          <label>Context contract JSON
-            <textarea name="contextContract" rows="10">[
+          <label class="draft-field">Context contract JSON
+            <textarea class="draft-code-input" name="contextContract" rows="10" spellcheck="false" wrap="off">[
   {
     "key": "client_id",
     "required": true,
@@ -909,11 +943,29 @@ async function renderDraftFormPage(
           </label>
         </div>
       </section>
-      <section class="stack">
-        <h2>Environment Publications</h2>
-        ${publicationFields}
+      <section class="draft-section card" data-draft-section="environment-publications">
+        <div class="draft-section__header">
+          <div class="draft-section__copy">
+            <p class="console-kicker">Environment Publications</p>
+            <h2>Environment Publications</h2>
+            <p class="meta">Each environment keeps its own publication toggle, endpoint configuration, and raw card upload inside a dedicated technical panel.</p>
+          </div>
+        </div>
+        <div class="draft-publications">
+          ${publicationFields}
+        </div>
       </section>
-      <button type="submit">Create Draft</button>
+      <section class="draft-action-footer card" data-draft-action-footer="true">
+        <div class="draft-action-footer__copy">
+          <p class="console-kicker">Action Footer</p>
+          <h2>Ready to create this immutable snapshot?</h2>
+          <p class="meta">This keeps the current multipart form behavior and exact field names while presenting the payload in the same editorial system as the rest of the console.</p>
+        </div>
+        <div class="draft-action-footer__actions">
+          <a class="pill" href="/console">Back to dashboard</a>
+          <button type="submit">Create Draft</button>
+        </div>
+      </section>
     </form>`,
       currentNavigationKey: "drafts",
       pageId: "draft-registration",
