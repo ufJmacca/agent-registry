@@ -35,12 +35,14 @@
 
 html {
   min-height: 100%;
+  overflow-x: clip;
 }
 
 body.console-document {
   position: relative;
   min-height: 100vh;
   margin: 0;
+  overflow-x: clip;
   color: var(--text);
   font-family: "Inter", "Segoe UI", sans-serif;
   background:
@@ -197,6 +199,7 @@ dd {
 .console-main {
   position: relative;
   min-height: 100vh;
+  overflow-x: clip;
 }
 
 .console-shell {
@@ -253,11 +256,13 @@ dd {
   display: flex;
   align-items: center;
   gap: 0.85rem;
+  min-width: 0;
 }
 
 .console-brand-copy {
   display: grid;
   gap: 0.08rem;
+  min-width: 0;
 }
 
 .console-mark,
@@ -285,6 +290,7 @@ dd {
 .console-page {
   display: grid;
   gap: 1.5rem;
+  min-width: 0;
 }
 
 .console-page--public {
@@ -296,6 +302,7 @@ dd {
 .console-content {
   display: grid;
   gap: 1.5rem;
+  min-width: 0;
 }
 
 .console-public-shell {
@@ -482,10 +489,12 @@ dd {
   align-items: center;
   justify-content: flex-end;
   gap: 0.85rem;
+  min-width: 0;
   margin-left: auto;
 }
 
 .console-session-summary {
+  min-width: 0;
   min-width: min(100%, 24rem);
   padding: 0.9rem 1.05rem;
   border-radius: 1.35rem;
@@ -508,10 +517,12 @@ dd {
 .console-session-summary__meta {
   color: var(--text-muted);
   font-size: 0.86rem;
+  overflow-wrap: anywhere;
 }
 
 .console-signout {
   flex: none;
+  min-width: 0;
 }
 
 .console-signout button {
@@ -524,17 +535,20 @@ dd {
   gap: 1.5rem;
   align-items: start;
   grid-template-columns: minmax(13.5rem, 15.5rem) minmax(0, 1fr);
+  min-width: 0;
 }
 
 .console-nav {
   position: sticky;
   top: 7rem;
+  min-width: 0;
 }
 
 .console-nav__group {
   display: grid;
   gap: 0.65rem;
   padding: 0.85rem;
+  min-width: 0;
   border-radius: 1.7rem;
   background: rgba(240, 244, 247, 0.86);
   box-shadow:
@@ -787,11 +801,13 @@ dd {
   gap: 1.25rem;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
+  min-width: 0;
 }
 
 .dashboard-panel {
   display: grid;
   gap: 1rem;
+  min-width: 0;
   padding: clamp(1.25rem, 2vw, 1.9rem);
   border-radius: 1.8rem;
   background: rgba(255, 255, 255, 0.8);
@@ -821,6 +837,7 @@ dd {
 .agent-detail-overlay-card {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .agent-detail-hero__lede {
@@ -953,6 +970,7 @@ dd {
   gap: 1.5rem;
   align-items: start;
   grid-template-columns: minmax(0, 1.25fr) minmax(19rem, 0.8fr);
+  min-width: 0;
 }
 
 .agent-detail-section {
@@ -1227,6 +1245,7 @@ dd {
 .version-detail-code-panel {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .version-detail-hero__lede {
@@ -1240,6 +1259,7 @@ dd {
 .version-detail-publication-grid {
   display: grid;
   gap: 1rem;
+  min-width: 0;
 }
 
 .version-detail-summary-grid {
@@ -1287,6 +1307,7 @@ dd {
   gap: 1.5rem;
   align-items: start;
   grid-template-columns: minmax(0, 1.2fr) minmax(19rem, 0.82fr);
+  min-width: 0;
 }
 
 .version-detail-rail {
@@ -1389,7 +1410,15 @@ dd {
 .version-detail-definition-list dd {
   margin: 0;
   color: var(--text);
+  font-family:
+    ui-monospace,
+    "SFMono-Regular",
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+  font-size: 0.94rem;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .version-detail-note {
@@ -1443,6 +1472,7 @@ dd {
 .draft-action-footer__copy {
   display: grid;
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .draft-hero__note,
@@ -1604,6 +1634,7 @@ dd {
 .review-queue__hero-copy,
 .review-queue__row-main {
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .review-queue__hero-summary-copy {
@@ -1738,8 +1769,27 @@ dd {
   .console-public-topbar,
   .console-chrome,
   .console-topbar {
+    flex-wrap: wrap;
     border-radius: 1.25rem;
     align-items: flex-start;
+  }
+
+  .console-topbar__actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .console-session-summary,
+  .console-signout,
+  .console-signout button {
+    width: 100%;
+  }
+
+  .console-signout button {
+    min-width: 0;
   }
 
   .inline-actions form {
@@ -1839,6 +1889,18 @@ dd {
     grid-template-columns: 1fr;
   }
 
+  .console-topbar {
+    flex-wrap: wrap;
+    border-radius: 1.4rem;
+    align-items: flex-start;
+  }
+
+  .console-topbar__actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
   .console-nav {
     position: static;
     top: auto;
@@ -1847,6 +1909,8 @@ dd {
   .console-nav__group {
     display: flex;
     gap: 0.75rem;
+    width: 100%;
+    max-width: 100%;
     overflow-x: auto;
     padding: 0.75rem;
     white-space: nowrap;
