@@ -1,266 +1,25 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import http from "node:http";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 
-import pg from "pg";
-
-import { PrincipalResolver } from "../packages/auth/src/index.ts";
-import { loadRegistryConfig, type RegistryConfig } from "../packages/config/src/index.ts";
+import { loadRegistryConfig } from "../packages/config/src/index.ts";
 import {
   KyselyAgentAdminDetailRepository,
-  KyselyAgentDraftRegistrationRepository,
-  KyselyAgentReviewRepository,
-  KyselyBootstrapRepository,
-  KyselyHealthRepository,
-  KyselyPublicationTelemetryRepository,
-  KyselyTenantEnvironmentRepository,
-  KyselyTenantMembershipLookup,
-  KyselyTenantRepository,
   createKyselyDb,
   destroyKyselyDb,
-  migrateToLatest,
   type AgentRegistryDb,
 } from "../packages/db/src/index.ts";
-import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
-import { AgentDraftRegistrationService } from "../apps/api/src/modules/agents/service.ts";
-import { AgentVersionReviewService } from "../apps/api/src/modules/review/service.ts";
-import { createWebRequestListener } from "../apps/web/src/http.ts";
-
-const { Pool } = pg;
-
-const integrationDatabaseUrl =
-  process.env.DATABASE_URL ?? "postgres://registry:registry@postgres:5432/agent_registry";
-
-interface FreshRegistryDatabase {
-  cleanup(): Promise<void>;
-  databaseUrl: string;
-  db: AgentRegistryDb;
-}
-
-interface EmptyRegistryDatabase {
-  cleanup(): Promise<void>;
-  databaseUrl: string;
-}
-
-interface WebConsoleContext extends FreshRegistryDatabase {
-  baseUrl: string;
-  close(): Promise<void>;
-  config: RegistryConfig;
-}
-
-interface PendingVersionFixture {
-  agentId: string;
-  versionId: string;
-}
-
-function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
-  const url = new URL(baseUrl);
-  url.pathname = `/${databaseName}`;
-  return url.toString();
-}
-
-async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
-  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
-  const adminPool = new Pool({
-    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
-  });
-
-  await adminPool.query(`create database "${databaseName}" template template0`);
-
-  const databaseUrl = createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName);
-  const db = createKyselyDb(databaseUrl);
-
-  try {
-    await migrateToLatest(db);
-
-    return {
-      async cleanup() {
-        await destroyKyselyDb(db);
-        await adminPool.query(
-          "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
-          [databaseName],
-        );
-        await adminPool.query(`drop database if exists "${databaseName}"`);
-        await adminPool.end();
-      },
-      databaseUrl,
-      db,
-    };
-  } catch (error) {
-    await destroyKyselyDb(db);
-    await adminPool.query(`drop database if exists "${databaseName}"`);
-    await adminPool.end();
-    throw error;
-  }
-}
-
-async function createEmptyRegistryDatabase(): Promise<EmptyRegistryDatabase> {
-  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
-  const adminPool = new Pool({
-    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
-  });
-
-  try {
-    await adminPool.query(`create database "${databaseName}" template template0`);
-  } catch (error) {
-    await adminPool.end();
-    throw error;
-  }
-
-  return {
-    async cleanup() {
-      await adminPool.query(
-        "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
-        [databaseName],
-      );
-      await adminPool.query(`drop database if exists "${databaseName}"`);
-      await adminPool.end();
-    },
-    databaseUrl: createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName),
-  };
-}
-
-async function createWebConsoleContext(options: {
-  deploymentMode: "hosted" | "self-hosted";
-  reviewServiceOptions?: {
-    enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
-    resolveProbeHostname?: (hostname: string) => Promise<string[]>;
-  };
-}): Promise<WebConsoleContext> {
-  const database = await createFreshRegistryDatabase();
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "agent-registry-web-console-"));
-  const manifestPath = path.join(tempDir, "bootstrap.yaml");
-
-  try {
-    const manifest =
-      options.deploymentMode === "self-hosted"
-        ? [
-            "tenants:",
-            "  - tenantId: tenant-self-hosted",
-            "    displayName: Tenant Self Hosted",
-            "    environments: [dev, prod]",
-            "    memberships:",
-            "      - subjectId: admin-self-hosted",
-            "        roles: [tenant-admin]",
-            "      - subjectId: publisher-self-hosted",
-            "        roles: [publisher]",
-            "",
-          ].join("\n")
-        : [
-            "tenants:",
-            "  - tenantId: tenant-alpha",
-            "    displayName: Tenant Alpha",
-            "    environments: [dev, prod, staging]",
-            "    memberships:",
-            "      - subjectId: admin-alpha",
-            "        roles: [tenant-admin]",
-            "      - subjectId: publisher-alpha",
-            "        roles: [publisher]",
-            "      - subjectId: publisher-bravo",
-            "        roles: [publisher]",
-            "  - tenantId: tenant-beta",
-            "    displayName: Tenant Beta",
-            "    environments: [test]",
-            "    memberships:",
-            "      - subjectId: admin-beta",
-            "        roles: [tenant-admin]",
-            "",
-          ].join("\n");
-
-    await writeFile(manifestPath, manifest, "utf8");
-
-    const config = loadRegistryConfig(
-      options.deploymentMode === "self-hosted"
-        ? {
-            DATABASE_URL: database.databaseUrl,
-            DEPLOYMENT_MODE: "self-hosted",
-            SELF_HOSTED_BOOTSTRAP_FILE: manifestPath,
-          }
-        : {
-            DATABASE_URL: database.databaseUrl,
-            DEPLOYMENT_MODE: "hosted",
-            HOSTED_BOOTSTRAP_FILE: manifestPath,
-          },
-    );
-
-    await bootstrapFromConfig(config, new KyselyBootstrapRepository(database.db));
-
-    const server = http.createServer(
-      createWebRequestListener({
-        config,
-        db: database.db,
-        reviewServiceOptions: {
-          resolveProbeHostname:
-            options.reviewServiceOptions?.resolveProbeHostname ?? (async () => ["198.51.100.20"]),
-          enqueuePublicationProbe: options.reviewServiceOptions?.enqueuePublicationProbe,
-        },
-      }),
-    );
-
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve());
-    });
-
-    const address = server.address();
-
-    if (address === null || typeof address === "string") {
-      throw new Error("Expected an IPv4 test server address");
-    }
-
-    return {
-      ...database,
-      baseUrl: `http://127.0.0.1:${address.port}`,
-      config,
-      async close() {
-        await new Promise<void>((resolve, reject) => {
-          server.close((error) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-
-            resolve();
-          });
-        });
-        await rm(tempDir, { force: true, recursive: true });
-        await database.cleanup();
-      },
-    };
-  } catch (error) {
-    await rm(tempDir, { force: true, recursive: true });
-    await database.cleanup();
-    throw error;
-  }
-}
-
-function createRawCard(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify(
-    {
-      capabilities: ["card-search"],
-      invocationEndpoint: "https://agent.example.com/invoke",
-      name: "Case Resolver",
-      summary: "Handles support case routing.",
-      tags: ["card-tag"],
-      ...overrides,
-    },
-    null,
-    2,
-  );
-}
-
-function getRedirectLocation(response: Response): string {
-  const location = response.headers.get("location");
-
-  if (location === null) {
-    throw new Error(`Expected redirect location but received status ${response.status}`);
-  }
-
-  return location;
-}
+import {
+  approvePendingVersion,
+  BrowserSession,
+  createEmptyRegistryDatabase,
+  createPendingVersion,
+  createRawCard,
+  createWebConsoleContext,
+  getRedirectLocation,
+  seedHealthAndTelemetry,
+  signIn,
+  startWebConsoleServer,
+} from "./support/web-console-fixtures.ts";
 
 function assertUsesConsoleDocument(html: string): void {
   const headMatch = html.match(/<head>([\s\S]*?)<\/head>/);
@@ -281,238 +40,6 @@ function assertUsesConsoleDocument(html: string): void {
   assert.doesNotMatch(html, /<style>/);
 }
 
-class BrowserSession {
-  private readonly baseUrl: string;
-
-  private readonly cookies = new Map<string, string>();
-
-  constructor(baseUrl: string) {
-    this.baseUrl = baseUrl;
-  }
-
-  async get(pathname: string): Promise<Response> {
-    return this.request(pathname, {
-      method: "GET",
-    });
-  }
-
-  async postForm(pathname: string, formData: FormData): Promise<Response> {
-    return this.request(pathname, {
-      body: formData,
-      method: "POST",
-    });
-  }
-
-  async postUrlEncoded(pathname: string, values: Record<string, string>): Promise<Response> {
-    return this.request(pathname, {
-      body: new URLSearchParams(values),
-      method: "POST",
-    });
-  }
-
-  private async request(pathname: string, init: RequestInit): Promise<Response> {
-    const headers = new Headers(init.headers);
-    const cookieHeader = [...this.cookies.entries()]
-      .map(([name, value]) => `${name}=${value}`)
-      .join("; ");
-
-    if (cookieHeader !== "") {
-      headers.set("cookie", cookieHeader);
-    }
-
-    const response = await fetch(new URL(pathname, this.baseUrl), {
-      ...init,
-      headers,
-      redirect: "manual",
-    });
-    const setCookieHeader =
-      typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
-
-    for (const cookie of setCookieHeader) {
-      const [pair] = cookie.split(";", 1);
-      const separatorIndex = pair.indexOf("=");
-
-      if (separatorIndex <= 0) {
-        continue;
-      }
-
-      const name = pair.slice(0, separatorIndex);
-      const value = pair.slice(separatorIndex + 1);
-
-      if (value === "") {
-        this.cookies.delete(name);
-      } else {
-        this.cookies.set(name, value);
-      }
-    }
-
-    return response;
-  }
-}
-
-async function signIn(
-  browser: BrowserSession,
-  tenantId: string,
-  subjectId: string,
-): Promise<void> {
-  const response = await browser.postUrlEncoded("/session", {
-    subjectId,
-    tenantId,
-  });
-
-  assert.equal(response.status, 303);
-  assert.equal(getRedirectLocation(response), "/console");
-}
-
-async function resolvePrincipal(
-  db: AgentRegistryDb,
-  tenantId: string,
-  subjectId: string,
-) {
-  return new PrincipalResolver(new KyselyTenantMembershipLookup(db)).resolve({
-    auth: {
-      subjectId,
-    },
-    tenantId,
-  });
-}
-
-async function createPendingVersion(
-  context: WebConsoleContext,
-  input: {
-    displayName: string;
-    environments: string[];
-    publisherId: string;
-    summary: string;
-    versionLabel: string;
-  },
-): Promise<PendingVersionFixture> {
-  const principal = await resolvePrincipal(context.db, "tenant-alpha", input.publisherId);
-  const draftService = new AgentDraftRegistrationService(
-    new KyselyAgentDraftRegistrationRepository(context.db),
-    new KyselyTenantEnvironmentRepository(context.db),
-    new KyselyTenantRepository(context.db),
-    {
-      deploymentMode: context.config.deploymentMode,
-      rawCardByteLimit: context.config.rawCardByteLimit,
-      requireHttpsHealthEndpoints: context.config.healthProbe.requireHttps,
-    },
-  );
-  const reviewService = new AgentVersionReviewService(
-    new KyselyAgentReviewRepository(context.db),
-    {
-      deploymentMode: context.config.deploymentMode,
-      requireHttps: context.config.healthProbe.requireHttps,
-      resolveProbeHostname: async () => ["198.51.100.20"],
-    },
-  );
-
-  const draft = await draftService.createDraftAgent(principal, "tenant-alpha", {
-    capabilities: ["shared-capability"],
-    contextContract: [
-      {
-        description: "Selects the client partition.",
-        example: "client-123",
-        key: "client_id",
-        required: true,
-        type: "string",
-      },
-    ],
-    displayName: input.displayName,
-    headerContract: [
-      {
-        description: "Passes the calling user identifier.",
-        name: "X-User-Id",
-        required: true,
-        source: "user.id",
-      },
-    ],
-    publications: input.environments.map((environmentKey) => ({
-      environmentKey,
-      healthEndpointUrl: `https://${environmentKey}.health.example.com/status`,
-      rawCard: createRawCard({
-        capabilities: ["card-search", `${environmentKey}-capability`],
-        name: input.displayName,
-        summary: input.summary,
-        tags: ["card-tag", environmentKey],
-      }),
-    })),
-    requiredRoles: ["support-agent"],
-    requiredScopes: ["tickets.read"],
-    summary: input.summary,
-    tags: ["shared-tag"],
-    versionLabel: input.versionLabel,
-  });
-
-  await reviewService.submitVersion(principal, "tenant-alpha", draft.agentId, draft.versionId);
-
-  return {
-    agentId: draft.agentId,
-    versionId: draft.versionId,
-  };
-}
-
-async function approvePendingVersion(
-  context: WebConsoleContext,
-  fixture: PendingVersionFixture,
-): Promise<void> {
-  const principal = await resolvePrincipal(context.db, "tenant-alpha", "admin-alpha");
-  const reviewService = new AgentVersionReviewService(
-    new KyselyAgentReviewRepository(context.db),
-    {
-      deploymentMode: context.config.deploymentMode,
-      requireHttps: context.config.healthProbe.requireHttps,
-      resolveProbeHostname: async () => ["198.51.100.20"],
-    },
-  );
-
-  await reviewService.approveVersion(principal, "tenant-alpha", fixture.agentId, fixture.versionId);
-}
-
-async function seedHealthAndTelemetry(
-  db: AgentRegistryDb,
-  fixture: PendingVersionFixture,
-): Promise<void> {
-  const publication = await db
-    .selectFrom("environment_publications")
-    .select(["publication_id", "environment_key"])
-    .where("tenant_id", "=", "tenant-alpha")
-    .where("agent_id", "=", fixture.agentId)
-    .where("version_id", "=", fixture.versionId)
-    .where("environment_key", "=", "dev")
-    .executeTakeFirstOrThrow();
-
-  const healthRepository = new KyselyHealthRepository(db);
-  const telemetryRepository = new KyselyPublicationTelemetryRepository(db);
-
-  await healthRepository.recordPublicationProbe({
-    checkedAt: "2026-03-13T10:00:00Z",
-    error: null,
-    ok: true,
-    publicationId: publication.publication_id,
-    statusCode: 200,
-  });
-  await healthRepository.recordPublicationProbe({
-    checkedAt: "2026-03-13T10:01:00Z",
-    error: "service unavailable",
-    ok: false,
-    publicationId: publication.publication_id,
-    statusCode: 503,
-  });
-  await telemetryRepository.upsertPublicationTelemetry({
-    agentId: fixture.agentId,
-    environmentKey: publication.environment_key,
-    errorCount: 1,
-    invocationCount: 12,
-    p50LatencyMs: 120,
-    p95LatencyMs: 280,
-    successCount: 11,
-    tenantId: "tenant-alpha",
-    versionId: fixture.versionId,
-    windowEndedAt: "2026-03-13T10:15:00Z",
-    windowStartedAt: "2026-03-13T10:00:00Z",
-  });
-}
 
 test("console root renders a setup page before schema bootstrap", async () => {
   const database = await createEmptyRegistryDatabase();
@@ -525,25 +52,13 @@ test("console root renders a setup page before schema bootstrap", async () => {
       requireBootstrapFile: false,
     },
   );
-  const server = http.createServer(
-    createWebRequestListener({
-      config,
-      db,
-    }),
-  );
+  const server = await startWebConsoleServer({
+    config,
+    db,
+  });
 
   try {
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve());
-    });
-
-    const address = server.address();
-
-    if (address === null || typeof address === "string") {
-      throw new Error("Expected an IPv4 test server address");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const response = await fetch(`${server.baseUrl}/`);
     const html = await response.text();
 
     assert.equal(response.status, 200);
@@ -552,16 +67,7 @@ test("console root renders a setup page before schema bootstrap", async () => {
     assert.match(html, /Console Setup Pending/);
     assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve();
-      });
-    });
+    await server.close();
     await destroyKyselyDb(db);
     await database.cleanup();
   }
@@ -617,29 +123,17 @@ test("unexpected console failures return 500 without exposing internal messages"
       requireBootstrapFile: false,
     },
   );
-  const server = http.createServer(
-    createWebRequestListener({
-      config,
-      db: {
-        selectFrom() {
-          throw new Error("database offline");
-        },
-      } as unknown as AgentRegistryDb,
-    }),
-  );
+  const server = await startWebConsoleServer({
+    config,
+    db: {
+      selectFrom() {
+        throw new Error("database offline");
+      },
+    } as unknown as AgentRegistryDb,
+  });
 
   try {
-    await new Promise<void>((resolve) => {
-      server.listen(0, "127.0.0.1", () => resolve());
-    });
-
-    const address = server.address();
-
-    if (address === null || typeof address === "string") {
-      throw new Error("Expected an IPv4 test server address");
-    }
-
-    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const response = await fetch(`${server.baseUrl}/`);
     const html = await response.text();
 
     assert.equal(response.status, 500);
@@ -647,16 +141,158 @@ test("unexpected console failures return 500 without exposing internal messages"
     assert.match(html, /Internal server error\./);
     assert.doesNotMatch(html, /database offline/);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+    await server.close();
+  }
+});
 
-        resolve();
-      });
+test("shared fixtures expose seeded routes and telemetry-ready approved versions", async () => {
+  const hostedContext = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const selfHostedContext = await createWebConsoleContext({
+    deploymentMode: "self-hosted",
+  });
+  const detailRepository = new KyselyAgentAdminDetailRepository(hostedContext.db);
+
+  try {
+    // Arrange
+    const fixture = await createPendingVersion(hostedContext, {
+      agentId: "agent-case-router",
+      displayName: "Case Router",
+      environments: ["dev"],
+      publisherId: hostedContext.subjects.publisher,
+      summary: "Routes support cases.",
+      tenantId: hostedContext.tenants.primary,
+      versionLabel: "v1",
     });
+    const pendingDetail = await detailRepository.getVersionDetail(
+      fixture.tenantId,
+      fixture.agentId,
+      fixture.versionId,
+    );
+    const selfHostedBrowser = new BrowserSession(selfHostedContext.baseUrl);
+
+    // Act
+    await approvePendingVersion(hostedContext, fixture);
+    const approvedDetail = await detailRepository.getVersionDetail(
+      fixture.tenantId,
+      fixture.agentId,
+      fixture.versionId,
+    );
+    await seedHealthAndTelemetry(hostedContext.db, fixture);
+    const telemeteredDetail = await detailRepository.getVersionDetail(
+      fixture.tenantId,
+      fixture.agentId,
+      fixture.versionId,
+    );
+
+    const telemetryRows = await hostedContext.db
+      .selectFrom("publication_telemetry")
+      .select(["tenant_id", "publication_id"])
+      .where("tenant_id", "=", hostedContext.tenants.primary)
+      .execute();
+    const healthRows = await hostedContext.db
+      .selectFrom("publication_probe_history")
+      .select("publication_id")
+      .where("publication_id", "=", fixture.publicationIds.dev)
+      .execute();
+
+    await signIn(
+      selfHostedBrowser,
+      selfHostedContext.tenants.primary,
+      selfHostedContext.subjects.admin,
+    );
+    const selfHostedDashboard = await selfHostedBrowser.get("/console");
+    const selfHostedHtml = await selfHostedDashboard.text();
+
+    // Assert
+    assert.deepEqual(hostedContext.subjects, {
+      admin: "admin-alpha",
+      alternatePublisher: "publisher-bravo",
+      publisher: "publisher-alpha",
+      secondaryAdmin: "admin-beta",
+    });
+    assert.deepEqual(hostedContext.tenants, {
+      primary: "tenant-alpha",
+      secondary: "tenant-beta",
+    });
+    assert.deepEqual(selfHostedContext.subjects, {
+      admin: "admin-self-hosted",
+      publisher: "publisher-self-hosted",
+    });
+    assert.deepEqual(selfHostedContext.tenants, {
+      primary: "tenant-self-hosted",
+    });
+    assert.equal(fixture.agentId, "agent-case-router");
+    assert.equal(fixture.tenantId, hostedContext.tenants.primary);
+    assert.equal(pendingDetail.approvalState, "pending_review");
+    assert.equal(pendingDetail.active, false);
+    assert.equal(pendingDetail.review.submittedBy, hostedContext.subjects.publisher);
+    assert.equal(pendingDetail.review.approvedBy, null);
+    assert.equal(approvedDetail.approvalState, "approved");
+    assert.equal(approvedDetail.active, true);
+    assert.equal(approvedDetail.review.submittedBy, hostedContext.subjects.publisher);
+    assert.equal(approvedDetail.review.approvedBy, hostedContext.subjects.admin);
+    assert.notEqual(approvedDetail.review.approvedAt, null);
+    assert.deepEqual(
+      approvedDetail.publications.map((publication) => ({
+        environmentKey: publication.environmentKey,
+        healthStatus: publication.healthStatus,
+        publicationId: publication.publicationId,
+        telemetryCount: publication.telemetry.length,
+      })),
+      [
+        {
+          environmentKey: "dev",
+          healthStatus: "unknown",
+          publicationId: fixture.publicationIds.dev,
+          telemetryCount: 0,
+        },
+      ],
+    );
+    assert.equal(fixture.publicationIds.dev, telemetryRows[0]?.publication_id);
+    assert.equal(
+      fixture.routes.agentDetail,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}`,
+    );
+    assert.equal(
+      fixture.routes.versionDetail,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/versions/${fixture.versionId}`,
+    );
+    assert.equal(
+      fixture.routes.approve,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/versions/${fixture.versionId}/approve`,
+    );
+    assert.equal(
+      fixture.routes.submit,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/versions/${fixture.versionId}/submit`,
+    );
+    assert.equal(
+      fixture.routes.environmentOverlays.dev.deprecate,
+      `/tenants/${hostedContext.tenants.primary}/agents/${fixture.agentId}/environments/dev/overlay/deprecate`,
+    );
+    assert.deepEqual(
+      telemeteredDetail.publications.map((publication) => ({
+        environmentKey: publication.environmentKey,
+        healthStatus: publication.healthStatus,
+        publicationId: publication.publicationId,
+        telemetryCount: publication.telemetry.length,
+      })),
+      [
+        {
+          environmentKey: "dev",
+          healthStatus: "degraded",
+          publicationId: fixture.publicationIds.dev,
+          telemetryCount: 1,
+        },
+      ],
+    );
+    assert.equal(healthRows.length, 2);
+    assert.equal(selfHostedDashboard.status, 200);
+    assert.match(selfHostedHtml, /Tenant Self Hosted/);
+  } finally {
+    await selfHostedContext.close();
+    await hostedContext.close();
   }
 });
 
