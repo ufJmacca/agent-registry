@@ -378,6 +378,25 @@ test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", 
   );
 });
 
+test("dashboard stylesheet defines a responsive bento grid", async () => {
+  // Arrange
+  const css = await readFile(path.resolve("apps/web/assets/console.css"), "utf8");
+
+  // Assert
+  assert.match(
+    css,
+    /\.dashboard-grid\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\);/,
+  );
+  assert.match(
+    css,
+    /\.dashboard-panel--hero\s*\{[\s\S]*?grid-column:\s*span 2;/,
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 960px\)\s*\{[\s\S]*?\.dashboard-grid\s*\{\s*grid-template-columns:\s*1fr;\s*\}/,
+  );
+});
+
 class BrowserSession {
   private readonly baseUrl: string;
 
@@ -610,6 +629,108 @@ async function seedHealthAndTelemetry(
     windowStartedAt: "2026-03-13T10:00:00Z",
   });
 }
+
+test("dashboard surfaces only truthful data with role-sensitive console entry points", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const publisherBrowser = new BrowserSession(context.baseUrl);
+  const adminBrowser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const approvedFixture = await createPendingVersion(context, {
+      displayName: "Case Router",
+      environments: ["dev"],
+      publisherId: "publisher-alpha",
+      summary: "Routes support cases.",
+      versionLabel: "v1",
+    });
+    const otherPublisherFixture = await createPendingVersion(context, {
+      displayName: "Escalation Router",
+      environments: ["dev"],
+      publisherId: "publisher-bravo",
+      summary: "Routes escalations for a different publisher.",
+      versionLabel: "v2",
+    });
+
+    await approvePendingVersion(context, approvedFixture);
+    await signIn(publisherBrowser, "tenant-alpha", "publisher-alpha");
+    await signIn(adminBrowser, "tenant-alpha", "admin-alpha");
+
+    const publisherVersionHref =
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}`;
+    const otherPublisherVersionHref =
+      `/tenants/tenant-alpha/agents/${otherPublisherFixture.agentId}/versions/${otherPublisherFixture.versionId}`;
+    const activeAgentHref = `/tenants/tenant-alpha/agents/${approvedFixture.agentId}`;
+
+    // Act
+    const publisherPage = await publisherBrowser.get("/console");
+    const publisherHtml = await publisherPage.text();
+    const adminPage = await adminBrowser.get("/console");
+    const adminHtml = await adminPage.text();
+
+    // Assert
+    assert.equal(publisherPage.status, 200);
+    assertShell(publisherHtml, {
+      currentNavHref: "/console",
+      page: "dashboard",
+      shell: "authenticated",
+    });
+    assert.match(publisherHtml, /class="dashboard-grid"/);
+    assert.match(publisherHtml, /<h1>System Overview<\/h1>/);
+    assert.match(publisherHtml, /<h2>Tenant Context<\/h2>/);
+    assert.match(
+      publisherHtml,
+      /dashboard-panel--primary[\s\S]*?href="\/tenants\/tenant-alpha\/drafts\/new"[\s\S]*?>New Draft Registration</,
+    );
+    assert.match(publisherHtml, /Tenant Alpha/);
+    assert.match(publisherHtml, /tenant-alpha/);
+    assert.match(publisherHtml, /publisher-alpha/);
+    assert.match(publisherHtml, /publisher/);
+    assert.match(publisherHtml, new RegExp(escapeRegExp(publisherVersionHref)));
+    assert.doesNotMatch(publisherHtml, new RegExp(escapeRegExp(otherPublisherVersionHref)));
+    assert.doesNotMatch(publisherHtml, /<h2>Active Agents<\/h2>/);
+    assert.doesNotMatch(publisherHtml, />Environment Management</);
+    assert.doesNotMatch(publisherHtml, />Review Queue</);
+    assert.doesNotMatch(publisherHtml, />Settings</);
+    assert.doesNotMatch(publisherHtml, />Support</);
+    assert.doesNotMatch(publisherHtml, />API Status</);
+    assert.doesNotMatch(publisherHtml, />New Agent</);
+
+    assert.equal(adminPage.status, 200);
+    assertShell(adminHtml, {
+      currentNavHref: "/console",
+      page: "dashboard",
+      shell: "authenticated",
+    });
+    assert.match(adminHtml, /class="dashboard-grid"/);
+    assert.match(adminHtml, /<h2>Tenant Context<\/h2>/);
+    assert.match(adminHtml, /admin-alpha/);
+    assert.match(
+      adminHtml,
+      /dashboard-panel--primary[\s\S]*?href="\/tenants\/tenant-alpha\/drafts\/new"[\s\S]*?>New Draft Registration</,
+    );
+    assert.match(
+      adminHtml,
+      /<a class="dashboard-panel dashboard-panel--navigation" href="\/tenants\/tenant-alpha\/environments">[\s\S]*?<h2>Environment Management<\/h2>/,
+    );
+    assert.match(
+      adminHtml,
+      /<a class="dashboard-panel dashboard-panel--navigation" href="\/tenants\/tenant-alpha\/review">[\s\S]*?<h2>Review Queue<\/h2>/,
+    );
+    assert.match(adminHtml, /<h2>Active Agents<\/h2>/);
+    assert.match(adminHtml, new RegExp(escapeRegExp(activeAgentHref)));
+    assert.match(adminHtml, new RegExp(escapeRegExp(publisherVersionHref)));
+    assert.match(adminHtml, new RegExp(escapeRegExp(otherPublisherVersionHref)));
+    assert.doesNotMatch(adminHtml, />Settings</);
+    assert.doesNotMatch(adminHtml, />Support</);
+    assert.doesNotMatch(adminHtml, />API Status</);
+    assert.doesNotMatch(adminHtml, />New Agent</);
+  } finally {
+    await context.close();
+  }
+});
 
 test("console root renders a setup page before schema bootstrap", async () => {
   const database = await createEmptyRegistryDatabase();
