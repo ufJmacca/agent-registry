@@ -125,6 +125,7 @@ async function createEmptyRegistryDatabase(): Promise<EmptyRegistryDatabase> {
 }
 
 async function createWebConsoleContext(options: {
+  bootstrapManifest?: string;
   deploymentMode: "hosted" | "self-hosted";
   reviewServiceOptions?: {
     enqueuePublicationProbe?: (publicationId: string) => Promise<void>;
@@ -137,7 +138,8 @@ async function createWebConsoleContext(options: {
 
   try {
     const manifest =
-      options.deploymentMode === "self-hosted"
+      options.bootstrapManifest ??
+      (options.deploymentMode === "self-hosted"
         ? [
             "tenants:",
             "  - tenantId: tenant-self-hosted",
@@ -169,7 +171,7 @@ async function createWebConsoleContext(options: {
             "      - subjectId: admin-beta",
             "        roles: [tenant-admin]",
             "",
-          ].join("\n");
+          ].join("\n"));
 
     await writeFile(manifestPath, manifest, "utf8");
 
@@ -308,6 +310,53 @@ function assertShell(
       ),
     );
   }
+}
+
+function assertPublicLandingLayout(html: string): void {
+  assertUsesConsoleDocument(html);
+  assertShell(html, {
+    page: "sign-in",
+    shell: "public",
+  });
+  assert.match(html, /Architectural Precision/);
+  assert.match(html, /data-public-panel="access"/);
+  assert.match(html, /data-public-panel="setup"/);
+}
+
+function getNamedSelect(html: string, name: string): {
+  content: string;
+  openTag: string;
+} {
+  const match = html.match(
+    new RegExp(
+      `(?<openTag><select[^>]+name="${escapeRegExp(name)}"[^>]*>)(?<content>[\\s\\S]*?)</select>`,
+    ),
+  );
+
+  if (match?.groups === undefined) {
+    throw new Error(`Expected a <select> named "${name}".`);
+  }
+
+  return {
+    content: match.groups.content,
+    openTag: match.groups.openTag,
+  };
+}
+
+function assertSessionSignInUnavailable(html: string): void {
+  assert.doesNotMatch(html, /<form[^>]+action="\/session"[^>]*>/);
+  assert.doesNotMatch(html, /\bname="tenantId"\b/);
+  assert.doesNotMatch(html, /\bname="subjectId"\b/);
+}
+
+function assertEnabledSubmitButton(html: string): void {
+  const match = html.match(/<button[^>]+type="submit"[^>]*>/);
+
+  if (match === null) {
+    throw new Error("Expected a submit button on the sign-in page.");
+  }
+
+  assert.doesNotMatch(match[0], /\bdisabled\b/);
 }
 
 test("shell stylesheet preserves the 960px mobile navigation breakpoint rules", async () => {
@@ -595,14 +644,11 @@ test("console root renders a setup page before schema bootstrap", async () => {
     const html = await response.text();
 
     assert.equal(response.status, 200);
-    assertUsesConsoleDocument(html);
-    assertShell(html, {
-      page: "sign-in",
-      shell: "public",
-    });
-    assert.match(html, /<h1>Agent Registry<\/h1>/);
+    assertPublicLandingLayout(html);
     assert.match(html, /Console Setup Pending/);
-    assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
+    assert.match(html, /Run migrations and load bootstrap tenant data to enable console sign-in\./);
+    assert.doesNotMatch(html, /relation "tenant_memberships" does not exist/);
+    assertSessionSignInUnavailable(html);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -616,6 +662,160 @@ test("console root renders a setup page before schema bootstrap", async () => {
     });
     await destroyKyselyDb(db);
     await database.cleanup();
+  }
+});
+
+test("console root renders a distinct setup page after schema bootstrap with no tenant data", async () => {
+  const database = await createFreshRegistryDatabase();
+  const config = loadRegistryConfig(
+    {
+      DATABASE_URL: database.databaseUrl,
+      DEPLOYMENT_MODE: "hosted",
+    },
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: database.db,
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    // Act
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 200);
+    assertPublicLandingLayout(html);
+    assert.match(html, /Console Setup Pending/);
+    assert.match(html, /Bootstrap tenant and membership data to enable console sign-in\./);
+    assert.doesNotMatch(html, /Run migrations and load bootstrap tenant data to enable console sign-in\./);
+    assertSessionSignInUnavailable(html);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+    await database.cleanup();
+  }
+});
+
+test("hosted sign-in landing uses the editorial access-card layout and swaps memberships by tenant query", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const signInPage = await browser.get("/");
+    const signInHtml = await signInPage.text();
+    const tenantBetaPage = await browser.get("/?tenantId=tenant-beta");
+    const tenantBetaHtml = await tenantBetaPage.text();
+    const alphaSubjectSelect = getNamedSelect(signInHtml, "subjectId");
+    const betaSubjectSelect = getNamedSelect(tenantBetaHtml, "subjectId");
+
+    // Assert
+    assert.equal(signInPage.status, 200);
+    assert.equal(tenantBetaPage.status, 200);
+    assertPublicLandingLayout(signInHtml);
+    assert.match(signInHtml, /Registry Access/);
+    assert.match(signInHtml, /<form[^>]+action="\/session"[^>]+method="post"/);
+    assert.match(signInHtml, /<select[^>]+name="tenantId"/);
+    assert.match(signInHtml, /<option value="tenant-alpha" selected/);
+    assert.doesNotMatch(alphaSubjectSelect.openTag, /\bdisabled\b/);
+    assert.match(alphaSubjectSelect.content, /<option value="admin-alpha"/);
+    assert.match(alphaSubjectSelect.content, /<option value="publisher-alpha"/);
+    assert.doesNotMatch(alphaSubjectSelect.content, /<option value="admin-beta"/);
+    assertEnabledSubmitButton(signInHtml);
+    assertPublicLandingLayout(tenantBetaHtml);
+    assert.match(tenantBetaHtml, /<option value="tenant-beta" selected/);
+    assert.doesNotMatch(betaSubjectSelect.openTag, /\bdisabled\b/);
+    assert.match(betaSubjectSelect.content, /<option value="admin-beta"/);
+    assert.doesNotMatch(betaSubjectSelect.content, /<option value="admin-alpha"/);
+    assert.doesNotMatch(betaSubjectSelect.content, /<option value="publisher-alpha"/);
+    assertEnabledSubmitButton(tenantBetaHtml);
+  } finally {
+    await context.close();
+  }
+});
+
+test("hosted sign-in landing keeps the no-membership fallback truthful and non-interactive", async () => {
+  const context = await createWebConsoleContext({
+    bootstrapManifest: [
+      "tenants:",
+      "  - tenantId: tenant-alpha",
+      "    displayName: Tenant Alpha",
+      "    environments: [dev]",
+      "    memberships:",
+      "      - subjectId: admin-alpha",
+      "        roles: [tenant-admin]",
+      "  - tenantId: tenant-gamma",
+      "    displayName: Tenant Gamma",
+      "    environments: [test]",
+      "    memberships: []",
+      "",
+    ].join("\n"),
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const response = await browser.get("/?tenantId=tenant-gamma");
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 200);
+    assertPublicLandingLayout(html);
+    assert.match(html, /<option value="tenant-gamma" selected/);
+    assert.match(html, /No memberships available for Tenant Gamma\./);
+    assert.match(html, /<select[^>]+name="subjectId"[^>]+disabled/);
+    assert.match(html, /<button[^>]+type="submit"[^>]+disabled/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("existing console sessions redirect from the public landing page to /console", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.get("/");
+
+    // Assert
+    assert.equal(response.status, 303);
+    assert.equal(getRedirectLocation(response), "/console");
+  } finally {
+    await context.close();
   }
 });
 
@@ -1279,10 +1479,7 @@ test("self-hosted console collapses tenant selection while keeping tenant-scoped
 
     // Assert
     assert.equal(signInPage.status, 200);
-    assertShell(signInHtml, {
-      page: "sign-in",
-      shell: "public",
-    });
+    assertPublicLandingLayout(signInHtml);
     assert.doesNotMatch(signInHtml, /<select[^>]+name="tenantId"/);
     assert.match(signInHtml, /type="hidden"[^>]+name="tenantId"[^>]+tenant-self-hosted/);
     assert.match(signInHtml, /Single-tenant deployment/);

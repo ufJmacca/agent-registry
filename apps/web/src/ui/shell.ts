@@ -60,28 +60,32 @@ export function writePublicShell(
   options: PublicShellOptions,
   headers: Record<string, string> = {},
 ): void {
+  const landingActions =
+    options.pageId === "sign-in"
+      ? `<div class="console-public-topbar__actions">
+           <a class="console-public-topbar__link" href="#setup-state">Setup State</a>
+           <a class="console-public-topbar__cta" href="#registry-access">Console Access</a>
+         </div>`
+      : "";
+
   writeHtmlDocument(
     response,
     statusCode,
     {
       body: `<section class="console-public-shell" data-shell="public" data-page="${escapeHtml(options.pageId)}">
-        <div class="console-public-shell__hero card stack">
+        <header class="console-public-topbar">
           ${renderBrand({
             kicker: "Agent Registry Console",
             meta: "Technical Curator Foundation",
           })}
-          <div class="stack">
-            <p class="console-kicker">Public Entry</p>
-            <h1>Agent Registry</h1>
-            <p class="meta">Curated access for tenant admins and publishers across drafting, review, and environment delivery.</p>
-          </div>
+          ${landingActions}
+        </header>
+        <div class="console-public-hero stack">
+          <p class="console-kicker">Public Entry</p>
+          <h1>Architectural Precision</h1>
+          <p class="meta">Securely access the Technical Curator Registry. Manage, validate, and deploy high-performance intelligence agents with an editorial eye for technical detail.</p>
         </div>
-        <aside class="console-public-shell__note card stack">
-          <p class="console-kicker">Access Pattern</p>
-          <h2>Deterministic sign-in, truthful setup state.</h2>
-          <p>The landing page reflects current memberships and keeps the hosted and self-hosted entry flows intact.</p>
-        </aside>
-        <div class="console-public-shell__content stack">
+        <div class="console-public-stage">
           ${options.body}
         </div>
       </section>`,

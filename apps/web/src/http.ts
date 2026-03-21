@@ -232,6 +232,148 @@ function writeConsoleHomePage(
   );
 }
 
+function renderSetupPendingLanding(options: {
+  detailBody: string;
+  detailTitle: string;
+  setupMessage: string;
+}): string {
+  return `<section class="console-public-card console-public-card--access stack" data-public-panel="access" id="registry-access">
+    <div class="stack">
+      <p class="console-kicker">Registry Access</p>
+      <h2>Access pending initialization</h2>
+      <p>Console access becomes available after the registry foundation is initialized.</p>
+    </div>
+    <div class="console-public-static-input">
+      <span>Sign-in stays disabled while setup is incomplete.</span>
+      <strong>Tenant and subject controls will appear here once bootstrap completes.</strong>
+    </div>
+  </section>
+  <section class="console-public-card console-public-card--setup stack" data-public-panel="setup" id="setup-state">
+    <div class="console-public-card__marker" aria-hidden="true">01</div>
+    <div class="stack console-public-card__content">
+      <p class="console-kicker">Setup State</p>
+      <h2>Console Setup Pending</h2>
+      <p>${escapeHtml(options.setupMessage)}</p>
+      <div class="console-public-summary-grid">
+        <article class="console-public-highlight">
+          <p class="console-kicker">Registry Foundation</p>
+          <h3>${escapeHtml(options.detailTitle)}</h3>
+          <p>${escapeHtml(options.detailBody)}</p>
+        </article>
+        <article class="console-public-highlight">
+          <p class="console-kicker">Next Step</p>
+          <h3>Complete bootstrap</h3>
+          <p>Initialize schema, tenants, and memberships before enabling console sign-in.</p>
+        </article>
+      </div>
+    </div>
+  </section>`;
+}
+
+function renderSignInLanding(options: {
+  deploymentMode: "hosted" | "self-hosted";
+  hostedTenantOptions: string;
+  selfHostedTenant: TenantConsoleOption;
+  visibleTenant: TenantConsoleOption;
+}): string {
+  const hasMemberships = options.visibleTenant.memberships.length > 0;
+  const subjectOptions = hasMemberships
+    ? options.visibleTenant.memberships
+        .map(
+          (membership) =>
+            `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}]</option>`,
+        )
+        .join("")
+    : `<option value="" disabled selected>No memberships available for ${escapeHtml(options.visibleTenant.displayName)}.</option>`;
+  const deploymentModeLabel = options.deploymentMode === "hosted" ? "Hosted" : "Self-hosted";
+  const deploymentModeSummary =
+    options.deploymentMode === "hosted"
+      ? "Hosted mode still drives tenant selection from the ?tenantId= query parameter."
+      : "Single-tenant deployment keeps tenant scope collapsed to the hidden tenantId input.";
+  const membershipSummary =
+    options.visibleTenant.memberships.length === 1
+      ? "1 seeded membership is ready for sign-in."
+      : `${options.visibleTenant.memberships.length} seeded memberships are ready for sign-in.`;
+  const currentFlowSummary = hasMemberships
+    ? "Authenticate with a seeded subject to continue to the console."
+    : "Add a tenant membership before sign-in becomes interactive.";
+
+  return `<section class="console-public-card console-public-card--access stack" data-public-panel="access" id="registry-access">
+    <div class="stack">
+      <p class="console-kicker">Registry Access</p>
+      <h2>${hasMemberships ? "Authenticate identity" : "Membership required"}</h2>
+      <p>${
+        hasMemberships
+          ? "Select a tenant context and truthful subject membership to continue to the console."
+          : `No memberships are configured for ${escapeHtml(options.visibleTenant.displayName)} yet.`
+      }</p>
+    </div>
+    <form class="stack console-public-form" action="/session" method="post">
+      ${
+        options.deploymentMode === "self-hosted"
+          ? `<div class="stack">
+               <p class="console-kicker">Tenant Scope</p>
+               <input type="hidden" name="tenantId" value="${escapeHtml(options.selfHostedTenant.tenantId)}" />
+               <div class="console-public-static-input">
+                 <span>Single-tenant deployment</span>
+                 <strong>${escapeHtml(options.selfHostedTenant.displayName)} (${escapeHtml(options.selfHostedTenant.tenantId)})</strong>
+               </div>
+             </div>`
+          : `<label>Tenant
+               <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
+                 ${options.hostedTenantOptions}
+               </select>
+             </label>`
+      }
+      <label>Subject
+        <select name="subjectId"${hasMemberships ? "" : ' disabled aria-disabled="true"'}>
+          ${subjectOptions}
+        </select>
+      </label>
+      ${
+        hasMemberships
+          ? ""
+          : `<p class="meta">Add at least one tenant membership before signing in.</p>`
+      }
+      <button type="submit"${hasMemberships ? "" : ' disabled aria-disabled="true"'}>Authenticate Identity</button>
+    </form>
+  </section>
+  <section class="console-public-card console-public-card--setup stack" data-public-panel="setup" id="setup-state">
+    <div class="console-public-card__marker" aria-hidden="true">01</div>
+    <div class="stack console-public-card__content">
+      <p class="console-kicker">Setup State</p>
+      <h2>${hasMemberships ? "Truthful sign-in state" : "Memberships pending"}</h2>
+      <p>${
+        hasMemberships
+          ? "The landing page reflects current memberships while preserving the existing hosted and self-hosted sign-in paths."
+          : `The selected tenant exists, but no sign-in memberships are available for ${escapeHtml(options.visibleTenant.displayName)}.`
+      }</p>
+      <div class="console-public-summary-grid">
+        <article class="console-public-highlight">
+          <p class="console-kicker">Deployment Mode</p>
+          <h3>${deploymentModeLabel}</h3>
+          <p>${deploymentModeSummary}</p>
+        </article>
+        <article class="console-public-highlight">
+          <p class="console-kicker">Selected Tenant</p>
+          <h3>${escapeHtml(options.visibleTenant.displayName)}</h3>
+          <p>${escapeHtml(options.visibleTenant.tenantId)}</p>
+        </article>
+        <article class="console-public-highlight">
+          <p class="console-kicker">Memberships</p>
+          <h3>${escapeHtml(String(options.visibleTenant.memberships.length))}</h3>
+          <p>${membershipSummary}</p>
+        </article>
+        <article class="console-public-highlight">
+          <p class="console-kicker">Current Flow</p>
+          <h3>${hasMemberships ? "Access ready" : "Awaiting memberships"}</h3>
+          <p>${currentFlowSummary}</p>
+        </article>
+      </div>
+    </div>
+  </section>`;
+}
+
 function redirect(
   response: ServerResponse,
   location: string,
@@ -501,10 +643,11 @@ async function renderSignInPage(
     if (isMissingConsoleSchemaError(error)) {
       writeConsoleHomePage(
         response,
-        `<section class="card stack">
-          <h2>Console Setup Pending</h2>
-          <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
-        </section>`,
+        renderSetupPendingLanding({
+          detailBody: "Run migrations before loading bootstrap tenants and memberships.",
+          detailTitle: "Schema missing",
+          setupMessage: "Run migrations and load bootstrap tenant data to enable console sign-in.",
+        }),
       );
       return;
     }
@@ -515,10 +658,11 @@ async function renderSignInPage(
   if (tenants.length === 0) {
     writeConsoleHomePage(
       response,
-      `<section class="card stack">
-        <h2>Console Setup Pending</h2>
-        <p>Bootstrap tenant and membership data to enable console sign-in.</p>
-      </section>`,
+      renderSetupPendingLanding({
+        detailBody: "The schema is available, but no tenant memberships are bootstrapped yet.",
+        detailTitle: "Bootstrap pending",
+        setupMessage: "Bootstrap tenant and membership data to enable console sign-in.",
+      }),
     );
     return;
   }
@@ -535,41 +679,15 @@ async function renderSignInPage(
     )
     .join("");
   const visibleTenant = deploymentMode === "hosted" ? selectedHostedTenant : selfHostedTenant;
-  const subjectOptions = visibleTenant.memberships
-    .map(
-      (membership) =>
-        `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}]</option>`,
-    )
-    .join("");
 
   writeConsoleHomePage(
     response,
-    `<section class="card stack">
-      <h2>Mock Sign-In</h2>
-      <form class="stack" action="/session" method="post">
-        ${
-          deploymentMode === "self-hosted"
-            ? `<p>Single-tenant deployment</p>
-               <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
-               <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
-            : `<label>Tenant
-                 <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
-                   ${hostedTenantOptions}
-                 </select>
-               </label>`
-        }
-        <label>Subject
-          <select name="subjectId">
-            ${
-              subjectOptions === ""
-                ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
-                : subjectOptions
-            }
-          </select>
-        </label>
-        <button type="submit">Sign In</button>
-      </form>
-    </section>`,
+    renderSignInLanding({
+      deploymentMode,
+      hostedTenantOptions,
+      selfHostedTenant,
+      visibleTenant,
+    }),
   );
 }
 
