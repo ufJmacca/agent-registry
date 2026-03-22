@@ -314,6 +314,92 @@ function assertRenderedDocumentUsesSharedAssets(html: string): void {
   assert.match(html, /<link[^>]+rel="stylesheet"[^>]+href="\/assets\/console\.css"/);
 }
 
+function assertHasDataHook(html: string, attribute: string, value: string): void {
+  assert.match(html, new RegExp(`${attribute}="${value}"`));
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getNavMarkup(html: string, variant: "mobile" | "rail"): string {
+  const navMatch = html.match(
+    new RegExp(`<nav[^>]+data-nav="${variant}"[^>]*>[\\s\\S]*?<\\/nav>`),
+  );
+
+  assert.notEqual(navMatch, null, `Expected ${variant} nav markup to be rendered`);
+
+  return navMatch[0];
+}
+
+function assertNavContainsLink(
+  navMarkup: string,
+  link: {
+    href: string;
+    label: string;
+  },
+): void {
+  assert.match(
+    navMarkup,
+    new RegExp(
+      `<a[^>]+href="${escapeRegExp(link.href)}"[^>]*>${escapeRegExp(link.label)}<\\/a>`,
+    ),
+  );
+}
+
+function assertNavDoesNotContainLink(
+  navMarkup: string,
+  link: {
+    href: string;
+    label: string;
+  },
+): void {
+  assert.doesNotMatch(
+    navMarkup,
+    new RegExp(
+      `<a[^>]+href="${escapeRegExp(link.href)}"[^>]*>${escapeRegExp(link.label)}<\\/a>`,
+    ),
+  );
+}
+
+function assertAuthenticatedShellContract(
+  html: string,
+  options: {
+    dynamicHooks: string[];
+    navExcludes?: Array<{
+      href: string;
+      label: string;
+    }>;
+    navLinks: Array<{
+      href: string;
+      label: string;
+    }>;
+    page: string;
+  },
+): void {
+  assertHasDataHook(html, "data-page", options.page);
+  assertHasDataHook(html, "data-shell", "authenticated");
+  assertHasDataHook(html, "data-visual-dynamic", "session-context");
+
+  for (const variant of ["rail", "mobile"] as const) {
+    assertHasDataHook(html, "data-nav", variant);
+
+    const navMarkup = getNavMarkup(html, variant);
+
+    for (const link of options.navLinks) {
+      assertNavContainsLink(navMarkup, link);
+    }
+
+    for (const link of options.navExcludes ?? []) {
+      assertNavDoesNotContainLink(navMarkup, link);
+    }
+  }
+
+  for (const hook of options.dynamicHooks) {
+    assertHasDataHook(html, "data-visual-dynamic", hook);
+  }
+}
+
 function getRedirectLocation(response: Response): string {
   const location = response.headers.get("location");
 
@@ -593,9 +679,13 @@ test("console root renders a setup page before schema bootstrap", async () => {
 
     // Assert
     assert.equal(response.status, 200);
-    assert.match(html, /<h1>Agent Registry<\/h1>/);
+    assert.match(html, /Architectural Precision For Tenant Operations/);
     assert.match(html, /Console Setup Pending/);
     assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
+    assertHasDataHook(html, "data-page", "sign-in");
+    assertHasDataHook(html, "data-shell", "public");
+    assertHasDataHook(html, "data-visual-dynamic", "sign-in-access");
+    assert.doesNotMatch(html, /data-nav="/);
     assertRenderedDocumentUsesSharedAssets(html);
   } finally {
     await new Promise<void>((resolve, reject) => {
@@ -1006,6 +1096,26 @@ test("publisher console creates a multi-environment draft and submits it for rev
 
   try {
     // Arrange
+    const publisherNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+    ];
+    const adminOnlyNavLinks = [
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
     const signInPage = await browser.get("/");
     const signInHtml = await signInPage.text();
     const tenantBetaSignInPage = await browser.get("/?tenantId=tenant-beta");
@@ -1112,6 +1222,9 @@ test("publisher console creates a multi-environment draft and submits it for rev
     // Assert
     assert.equal(signInPage.status, 200);
     assert.equal(tenantBetaSignInPage.status, 200);
+    assertHasDataHook(signInHtml, "data-page", "sign-in");
+    assertHasDataHook(signInHtml, "data-shell", "public");
+    assertHasDataHook(signInHtml, "data-visual-dynamic", "sign-in-access");
     assert.match(signInHtml, /<select[^>]+name="tenantId"/);
     assert.match(signInHtml, /admin-alpha/);
     assert.match(signInHtml, /publisher-alpha/);
@@ -1119,12 +1232,29 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(tenantBetaSignInHtml, /admin-beta/);
     assert.doesNotMatch(tenantBetaSignInHtml, /admin-alpha/);
     assert.doesNotMatch(tenantBetaSignInHtml, /publisher-alpha/);
-    assert.match(dashboardHtml, /New Draft Registration/);
-    assert.doesNotMatch(dashboardHtml, /Review Queue/);
+    assertAuthenticatedShellContract(dashboardHtml, {
+      dynamicHooks: ["visible-versions"],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "console-dashboard",
+    });
     assert.equal(newDraftPage.status, 200);
+    assertAuthenticatedShellContract(newDraftHtml, {
+      dynamicHooks: ["publication-sections"],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "new-draft-registration",
+    });
     assert.match(newDraftHtml, /type="file"/);
     assert.match(newDraftHtml, /publication:dev:enabled/);
     assert.equal(createDraftResponse.status, 303);
+    assert.equal(draftDetailPage.status, 200);
+    assertAuthenticatedShellContract(draftDetailHtml, {
+      dynamicHooks: ["publication-detail-list"],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "version-detail",
+    });
     assert.match(draftDetailHtml, /Approval state: draft/);
     assert.match(draftDetailHtml, /Environment: dev/);
     assert.match(draftDetailHtml, /Environment: prod/);
@@ -1132,6 +1262,13 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(draftDetailHtml, /client_id/);
     assert.equal(submitResponse.status, 303);
     assert.equal(getRedirectLocation(submitResponse), draftLocation);
+    assert.equal(submittedDetailPage.status, 200);
+    assertAuthenticatedShellContract(submittedDetailHtml, {
+      dynamicHooks: ["publication-detail-list"],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "version-detail",
+    });
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
@@ -1336,6 +1473,24 @@ test("admin console manages environments, reviews pending versions, edits overla
 
   try {
     // Arrange
+    const adminNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
     const approveFixture = await createPendingVersion(context, {
       displayName: "Case Router",
       environments: ["dev", "prod"],
@@ -1399,17 +1554,37 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
 
     // Assert
-    assert.match(dashboardHtml, /Environment Management/);
-    assert.match(dashboardHtml, /Review Queue/);
+    assertAuthenticatedShellContract(dashboardHtml, {
+      dynamicHooks: ["active-agents", "visible-versions"],
+      navLinks: adminNavLinks,
+      page: "console-dashboard",
+    });
     assert.equal(environmentsPage.status, 200);
+    assertAuthenticatedShellContract(environmentsHtml, {
+      dynamicHooks: ["environment-list"],
+      navLinks: adminNavLinks,
+      page: "tenant-environments",
+    });
     assert.match(environmentsHtml, /staging/);
     assert.equal(createEnvironmentResponse.status, 303);
     assert.equal(getRedirectLocation(createEnvironmentResponse), "/tenants/tenant-alpha/environments");
     assert.match(updatedEnvironmentsHtml, /qa/);
+    assert.equal(reviewQueuePage.status, 200);
+    assertAuthenticatedShellContract(reviewQueueHtml, {
+      dynamicHooks: ["review-queue"],
+      navLinks: adminNavLinks,
+      page: "review-queue",
+    });
     assert.match(reviewQueueHtml, /Case Router/);
     assert.match(reviewQueueHtml, /Case Escalator/);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
+    assert.equal(approvedVersionPage.status, 200);
+    assertAuthenticatedShellContract(approvedVersionHtml, {
+      dynamicHooks: ["publication-detail-list"],
+      navLinks: adminNavLinks,
+      page: "version-detail",
+    });
     assert.match(approvedVersionHtml, /Health History/);
     assert.match(approvedVersionHtml, /503/);
     assert.match(approvedVersionHtml, /Invocation count: 12/);
@@ -1419,6 +1594,12 @@ test("admin console manages environments, reviews pending versions, edits overla
       getRedirectLocation(deprecateEnvironmentResponse),
       `/tenants/tenant-alpha/agents/${approveFixture.agentId}`,
     );
+    assert.equal(agentDetailPage.status, 200);
+    assertAuthenticatedShellContract(agentDetailHtml, {
+      dynamicHooks: ["overlay-state", "active-publications", "version-history"],
+      navLinks: adminNavLinks,
+      page: "active-agent-detail",
+    });
     assert.match(agentDetailHtml, /Overlay State/);
     assert.match(agentDetailHtml, /Environment overlay for prod/);
     assert.match(agentDetailHtml, /Deprecated: yes/);
@@ -1437,6 +1618,12 @@ test("admin console manages environments, reviews pending versions, edits overla
       getRedirectLocation(rejectResponse),
       `/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}`,
     );
+    assert.equal(rejectedVersionPage.status, 200);
+    assertAuthenticatedShellContract(rejectedVersionHtml, {
+      dynamicHooks: ["publication-detail-list"],
+      navLinks: adminNavLinks,
+      page: "version-detail",
+    });
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
   } finally {
