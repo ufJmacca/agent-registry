@@ -30,7 +30,13 @@ The seed installs one self-hosted tenant, `tenant-demo`, with memberships for `d
 
 ## Local Verification
 
-The devcontainer bind-mounts the repository root into `/workspace` so local development keeps live access to `.git`, `.ai-native`, and other host-managed files. The public `make` targets still use the copy-based workspace sync for reproducible compose and CI runs.
+The devcontainer is intentionally decoupled from the root application compose stack. It bind-mounts the repository root into `/workspace`, installs development tooling plus workspace dependencies, and keeps live access to `.git`, `.ai-native`, and other host-managed files without booting the runtime services automatically.
+
+Use the devcontainer for editing, linting, and tests such as `npm run lint` or `npm run test:inner`.
+
+The current devcontainer also includes the Docker CLI plus access to the host Docker socket, so the root `compose.yaml` and public `make` targets can be run from inside the container when you want to boot the actual solution stack with `make up`, `make seed`, and the published service ports.
+
+That Docker access is intentionally scoped to the host daemon rather than Docker-in-Docker, so the same images, containers, volumes, and Compose projects are visible from both the host shell and the devcontainer.
 
 To verify the host credential mounts inside the devcontainer:
 

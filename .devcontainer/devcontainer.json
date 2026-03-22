@@ -1,10 +1,7 @@
 {
-  "name": "ai-native-base",
-  "dockerComposeFile": [
-    "../compose.yaml",
-    "compose.yaml"
-  ],
-  "service": "workspace",
+  "name": "agent-registry-dev",
+  "dockerComposeFile": "compose.yaml",
+  "service": "devcontainer",
   "workspaceFolder": "/workspace",
   "remoteUser": "vscode",
   "features": {
@@ -25,4 +22,3 @@
   "postStartCommand": "bash .devcontainer/scripts/post-create.sh --verify-only",
   "shutdownAction": "stopCompose"
 }
-
