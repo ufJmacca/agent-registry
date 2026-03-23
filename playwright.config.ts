@@ -4,8 +4,10 @@ export default defineConfig({
   expect: {
     toHaveScreenshot: {
       maxDiffPixelRatio: 0.01,
+      pathTemplate: "{testDir}/__screenshots__/{arg}{ext}",
     },
   },
+  globalSetup: "./tests/visual/global-setup.ts",
   outputDir: "./tests/visual/.artifacts",
   testDir: "./tests/visual",
   workers: 1,
