@@ -43,6 +43,7 @@ import {
 } from "../../api/src/modules/review/service.js";
 import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
+import { renderVersionDetailPageBody } from "./ui/pages/version-detail.js";
 import { renderAuthenticatedShell, renderPublicShell, type ShellNavItem } from "./ui/shell.js";
 
 const sessionCookieName = "agent_registry_console_session";
@@ -1164,57 +1165,6 @@ async function renderVersionDetailPage(
   const healthByEnvironment = new Map(
     healthDetails.map((entry) => [entry.environmentKey, entry.detail]),
   );
-  const publicationMarkup = detail.publications
-    .map((publication) => {
-      const health = healthByEnvironment.get(publication.environmentKey);
-
-      return `<section class="card stack">
-        <h2>Environment: ${escapeHtml(publication.environmentKey)}</h2>
-        <p>Health status: ${escapeHtml(publication.healthStatus ?? "unknown")}</p>
-        <p>Health endpoint: <code>${escapeHtml(publication.healthEndpointUrl)}</code></p>
-        <p>Invocation endpoint: <code>${escapeHtml(publication.invocationEndpoint ?? "none")}</code></p>
-        <h3>Normalized Metadata</h3>
-        ${renderPreformattedJson(publication.normalizedMetadata)}
-        <h3>Raw Card</h3>
-        <pre>${escapeHtml(publication.rawCard)}</pre>
-        ${
-          isTenantAdmin(principal)
-            ? `<h3>Advisory Telemetry</h3>
-               ${
-                 publication.telemetry.length === 0
-                   ? "<p>No advisory telemetry submitted.</p>"
-                   : publication.telemetry
-                       .map(
-                         (telemetry) =>
-                           `<div class="stack">
-                             <p>Invocation count: ${telemetry.invocationCount}</p>
-                             <p>Success count: ${telemetry.successCount}</p>
-                             <p>Error count: ${telemetry.errorCount}</p>
-                             <p>p95 latency: ${telemetry.p95LatencyMs ?? "n/a"}</p>
-                           </div>`,
-                       )
-                       .join("")
-               }`
-            : ""
-        }
-        ${
-          health === undefined
-            ? ""
-            : `<h3>Health History</h3>
-               ${
-                 health.history.length === 0
-                   ? "<p>No probes recorded yet.</p>"
-                   : health.history
-                       .map(
-                         (entry) =>
-                           `<p>${escapeHtml(entry.checkedAt)} status ${entry.statusCode === null ? "n/a" : String(entry.statusCode)}${entry.error === null ? "" : ` error ${escapeHtml(entry.error)}`}</p>`,
-                       )
-                       .join("")
-               }`
-        }
-      </section>`;
-    })
-    .join("");
   const actions = [];
 
   if (detail.approvalState === "draft" && canPublish(principal)) {
@@ -1242,43 +1192,13 @@ async function renderVersionDetailPage(
   }
 
   writeAuthenticatedPage(response, {
-    body: `<section class="hero card stack page-hero">
-      <span class="shell-eyebrow">Version Detail</span>
-      <h1>${escapeHtml(detail.displayName)}</h1>
-      <p>Approval state: ${escapeHtml(detail.approvalState)}</p>
-      <p>Version label: ${escapeHtml(detail.versionLabel)} | Version sequence: ${detail.versionSequence}</p>
-      ${
-        detail.active
-          ? `<p><a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}">Open active agent detail</a></p>`
-          : ""
-      }
-      ${
-        detail.review.rejectedReason === null
-          ? ""
-          : `<p>Rejected reason: ${escapeHtml(detail.review.rejectedReason)}</p>`
-      }
-    </section>
-    <section class="split">
-      <div class="card stack">
-        <h2>Header Contract</h2>
-        ${renderPreformattedJson(detail.headerContract)}
-      </div>
-      <div class="card stack">
-        <h2>Context Contract</h2>
-        ${renderPreformattedJson(detail.contextContract)}
-      </div>
-    </section>
-    ${
-      actions.length === 0
-        ? ""
-        : `<section class="card stack">
-             <h2>Version Actions</h2>
-             <div class="inline-actions">${actions.join("")}</div>
-           </section>`
-    }
-    <section class="stack" data-visual-dynamic="publication-detail-list">
-      ${publicationMarkup}
-    </section>`,
+    body: renderVersionDetailPageBody({
+      actions,
+      detail,
+      healthByEnvironment,
+      isTenantAdmin: isTenantAdmin(principal),
+      tenantId,
+    }),
     page: "version-detail",
     principal,
     title: `Version ${detail.displayName}`,

@@ -123,14 +123,14 @@ Each route below must be reviewed against both the reference `code.html` and `sc
 ### `/tenants/:tenantId/agents/:agentId/versions/:versionId`
 
 - Reference assets: `version_detail/code.html`, `version_detail/screen.png`
-- Shell composition and overall layout:
-- Headline scale and spacing:
-- CTA treatment and action-cluster hierarchy:
-- Card and background layering:
-- Navigation treatment:
-- Information density and grouping:
-- Functional constraints to preserve:
-- Intentional deviations and truthful substitutions:
+- Shell composition and overall layout: Uses the shared authenticated rail-and-topbar shell, then maps the route into a dossier layout with a wide primary column for contracts, manifest, environment dossiers, and admin-only technical sections plus a sticky metadata/action sidebar.
+- Headline scale and spacing: Keeps the display headline as the primary anchor, with editorial spacing, a compact status signal, and soft metadata pills that mirror the dedicated reference without collapsing truthful product density.
+- CTA treatment and action-cluster hierarchy: Submit, approve, and reject remain the only primary controls and stay grouped inside a dedicated action cluster card that only renders when the current state permits those routes.
+- Card and background layering: Uses layered surface panels, softened shadows, and a dark manifest block instead of line dividers, matching the Technical Curator hierarchy while preserving current server-rendered form semantics.
+- Navigation treatment: Preserves the common rail and mobile navigation from the authenticated shell so version detail remains consistent with the rest of the console after the agent-detail slice.
+- Information density and grouping: Groups release metadata, publication contracts, manifest data, environment dossiers, telemetry, and health history into separate dossier panels so dense technical content stays scannable.
+- Functional constraints to preserve: Publisher ownership restrictions, draft submission, admin approval and rejection, rejected-reason visibility, and admin-only telemetry/health visibility remain unchanged.
+- Intentional deviations and truthful substitutions: Mock operational KPI cards and fictional audit metadata from the reference are replaced with truthful stored contracts, release metadata, and review timeline data from the current product.
 
 ## Version Detail Deviation Table
 
@@ -138,4 +138,6 @@ The current version detail route has a dedicated `version_detail` reference. Thi
 
 | Reference mock detail | Truthful implementation replacement | Reason for deviation |
 | --- | --- | --- |
-| `_TBD_` | `_TBD_` | Complete this row when the dedicated `version_detail` reference includes content or controls that the current product does not expose. |
+| Mock latency / throughput / memory KPI cards in the reference dossier hero | Publication contract cards built from stored required roles, required scopes, capabilities, tags, and current publication count | The current product does not store synthetic benchmark KPIs for versions, so the dossier surfaces truthful contract data instead of invented metrics. |
+| Mock audit-history narrative and side metadata such as license and “production-ready” environment labels | Review timeline entries and release metadata sourced from submitted / approved / rejected timestamps, publisher ownership, active status, and version identifiers | The current route exposes real review lifecycle data but not the mock editorial metadata shown in the reference. |
+| Copy-JSON affordance and richer mock manifest controls | Read-only rendered technical manifest and per-environment raw-card panels | The current server-rendered console does not implement clipboard or secondary manifest tooling on this route, so unsupported controls were omitted. |

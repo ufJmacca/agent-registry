@@ -344,6 +344,47 @@ function getVisualDynamicSectionMarkup(html: string, hook: string): string {
   return sectionMatch[0];
 }
 
+function assertPublicationDossierMarkup(
+  html: string,
+  expectedDossiers: Array<{
+    environmentKey: string;
+    rawCardValue: string;
+  }>,
+): void {
+  const publicationDetailMarkup = getVisualDynamicSectionMarkup(html, "publication-detail-list");
+  const publicationArticles = Array.from(
+    publicationDetailMarkup.matchAll(
+      /<article class="version-detail-publication-card stack">[\s\S]*?<\/article>/g,
+    ),
+    (match) => match[0],
+  );
+
+  assert.notEqual(publicationArticles.length, 0, "Expected publication dossier articles to be rendered");
+
+  for (const dossier of expectedDossiers) {
+    const matchingArticles = publicationArticles.filter((articleMarkup) =>
+      new RegExp(
+        `<span class="shell-eyebrow">Environment: ${escapeRegExp(dossier.environmentKey)}<\\/span>`,
+      ).test(articleMarkup),
+    );
+
+    assert.equal(
+      matchingArticles.length,
+      1,
+      `Expected exactly one ${dossier.environmentKey} publication dossier article to be rendered`,
+    );
+
+    const [publicationMarkup] = matchingArticles;
+
+    assert.match(publicationMarkup, /Normalized Metadata/);
+    assert.match(publicationMarkup, /Raw Card/);
+    assert.match(
+      publicationMarkup,
+      new RegExp(`<span class="shell-eyebrow">Raw Card<\\/span>[\\s\\S]*?${escapeRegExp(dossier.rawCardValue)}`),
+    );
+  }
+}
+
 function assertNavContainsLink(
   navMarkup: string,
   link: {
@@ -1262,26 +1303,66 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.equal(createDraftResponse.status, 303);
     assert.equal(draftDetailPage.status, 200);
     assertAuthenticatedShellContract(draftDetailHtml, {
-      dynamicHooks: ["publication-detail-list"],
+      dynamicHooks: [
+        "version-overview",
+        "version-metadata",
+        "version-publication-contracts",
+        "version-manifest",
+        "publication-detail-list",
+        "version-actions",
+      ],
       navExcludes: adminOnlyNavLinks,
       navLinks: publisherNavLinks,
       page: "version-detail",
     });
     assert.match(draftDetailHtml, /Approval state: draft/);
+    assert.match(draftDetailHtml, /Release Metadata/);
+    assert.match(draftDetailHtml, /Publication Contracts/);
+    assert.match(draftDetailHtml, /Technical Manifest/);
+    assert.match(draftDetailHtml, /Environment Dossiers/);
     assert.match(draftDetailHtml, /Environment: dev/);
     assert.match(draftDetailHtml, /Environment: prod/);
     assert.match(draftDetailHtml, /X-User-Id/);
     assert.match(draftDetailHtml, /client_id/);
+    assertPublicationDossierMarkup(draftDetailHtml, [
+      {
+        environmentKey: "dev",
+        rawCardValue: "dev-capability",
+      },
+      {
+        environmentKey: "prod",
+        rawCardValue: "prod-capability",
+      },
+    ]);
+    assert.match(draftDetailHtml, /Submit for Review/);
+    assert.doesNotMatch(draftDetailHtml, /Approve<\/button>/);
+    assert.doesNotMatch(draftDetailHtml, /Reject<\/button>/);
+    assert.doesNotMatch(draftDetailHtml, /Rejected reason:/);
+    assert.doesNotMatch(draftDetailHtml, /data-visual-dynamic="publication-telemetry"/);
+    assert.doesNotMatch(draftDetailHtml, /data-visual-dynamic="publication-health-history"/);
     assert.equal(submitResponse.status, 303);
     assert.equal(getRedirectLocation(submitResponse), draftLocation);
     assert.equal(submittedDetailPage.status, 200);
     assertAuthenticatedShellContract(submittedDetailHtml, {
-      dynamicHooks: ["publication-detail-list"],
+      dynamicHooks: [
+        "version-overview",
+        "version-metadata",
+        "version-publication-contracts",
+        "version-manifest",
+        "publication-detail-list",
+      ],
       navExcludes: adminOnlyNavLinks,
       navLinks: publisherNavLinks,
       page: "version-detail",
     });
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
+    assert.match(submittedDetailHtml, /Technical Manifest/);
+    assert.doesNotMatch(submittedDetailHtml, /Submit for Review/);
+    assert.doesNotMatch(submittedDetailHtml, /Approve<\/button>/);
+    assert.doesNotMatch(submittedDetailHtml, /Reject<\/button>/);
+    assert.doesNotMatch(submittedDetailHtml, /Rejected reason:/);
+    assert.doesNotMatch(submittedDetailHtml, /data-visual-dynamic="publication-telemetry"/);
+    assert.doesNotMatch(submittedDetailHtml, /data-visual-dynamic="publication-health-history"/);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
   } finally {
@@ -1297,6 +1378,26 @@ test("publisher console returns 403 for admin-only review and active agent detai
 
   try {
     // Arrange
+    const publisherNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+    ];
+    const adminOnlyNavLinks = [
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
     const approvedFixture = await createPendingVersion(context, {
       displayName: "Case Router",
       environments: ["dev"],
@@ -1323,8 +1424,25 @@ test("publisher console returns 403 for admin-only review and active agent detai
     assert.equal(reviewQueuePage.status, 403);
     assert.match(reviewQueueHtml, /Tenant admin role is required/);
     assert.equal(versionDetailPage.status, 200);
+    assertAuthenticatedShellContract(versionDetailHtml, {
+      dynamicHooks: [
+        "version-overview",
+        "version-metadata",
+        "version-publication-contracts",
+        "version-manifest",
+        "publication-detail-list",
+      ],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "version-detail",
+    });
+    assert.match(versionDetailHtml, /Publication Contracts/);
+    assert.match(versionDetailHtml, /Technical Manifest/);
     assert.doesNotMatch(versionDetailHtml, /Advisory Telemetry/);
+    assert.doesNotMatch(versionDetailHtml, /Health History/);
     assert.doesNotMatch(versionDetailHtml, /Invocation count: 12/);
+    assert.doesNotMatch(versionDetailHtml, /data-visual-dynamic="publication-telemetry"/);
+    assert.doesNotMatch(versionDetailHtml, /data-visual-dynamic="publication-health-history"/);
     assert.equal(agentDetailPage.status, 403);
     assert.match(agentDetailHtml, /Tenant admin role is required/);
   } finally {
@@ -1615,6 +1733,10 @@ test("admin console manages environments, reviews pending versions, edits overla
     const updatedEnvironmentsHtml = await updatedEnvironmentsPage.text();
     const reviewQueuePage = await browser.get("/tenants/tenant-alpha/review");
     const reviewQueueHtml = await reviewQueuePage.text();
+    const pendingRejectVersionPage = await browser.get(
+      `/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}`,
+    );
+    const pendingRejectVersionHtml = await pendingRejectVersionPage.text();
     const approveResponse = await browser.postUrlEncoded(
       `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}/approve`,
       {},
@@ -1671,18 +1793,88 @@ test("admin console manages environments, reviews pending versions, edits overla
     });
     assert.match(reviewQueueHtml, /Case Router/);
     assert.match(reviewQueueHtml, /Case Escalator/);
+    assert.equal(pendingRejectVersionPage.status, 200);
+    assertAuthenticatedShellContract(pendingRejectVersionHtml, {
+      dynamicHooks: [
+        "version-overview",
+        "version-metadata",
+        "version-publication-contracts",
+        "version-manifest",
+        "publication-detail-list",
+        "version-actions",
+      ],
+      navLinks: adminNavLinks,
+      page: "version-detail",
+    });
+    assert.match(pendingRejectVersionHtml, /Approval state: pending_review/);
+    assert.match(pendingRejectVersionHtml, /Version Actions/);
+    assert.match(
+      pendingRejectVersionHtml,
+      new RegExp(
+        `action="${escapeRegExp(`/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}/approve`)}"`,
+      ),
+    );
+    assert.match(
+      pendingRejectVersionHtml,
+      new RegExp(
+        `action="${escapeRegExp(`/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}/reject`)}"`,
+      ),
+    );
+    assert.match(pendingRejectVersionHtml, /name="reason"/);
+    assert.doesNotMatch(pendingRejectVersionHtml, /Rejected reason:/);
+    assert.doesNotMatch(pendingRejectVersionHtml, /data-visual-dynamic="publication-telemetry"/);
+    assert.doesNotMatch(pendingRejectVersionHtml, /data-visual-dynamic="publication-health-history"/);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
     assert.equal(approvedVersionPage.status, 200);
     assertAuthenticatedShellContract(approvedVersionHtml, {
-      dynamicHooks: ["publication-detail-list"],
+      dynamicHooks: [
+        "version-overview",
+        "version-metadata",
+        "version-publication-contracts",
+        "version-manifest",
+        "publication-detail-list",
+        "publication-telemetry",
+        "publication-health-history",
+      ],
       navLinks: adminNavLinks,
       page: "version-detail",
     });
+    assert.match(approvedVersionHtml, /Release Metadata/);
+    assert.match(approvedVersionHtml, /Publication Contracts/);
+    assert.match(approvedVersionHtml, /Technical Manifest/);
+    assert.match(approvedVersionHtml, /Environment Dossiers/);
     assert.match(approvedVersionHtml, /Health History/);
+    assertPublicationDossierMarkup(approvedVersionHtml, [
+      {
+        environmentKey: "dev",
+        rawCardValue: "dev-capability",
+      },
+      {
+        environmentKey: "prod",
+        rawCardValue: "prod-capability",
+      },
+    ]);
+    assert.doesNotMatch(approvedVersionHtml, /data-visual-dynamic="version-actions"/);
+    assert.doesNotMatch(approvedVersionHtml, /Submit for Review/);
+    assert.doesNotMatch(approvedVersionHtml, /Approve<\/button>/);
+    assert.doesNotMatch(approvedVersionHtml, /Reject<\/button>/);
+    assert.doesNotMatch(approvedVersionHtml, /name="reason"/);
     assert.match(approvedVersionHtml, /503/);
     assert.match(approvedVersionHtml, /Invocation count: 12/);
     assert.match(approvedVersionHtml, /p95 latency: 280/);
+    const telemetryMarkup = getVisualDynamicSectionMarkup(
+      approvedVersionHtml,
+      "publication-telemetry",
+    );
+    assert.match(telemetryMarkup, /Invocation count: 12/);
+    assert.match(telemetryMarkup, /p95 latency: 280/);
+    const healthHistoryMarkup = getVisualDynamicSectionMarkup(
+      approvedVersionHtml,
+      "publication-health-history",
+    );
+    assert.match(healthHistoryMarkup, /2026-03-13T10:01:00Z/);
+    assert.match(healthHistoryMarkup, /503/);
     assert.equal(deprecateEnvironmentResponse.status, 303);
     assert.equal(
       getRedirectLocation(deprecateEnvironmentResponse),
@@ -1766,12 +1958,23 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
     assert.equal(rejectedVersionPage.status, 200);
     assertAuthenticatedShellContract(rejectedVersionHtml, {
-      dynamicHooks: ["publication-detail-list"],
+      dynamicHooks: [
+        "version-overview",
+        "version-metadata",
+        "version-publication-contracts",
+        "version-manifest",
+        "publication-detail-list",
+      ],
       navLinks: adminNavLinks,
       page: "version-detail",
     });
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
+    assert.doesNotMatch(rejectedVersionHtml, /Submit for Review/);
+    assert.doesNotMatch(rejectedVersionHtml, /Approve<\/button>/);
+    assert.doesNotMatch(rejectedVersionHtml, /Reject<\/button>/);
+    assert.doesNotMatch(rejectedVersionHtml, /data-visual-dynamic="publication-telemetry"/);
+    assert.doesNotMatch(rejectedVersionHtml, /data-visual-dynamic="publication-health-history"/);
   } finally {
     await context.close();
   }
