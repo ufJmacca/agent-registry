@@ -43,6 +43,7 @@ import {
 } from "../../api/src/modules/review/service.js";
 import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
+import { renderAuthenticatedShell, renderPublicShell, type ShellNavItem } from "./ui/shell.js";
 
 const sessionCookieName = "agent_registry_console_session";
 
@@ -111,31 +112,127 @@ function writeHtml(
 }
 
 function writeError(response: ServerResponse, statusCode: number, message: string): void {
-  writeHtml(
-    response,
-    statusCode,
-    "Console Error",
-    `<section class="hero card stack">
-      <h1>Console Error</h1>
-      <p>${escapeHtml(message)}</p>
-      <p><a href="/">Return to sign-in</a></p>
-    </section>`,
+  writeConsoleError(response, statusCode, message);
+}
+
+function writeConsoleError(
+  response: ServerResponse,
+  statusCode: number,
+  message: string,
+  options: {
+    principal?: ResolvedPrincipal;
+  } = {},
+): void {
+  const errorBody = `<section class="hero card stack">
+    <h1>Console Error</h1>
+    <p>${escapeHtml(message)}</p>
+    <p><a href="${options.principal === undefined ? "/" : "/console"}">${options.principal === undefined ? "Return to sign-in" : "Return to dashboard"}</a></p>
+  </section>`;
+
+  if (options.principal === undefined) {
+    writeHtml(
+      response,
+      statusCode,
+      "Console Error",
+      `<div class="document-page">
+        ${errorBody}
+      </div>`,
+    );
+    return;
+  }
+
+  response.writeHead(statusCode, {
+    "content-type": "text/html; charset=utf-8",
+  });
+  response.end(
+    renderDocument({
+      body: renderAuthenticatedShell({
+        body: errorBody,
+        navItems: buildShellNavItems(options.principal, "console-error"),
+        page: "console-error",
+        principal: options.principal,
+      }),
+      title: "Console Error",
+    }),
   );
 }
 
-function writeConsoleHomePage(
+function buildShellNavItems(
+  principal: ResolvedPrincipal,
+  currentPage: string,
+): ShellNavItem[] {
+  const items: ShellNavItem[] = [
+    {
+      current: currentPage === "console-dashboard",
+      href: "/console",
+      label: "Overview",
+    },
+  ];
+
+  if (canPublish(principal)) {
+    items.push({
+      current: currentPage === "new-draft-registration",
+      href: `/tenants/${encodeURIComponent(principal.tenantId)}/drafts/new`,
+      label: "New Draft Registration",
+    });
+  }
+
+  if (isTenantAdmin(principal)) {
+    items.push(
+      {
+        current: currentPage === "tenant-environments",
+        href: `/tenants/${encodeURIComponent(principal.tenantId)}/environments`,
+        label: "Environment Management",
+      },
+      {
+        current: currentPage === "review-queue",
+        href: `/tenants/${encodeURIComponent(principal.tenantId)}/review`,
+        label: "Review Queue",
+      },
+    );
+  }
+
+  return items;
+}
+
+function writePublicPage(
   response: ServerResponse,
+  title: string,
+  page: string,
   body: string,
 ): void {
   writeHtml(
     response,
     200,
-    "Agent Registry",
-    `<section class="hero card stack">
-      <h1>Agent Registry</h1>
-      <p class="meta">Mock sign-in for tenant admins and publishers.</p>
-    </section>
-    ${body}`,
+    title,
+    renderPublicShell({
+      body,
+      page,
+    }),
+  );
+}
+
+function writeAuthenticatedPage(
+  response: ServerResponse,
+  options: {
+    body: string;
+    page: string;
+    principal: ResolvedPrincipal;
+    tenantLabel?: string;
+    title: string;
+  },
+): void {
+  writeHtml(
+    response,
+    200,
+    options.title,
+    renderAuthenticatedShell({
+      body: options.body,
+      navItems: buildShellNavItems(options.principal, options.page),
+      page: options.page,
+      principal: options.principal,
+      tenantLabel: options.tenantLabel,
+    }),
   );
 }
 
@@ -394,6 +491,26 @@ async function resolvePrincipalFromSession(
   });
 }
 
+function renderSignInLanding(options: {
+  accessPanel: string;
+  emphasizeSetup: boolean;
+  setupPanel: string;
+}): string {
+  return `<section class="public-hero card stack">
+    <span class="shell-eyebrow">Agent Registry Console</span>
+    <h1>Architectural Precision For Tenant Operations</h1>
+    <p class="meta">Manage truthful draft, review, environment, and active agent workflows inside a shared technical curator shell.</p>
+  </section>
+  <section class="public-grid">
+    <div class="stack">
+      ${options.emphasizeSetup ? options.setupPanel : options.accessPanel}
+    </div>
+    <div class="stack">
+      ${options.emphasizeSetup ? options.accessPanel : options.setupPanel}
+    </div>
+  </section>`;
+}
+
 async function renderSignInPage(
   response: ServerResponse,
   db: AgentRegistryDb,
@@ -406,12 +523,28 @@ async function renderSignInPage(
     tenants = await loadTenantConsoleOptions(db);
   } catch (error) {
     if (isMissingConsoleSchemaError(error)) {
-      writeConsoleHomePage(
+      writePublicPage(
         response,
-        `<section class="card stack">
-          <h2>Console Setup Pending</h2>
-          <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
-        </section>`,
+        "Agent Registry",
+        "sign-in",
+        renderSignInLanding({
+          accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
+            <span class="shell-eyebrow">Registry Access</span>
+            <h2>Console Setup Pending</h2>
+            <p>Registry access will become available after migrations and bootstrap data are loaded.</p>
+            <p class="meta">The sign-in flow is intentionally withheld until the console can resolve truthful tenant memberships.</p>
+          </section>`,
+          emphasizeSetup: true,
+          setupPanel: `<section class="card stack public-companion">
+            <span class="shell-eyebrow">Setup Status</span>
+            <h2>Initialize The Console</h2>
+            <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
+            <div class="section-list">
+              <div class="pill">Schema missing</div>
+              <div class="pill">Bootstrap required</div>
+            </div>
+          </section>`,
+        }),
       );
       return;
     }
@@ -420,12 +553,28 @@ async function renderSignInPage(
   }
 
   if (tenants.length === 0) {
-    writeConsoleHomePage(
+    writePublicPage(
       response,
-      `<section class="card stack">
-        <h2>Console Setup Pending</h2>
-        <p>Bootstrap tenant and membership data to enable console sign-in.</p>
-      </section>`,
+      "Agent Registry",
+      "sign-in",
+      renderSignInLanding({
+        accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
+          <span class="shell-eyebrow">Registry Access</span>
+          <h2>Console Setup Pending</h2>
+          <p>Sign-in will appear after at least one tenant and membership set has been bootstrapped.</p>
+          <p class="meta">No internal bootstrap details are exposed here.</p>
+        </section>`,
+        emphasizeSetup: true,
+        setupPanel: `<section class="card stack public-companion">
+          <span class="shell-eyebrow">Setup Status</span>
+          <h2>Bootstrap Tenant Data</h2>
+          <p>Bootstrap tenant and membership data to enable console sign-in.</p>
+          <div class="section-list">
+            <div class="pill">No tenants</div>
+            <div class="pill">No memberships</div>
+          </div>
+        </section>`,
+      }),
     );
     return;
   }
@@ -449,34 +598,57 @@ async function renderSignInPage(
     )
     .join("");
 
-  writeConsoleHomePage(
+  writePublicPage(
     response,
-    `<section class="card stack">
-      <h2>Mock Sign-In</h2>
-      <form class="stack" action="/session" method="post">
-        ${
-          deploymentMode === "self-hosted"
-            ? `<p>Single-tenant deployment</p>
-               <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
-               <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
-            : `<label>Tenant
-                 <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
-                   ${hostedTenantOptions}
-                 </select>
-               </label>`
-        }
-        <label>Subject
-          <select name="subjectId">
-            ${
-              subjectOptions === ""
-                ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
-                : subjectOptions
-            }
-          </select>
-        </label>
-        <button type="submit">Sign In</button>
-      </form>
-    </section>`,
+    "Agent Registry",
+    "sign-in",
+    renderSignInLanding({
+      accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
+        <span class="shell-eyebrow">Registry Access</span>
+        <h2>Mock Sign-In</h2>
+        <p class="meta">Use truthful tenant memberships to enter the current console without changing any existing sign-in behavior.</p>
+        <form class="stack" action="/session" method="post">
+          ${
+            deploymentMode === "self-hosted"
+              ? `<p>Single-tenant deployment</p>
+                 <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
+                 <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
+              : `<label>Tenant
+                   <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
+                     ${hostedTenantOptions}
+                   </select>
+                 </label>`
+          }
+          <label>Subject
+            <select name="subjectId">
+              ${
+                subjectOptions === ""
+                  ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
+                  : subjectOptions
+              }
+            </select>
+          </label>
+          <button type="submit">Sign In</button>
+        </form>
+      </section>`,
+      emphasizeSetup: false,
+      setupPanel: `<section class="card stack public-companion">
+        <span class="shell-eyebrow">Workspace State</span>
+        <h2>${escapeHtml(visibleTenant.displayName)}</h2>
+        <p>Current deployment mode: <strong>${escapeHtml(deploymentMode)}</strong>.</p>
+        <p class="meta">Tenant selection and membership collapse continue to follow the existing hosted and self-hosted rules.</p>
+        <div class="public-signal-grid">
+          <div class="public-signal">
+            <span class="shell-eyebrow">Tenant</span>
+            <strong>${escapeHtml(visibleTenant.tenantId)}</strong>
+          </div>
+          <div class="public-signal">
+            <span class="shell-eyebrow">Memberships</span>
+            <strong>${String(visibleTenant.memberships.length)}</strong>
+          </div>
+        </div>
+      </section>`,
+    }),
   );
 }
 
@@ -550,14 +722,12 @@ async function renderDashboard(
     isTenantAdmin(principal) ? listActiveAgents(db, principal.tenantId) : Promise.resolve([]),
   ]);
 
-  writeHtml(
-    response,
-    200,
-    "Console Dashboard",
-    `<section class="hero card stack">
+  writeAuthenticatedPage(response, {
+    body: `<section class="hero card stack page-hero">
+      <span class="shell-eyebrow">System Overview</span>
       <h1>Console Dashboard</h1>
       <p class="meta">${escapeHtml(tenantDisplayName)} (${escapeHtml(principal.tenantId)})</p>
-      <p>Signed in as <strong>${escapeHtml(principal.subjectId)}</strong> with roles <strong>${escapeHtml(principal.roles.join(", ") || "none")}</strong>.</p>
+      <p>Track visible versions, role-sensitive entry points, and the current tenant workspace from one shared shell.</p>
       <div class="inline-actions">
         ${
           canPublish(principal)
@@ -571,14 +741,11 @@ async function renderDashboard(
             : ""
         }
       </div>
-      <form action="/session/logout" method="post">
-        <button class="button-secondary" type="submit">Sign Out</button>
-      </form>
     </section>
     <section class="split">
       <div class="card stack">
         <h2>Visible Versions</h2>
-        <div class="link-list">
+        <div class="link-list" data-visual-dynamic="visible-versions">
           ${
             versions.length === 0
               ? "<p>No versions are visible for this identity.</p>"
@@ -595,7 +762,7 @@ async function renderDashboard(
         isTenantAdmin(principal)
           ? `<div class="card stack">
                <h2>Active Agents</h2>
-               <div class="link-list">
+               <div class="link-list" data-visual-dynamic="active-agents">
                  ${
                    activeAgents.length === 0
                      ? "<p>No active approved agents yet.</p>"
@@ -611,7 +778,11 @@ async function renderDashboard(
           : ""
       }
     </section>`,
-  );
+    page: "console-dashboard",
+    principal,
+    tenantLabel: tenantDisplayName,
+    title: "Console Dashboard",
+  });
 }
 
 async function requirePrincipal(
@@ -668,19 +839,17 @@ async function renderEnvironmentPage(
 
   const environments = await environmentService.listEnvironments(principal, tenantId);
 
-  writeHtml(
-    response,
-    200,
-    "Environment Management",
-    `<section class="hero card stack">
+  writeAuthenticatedPage(response, {
+    body: `<section class="hero card stack page-hero">
+      <span class="shell-eyebrow">Tenant Operations</span>
       <h1>Environment Management</h1>
       <p class="meta">Tenant ${escapeHtml(tenantId)}</p>
-      <p><a href="/console">Back to dashboard</a></p>
+      <p>Configured environments remain the primary record, with environment creation kept secondary and truthful to the existing POST flow.</p>
     </section>
     <section class="split">
       <div class="card stack">
         <h2>Configured Environments</h2>
-        <div class="section-list">
+        <div class="section-list" data-visual-dynamic="environment-list">
           ${environments.environments.map((environment) => `<div class="pill">${escapeHtml(environment.environmentKey)}</div>`).join("")}
         </div>
       </div>
@@ -689,7 +858,10 @@ async function renderEnvironmentPage(
         ${renderEnvironmentForm(tenantId)}
       </div>
     </section>`,
-  );
+    page: "tenant-environments",
+    principal,
+    title: "Environment Management",
+  });
 }
 
 async function createEnvironmentFromForm(
@@ -750,14 +922,12 @@ async function renderDraftFormPage(
     )
     .join("");
 
-  writeHtml(
-    response,
-    200,
-    "New Draft Registration",
-    `<section class="hero card stack">
+  writeAuthenticatedPage(response, {
+    body: `<section class="hero card stack page-hero">
+      <span class="shell-eyebrow">Draft Registration</span>
       <h1>New Draft Registration</h1>
       <p class="meta">Create one immutable version snapshot with shared metadata and multiple environment-specific cards.</p>
-      <p><a href="/console">Back to dashboard</a></p>
+      <p>Every existing field and multipart upload remains intact while the form now sits inside the shared authenticated shell.</p>
     </section>
     <form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/drafts" method="post" enctype="multipart/form-data">
       <section class="split">
@@ -808,13 +978,16 @@ async function renderDraftFormPage(
           </label>
         </div>
       </section>
-      <section class="stack">
+      <section class="stack" data-visual-dynamic="publication-sections">
         <h2>Environment Publications</h2>
         ${publicationFields}
       </section>
       <button type="submit">Create Draft</button>
     </form>`,
-  );
+    page: "new-draft-registration",
+    principal,
+    title: "New Draft Registration",
+  });
 }
 
 async function createDraftFromForm(
@@ -939,16 +1112,14 @@ async function renderReviewQueuePage(
 
   const queue = await listReviewQueue(db, tenantId);
 
-  writeHtml(
-    response,
-    200,
-    "Review Queue",
-    `<section class="hero card stack">
+  writeAuthenticatedPage(response, {
+    body: `<section class="hero card stack page-hero">
+      <span class="shell-eyebrow">Decision Queue</span>
       <h1>Review Queue</h1>
       <p class="meta">Pending versions for ${escapeHtml(tenantId)}</p>
-      <p><a href="/console">Back to dashboard</a></p>
+      <p>Approval and rejection remain immediately available while the queue inherits the shared shell and stable masking hooks.</p>
     </section>
-    <section class="stack">
+    <section class="stack" data-visual-dynamic="review-queue">
       ${
         queue.length === 0
           ? `<div class="card"><p>No versions are awaiting review.</p></div>`
@@ -975,7 +1146,10 @@ async function renderReviewQueuePage(
               .join("")
       }
     </section>`,
-  );
+    page: "review-queue",
+    principal,
+    title: "Review Queue",
+  });
 }
 
 async function renderVersionDetailPage(
@@ -1098,15 +1272,12 @@ async function renderVersionDetailPage(
     );
   }
 
-  writeHtml(
-    response,
-    200,
-    `Version ${detail.displayName}`,
-    `<section class="hero card stack">
+  writeAuthenticatedPage(response, {
+    body: `<section class="hero card stack page-hero">
+      <span class="shell-eyebrow">Version Detail</span>
       <h1>${escapeHtml(detail.displayName)}</h1>
       <p>Approval state: ${escapeHtml(detail.approvalState)}</p>
       <p>Version label: ${escapeHtml(detail.versionLabel)} | Version sequence: ${detail.versionSequence}</p>
-      <p><a href="/console">Back to dashboard</a></p>
       ${
         detail.active
           ? `<p><a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}">Open active agent detail</a></p>`
@@ -1136,10 +1307,13 @@ async function renderVersionDetailPage(
              <div class="inline-actions">${actions.join("")}</div>
            </section>`
     }
-    <section class="stack">
+    <section class="stack" data-visual-dynamic="publication-detail-list">
       ${publicationMarkup}
     </section>`,
-  );
+    page: "version-detail",
+    principal,
+    title: `Version ${detail.displayName}`,
+  });
 }
 
 function renderOverlaySummary(
@@ -1193,17 +1367,14 @@ async function renderAgentDetailPage(
           )
           .join("");
 
-  writeHtml(
-    response,
-    200,
-    "Active Agent Detail",
-    `<section class="hero card stack">
+  writeAuthenticatedPage(response, {
+    body: `<section class="hero card stack page-hero">
+      <span class="shell-eyebrow">Active Agent</span>
       <h1>Active Agent Detail</h1>
       <p>Agent ID: <code>${escapeHtml(detail.agentId)}</code></p>
       <p>Active version: ${escapeHtml(detail.activeVersionId ?? "none")}</p>
-      <p><a href="/console">Back to dashboard</a></p>
     </section>
-    <section class="card stack">
+    <section class="card stack" data-visual-dynamic="overlay-state">
       <h2>Overlay State</h2>
       ${renderOverlaySummary("Agent overlay", detail.overlay.agent)}
       ${
@@ -1224,17 +1395,20 @@ async function renderAgentDetailPage(
         </form>
       </div>
     </section>
-    <section class="card stack">
+    <section class="card stack" data-visual-dynamic="active-publications">
       <h2>Active Publications</h2>
       ${activePublicationMarkup}
     </section>
     <section class="card stack">
       <h2>Version History</h2>
-      <div class="link-list">
+      <div class="link-list" data-visual-dynamic="version-history">
         ${detail.versions.map((version) => `<a href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(agentId)}/versions/${encodeURIComponent(version.versionId)}">Version ${version.versionSequence} (${escapeHtml(version.approvalState)})</a>`).join("")}
       </div>
     </section>`,
-  );
+    page: "active-agent-detail",
+    principal,
+    title: "Active Agent Detail",
+  });
 }
 
 async function handleVersionAction(
@@ -1357,6 +1531,8 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
   const healthRepository = new KyselyHealthRepository(options.db);
 
   return async (request, response) => {
+    let principal: ResolvedPrincipal | null = null;
+
     try {
       const pathname = getPathname(request);
 
@@ -1428,7 +1604,7 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         return;
       }
 
-      const principal = await requirePrincipal(response, principalResolver, request);
+      principal = await requirePrincipal(response, principalResolver, request);
 
       if (principal === null) {
         return;
@@ -1570,20 +1746,28 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         return;
       }
 
-      writeError(response, 404, "Route not found.");
+      writeConsoleError(response, 404, "Route not found.", {
+        principal,
+      });
     } catch (error) {
       if (error instanceof URIError) {
-        writeError(response, 400, "Invalid request path.");
+        writeConsoleError(response, 400, "Invalid request path.", {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof ConsoleAuthorizationError) {
-        writeError(response, 403, error.message);
+        writeConsoleError(response, 403, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof ConsoleValidationError) {
-        writeError(response, 400, error.message);
+        writeConsoleError(response, 400, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1593,7 +1777,9 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentVersionReviewAuthorizationError ||
         error instanceof TenantPolicyOverlayAuthorizationError
       ) {
-        writeError(response, 403, error.message);
+        writeConsoleError(response, 403, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1604,7 +1790,9 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentVersionReviewValidationError ||
         error instanceof AgentVersionProbeTargetPolicyError
       ) {
-        writeError(response, 400, error.message);
+        writeConsoleError(response, 400, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1613,21 +1801,29 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentNotFoundError ||
         error instanceof AgentVersionNotFoundError
       ) {
-        writeError(response, 404, error.message);
+        writeConsoleError(response, 404, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof InvalidVersionTransitionError) {
-        writeError(response, 409, error.message);
+        writeConsoleError(response, 409, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof Error) {
-        writeError(response, 500, "Internal server error.");
+        writeConsoleError(response, 500, "Internal server error.", {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
-      writeError(response, 500, "Internal server error.");
+      writeConsoleError(response, 500, "Internal server error.", {
+        principal: principal ?? undefined,
+      });
     }
   };
 }
