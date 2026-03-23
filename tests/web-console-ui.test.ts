@@ -332,6 +332,18 @@ function getNavMarkup(html: string, variant: "mobile" | "rail"): string {
   return navMatch[0];
 }
 
+function getEnvironmentPanelMarkup(html: string, panel: "inventory" | "creation"): string {
+  const panelMatch = html.match(
+    new RegExp(
+      `<(?:section|aside)[^>]+data-environment-panel="${panel}"[^>]*>[\\s\\S]*?<\\/(?:section|aside)>`,
+    ),
+  );
+
+  assert.notEqual(panelMatch, null, `Expected ${panel} panel markup to be rendered`);
+
+  return panelMatch[0];
+}
+
 function assertNavContainsLink(
   navMarkup: string,
   link: {
@@ -397,6 +409,68 @@ function assertAuthenticatedShellContract(
 
   for (const hook of options.dynamicHooks) {
     assertHasDataHook(html, "data-visual-dynamic", hook);
+  }
+}
+
+function assertEnvironmentManagementPage(
+  html: string,
+  options: {
+    expectedEnvironmentKeys?: string[];
+    navLinks: Array<{
+      href: string;
+      label: string;
+    }>;
+    state: "empty" | "populated";
+    tenantId: string;
+    unexpectedEnvironmentKeys?: string[];
+  },
+): void {
+  assertAuthenticatedShellContract(html, {
+    dynamicHooks: ["environment-list"],
+    navLinks: options.navLinks,
+    page: "tenant-environments",
+  });
+  const inventoryPanel = getEnvironmentPanelMarkup(html, "inventory");
+  const creationPanel = getEnvironmentPanelMarkup(html, "creation");
+  const inventoryPanelIndex = html.indexOf('data-environment-panel="inventory"');
+  const creationPanelIndex = html.indexOf('data-environment-panel="creation"');
+  const createEnvironmentFormPattern = new RegExp(
+    `<form[^>]+action="/tenants/${escapeRegExp(options.tenantId)}\\/environments"[^>]+method="post"`,
+  );
+
+  assertHasDataHook(html, "data-environment-layout", "management");
+  assertHasDataHook(html, "data-environment-state", options.state);
+  assert.ok(
+    inventoryPanelIndex >= 0 && creationPanelIndex >= 0 && inventoryPanelIndex < creationPanelIndex,
+    "Expected configured inventory to precede the secondary creation panel",
+  );
+  assert.match(inventoryPanel, /Configured Environments/);
+  assert.match(inventoryPanel, /class="environment-list"/);
+  assert.match(creationPanel, /Add Environment/);
+  assert.match(creationPanel, /class="environment-form"/);
+  assert.match(creationPanel, createEnvironmentFormPattern);
+  assert.match(creationPanel, /<input[^>]+name="environmentKey"/);
+  assert.doesNotMatch(inventoryPanel, createEnvironmentFormPattern);
+  assert.doesNotMatch(inventoryPanel, /<input[^>]+name="environmentKey"/);
+  assert.doesNotMatch(creationPanel, /<article[^>]+class="environment-entry"/);
+  assert.doesNotMatch(html, /Active Clusters|Avg Uptime|Registry Load|Instances|Region|Last Deploy/);
+
+  if (options.state === "empty") {
+    assert.match(inventoryPanel, /No environments have been configured yet\./);
+    assert.doesNotMatch(inventoryPanel, /<article[^>]+class="environment-entry"/);
+
+    for (const environmentKey of options.unexpectedEnvironmentKeys ?? []) {
+      assert.doesNotMatch(
+        inventoryPanel,
+        new RegExp(`<h3>${escapeRegExp(environmentKey)}<\\/h3>`),
+      );
+    }
+  } else {
+    assert.match(inventoryPanel, /<article[^>]+class="environment-entry"/);
+
+    for (const environmentKey of options.expectedEnvironmentKeys ?? []) {
+      assert.match(inventoryPanel, new RegExp(`<h3>${escapeRegExp(environmentKey)}<\\/h3>`));
+    }
   }
 }
 
@@ -1560,15 +1634,20 @@ test("admin console manages environments, reviews pending versions, edits overla
       page: "console-dashboard",
     });
     assert.equal(environmentsPage.status, 200);
-    assertAuthenticatedShellContract(environmentsHtml, {
-      dynamicHooks: ["environment-list"],
+    assertEnvironmentManagementPage(environmentsHtml, {
+      expectedEnvironmentKeys: ["dev", "prod", "staging"],
       navLinks: adminNavLinks,
-      page: "tenant-environments",
+      state: "populated",
+      tenantId: "tenant-alpha",
     });
-    assert.match(environmentsHtml, /staging/);
     assert.equal(createEnvironmentResponse.status, 303);
     assert.equal(getRedirectLocation(createEnvironmentResponse), "/tenants/tenant-alpha/environments");
-    assert.match(updatedEnvironmentsHtml, /qa/);
+    assertEnvironmentManagementPage(updatedEnvironmentsHtml, {
+      expectedEnvironmentKeys: ["dev", "prod", "qa", "staging"],
+      navLinks: adminNavLinks,
+      state: "populated",
+      tenantId: "tenant-alpha",
+    });
     assert.equal(reviewQueuePage.status, 200);
     assertAuthenticatedShellContract(reviewQueueHtml, {
       dynamicHooks: ["review-queue"],
@@ -1626,6 +1705,56 @@ test("admin console manages environments, reviews pending versions, edits overla
     });
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin environment management shows a truthful empty inventory state", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const adminNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
+    await context.db
+      .deleteFrom("tenant_environments")
+      .where("tenant_id", "=", "tenant-alpha")
+      .execute();
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const environmentsPage = await browser.get("/tenants/tenant-alpha/environments");
+    const environmentsHtml = await environmentsPage.text();
+
+    // Assert
+    assert.equal(environmentsPage.status, 200);
+    assertEnvironmentManagementPage(environmentsHtml, {
+      navLinks: adminNavLinks,
+      state: "empty",
+      tenantId: "tenant-alpha",
+      unexpectedEnvironmentKeys: ["dev", "prod", "qa", "staging"],
+    });
+    assert.match(environmentsHtml, /Tenant tenant-alpha/);
   } finally {
     await context.close();
   }
