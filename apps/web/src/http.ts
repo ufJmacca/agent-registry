@@ -43,6 +43,12 @@ import {
 } from "../../api/src/modules/review/service.js";
 import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
+import {
+  renderInteractiveSignInPage,
+  renderMissingBootstrapSignInPage,
+  renderMissingSchemaSignInPage,
+  type SignInTenantOption,
+} from "./ui/pages/sign-in.js";
 import { renderAuthenticatedShell, renderPublicShell, type ShellNavItem } from "./ui/shell.js";
 
 const sessionCookieName = "agent_registry_console_session";
@@ -62,17 +68,6 @@ export interface WebRequestListenerOptions {
 
 interface ConsoleSession {
   subjectId: string;
-  tenantId: string;
-}
-
-interface TenantMembershipOption {
-  roles: string[];
-  subjectId: string;
-}
-
-interface TenantConsoleOption {
-  displayName: string;
-  memberships: TenantMembershipOption[];
   tenantId: string;
 }
 
@@ -405,7 +400,7 @@ async function readRawCardField(formData: FormData, fieldName: string): Promise<
   return rawValue.text();
 }
 
-async function loadTenantConsoleOptions(db: AgentRegistryDb): Promise<TenantConsoleOption[]> {
+async function loadTenantConsoleOptions(db: AgentRegistryDb): Promise<SignInTenantOption[]> {
   const [tenants, memberships] = await Promise.all([
     db.selectFrom("tenants").select(["display_name", "tenant_id"]).orderBy("display_name").execute(),
     db
@@ -460,33 +455,13 @@ async function resolvePrincipalFromSession(
   });
 }
 
-function renderSignInLanding(options: {
-  accessPanel: string;
-  emphasizeSetup: boolean;
-  setupPanel: string;
-}): string {
-  return `<section class="public-hero card stack">
-    <span class="shell-eyebrow">Agent Registry Console</span>
-    <h1>Architectural Precision For Tenant Operations</h1>
-    <p class="meta">Manage truthful draft, review, environment, and active agent workflows inside a shared technical curator shell.</p>
-  </section>
-  <section class="public-grid">
-    <div class="stack">
-      ${options.emphasizeSetup ? options.setupPanel : options.accessPanel}
-    </div>
-    <div class="stack">
-      ${options.emphasizeSetup ? options.accessPanel : options.setupPanel}
-    </div>
-  </section>`;
-}
-
 async function renderSignInPage(
   response: ServerResponse,
   db: AgentRegistryDb,
   deploymentMode: "hosted" | "self-hosted",
   selectedHostedTenantId?: string,
 ): Promise<void> {
-  let tenants: TenantConsoleOption[];
+  let tenants: SignInTenantOption[];
 
   try {
     tenants = await loadTenantConsoleOptions(db);
@@ -496,24 +471,7 @@ async function renderSignInPage(
         response,
         "Agent Registry",
         "sign-in",
-        renderSignInLanding({
-          accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
-            <span class="shell-eyebrow">Registry Access</span>
-            <h2>Console Setup Pending</h2>
-            <p>Registry access will become available after migrations and bootstrap data are loaded.</p>
-            <p class="meta">The sign-in flow is intentionally withheld until the console can resolve truthful tenant memberships.</p>
-          </section>`,
-          emphasizeSetup: true,
-          setupPanel: `<section class="card stack public-companion">
-            <span class="shell-eyebrow">Setup Status</span>
-            <h2>Initialize The Console</h2>
-            <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
-            <div class="section-list">
-              <div class="pill">Schema missing</div>
-              <div class="pill">Bootstrap required</div>
-            </div>
-          </section>`,
-        }),
+        renderMissingSchemaSignInPage(),
       );
       return;
     }
@@ -526,24 +484,19 @@ async function renderSignInPage(
       response,
       "Agent Registry",
       "sign-in",
-      renderSignInLanding({
-        accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
-          <span class="shell-eyebrow">Registry Access</span>
-          <h2>Console Setup Pending</h2>
-          <p>Sign-in will appear after at least one tenant and membership set has been bootstrapped.</p>
-          <p class="meta">No internal bootstrap details are exposed here.</p>
-        </section>`,
-        emphasizeSetup: true,
-        setupPanel: `<section class="card stack public-companion">
-          <span class="shell-eyebrow">Setup Status</span>
-          <h2>Bootstrap Tenant Data</h2>
-          <p>Bootstrap tenant and membership data to enable console sign-in.</p>
-          <div class="section-list">
-            <div class="pill">No tenants</div>
-            <div class="pill">No memberships</div>
-          </div>
-        </section>`,
-      }),
+      renderMissingBootstrapSignInPage(),
+    );
+    return;
+  }
+
+  const hasBootstrapMemberships = tenants.some((tenant) => tenant.memberships.length > 0);
+
+  if (!hasBootstrapMemberships) {
+    writePublicPage(
+      response,
+      "Agent Registry",
+      "sign-in",
+      renderMissingBootstrapSignInPage(),
     );
     return;
   }
@@ -553,70 +506,16 @@ async function renderSignInPage(
     deploymentMode === "hosted"
       ? tenants.find((tenant) => tenant.tenantId === selectedHostedTenantId) ?? tenants[0]
       : selfHostedTenant;
-  const hostedTenantOptions = tenants
-    .map(
-      (tenant) =>
-        `<option value="${escapeHtml(tenant.tenantId)}"${tenant.tenantId === selectedHostedTenant.tenantId ? " selected" : ""}>${escapeHtml(tenant.displayName)} (${escapeHtml(tenant.tenantId)})</option>`,
-    )
-    .join("");
-  const visibleTenant = deploymentMode === "hosted" ? selectedHostedTenant : selfHostedTenant;
-  const subjectOptions = visibleTenant.memberships
-    .map(
-      (membership) =>
-        `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}]</option>`,
-    )
-    .join("");
 
   writePublicPage(
     response,
     "Agent Registry",
     "sign-in",
-    renderSignInLanding({
-      accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
-        <span class="shell-eyebrow">Registry Access</span>
-        <h2>Mock Sign-In</h2>
-        <p class="meta">Use truthful tenant memberships to enter the current console without changing any existing sign-in behavior.</p>
-        <form class="stack" action="/session" method="post">
-          ${
-            deploymentMode === "self-hosted"
-              ? `<p>Single-tenant deployment</p>
-                 <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
-                 <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
-              : `<label>Tenant
-                   <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
-                     ${hostedTenantOptions}
-                   </select>
-                 </label>`
-          }
-          <label>Subject
-            <select name="subjectId">
-              ${
-                subjectOptions === ""
-                  ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
-                  : subjectOptions
-              }
-            </select>
-          </label>
-          <button type="submit">Sign In</button>
-        </form>
-      </section>`,
-      emphasizeSetup: false,
-      setupPanel: `<section class="card stack public-companion">
-        <span class="shell-eyebrow">Workspace State</span>
-        <h2>${escapeHtml(visibleTenant.displayName)}</h2>
-        <p>Current deployment mode: <strong>${escapeHtml(deploymentMode)}</strong>.</p>
-        <p class="meta">Tenant selection and membership collapse continue to follow the existing hosted and self-hosted rules.</p>
-        <div class="public-signal-grid">
-          <div class="public-signal">
-            <span class="shell-eyebrow">Tenant</span>
-            <strong>${escapeHtml(visibleTenant.tenantId)}</strong>
-          </div>
-          <div class="public-signal">
-            <span class="shell-eyebrow">Memberships</span>
-            <strong>${String(visibleTenant.memberships.length)}</strong>
-          </div>
-        </div>
-      </section>`,
+    renderInteractiveSignInPage({
+      deploymentMode,
+      selectedTenant: selectedHostedTenant,
+      selfHostedTenant,
+      tenants,
     }),
   );
 }
