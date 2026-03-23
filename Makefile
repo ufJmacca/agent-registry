@@ -23,13 +23,13 @@ endef
 
 install:
 	$(call require_docker,install)
-	@$(COMPOSE) up -d workspace
+	@$(COMPOSE) up -d --build workspace
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh"
 
 up:
 	$(call require_docker,make up)
-	@$(COMPOSE) up -d workspace postgres
+	@$(COMPOSE) up -d --build workspace postgres
 	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run migrate"
@@ -45,28 +45,28 @@ logs:
 
 lint:
 	$(call require_docker,make lint)
-	@$(COMPOSE) up -d workspace
+	@$(COMPOSE) up -d --build workspace
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run lint"
 
 test:
 	$(call require_docker,make test)
 	@bash tests/workspace-foundation.test.sh --mode=outer --suite=automation
-	@$(COMPOSE) up -d workspace postgres
+	@$(COMPOSE) up -d --build workspace postgres
 	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run test:inner"
 
 migrate:
 	$(call require_docker,make migrate)
-	@$(COMPOSE) up -d workspace postgres
+	@$(COMPOSE) up -d --build workspace postgres
 	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run migrate"
 
 seed:
 	$(call require_docker,make seed)
-	@$(COMPOSE) up -d workspace postgres
+	@$(COMPOSE) up -d --build workspace postgres
 	$(call wait_for_postgres)
 	$(call sync_workspace)
 	@$(COMPOSE) exec -T workspace bash -lc "./scripts/bootstrap.sh && npm run seed"

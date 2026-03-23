@@ -43,6 +43,12 @@ import {
 } from "../../api/src/modules/review/service.js";
 import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
+import { renderDraftRegistrationPage } from "./ui/pages/draft-registration.js";
+import {
+  renderInteractiveSignInPage,
+  renderMissingBootstrapSignInPage,
+  renderMissingSchemaSignInPage,
+} from "./ui/pages/sign-in.js";
 import { renderVersionDetailPageBody } from "./ui/pages/version-detail.js";
 import { renderAuthenticatedShell, renderPublicShell, type ShellNavItem } from "./ui/shell.js";
 
@@ -495,29 +501,7 @@ async function renderSignInPage(
     tenants = await loadTenantConsoleOptions(db);
   } catch (error) {
     if (isMissingConsoleSchemaError(error)) {
-      writePublicPage(
-        response,
-        "Agent Registry",
-        "sign-in",
-        renderSignInLanding({
-          accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
-            <span class="shell-eyebrow">Registry Access</span>
-            <h2>Console Setup Pending</h2>
-            <p>Registry access will become available after migrations and bootstrap data are loaded.</p>
-            <p class="meta">The sign-in flow is intentionally withheld until the console can resolve truthful tenant memberships.</p>
-          </section>`,
-          emphasizeSetup: true,
-          setupPanel: `<section class="card stack public-companion">
-            <span class="shell-eyebrow">Setup Status</span>
-            <h2>Initialize The Console</h2>
-            <p>Run migrations and load bootstrap tenant data to enable console sign-in.</p>
-            <div class="section-list">
-              <div class="pill">Schema missing</div>
-              <div class="pill">Bootstrap required</div>
-            </div>
-          </section>`,
-        }),
-      );
+      writePublicPage(response, "Agent Registry", "sign-in", renderMissingSchemaSignInPage());
       return;
     }
 
@@ -525,29 +509,12 @@ async function renderSignInPage(
   }
 
   if (tenants.length === 0) {
-    writePublicPage(
-      response,
-      "Agent Registry",
-      "sign-in",
-      renderSignInLanding({
-        accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
-          <span class="shell-eyebrow">Registry Access</span>
-          <h2>Console Setup Pending</h2>
-          <p>Sign-in will appear after at least one tenant and membership set has been bootstrapped.</p>
-          <p class="meta">No internal bootstrap details are exposed here.</p>
-        </section>`,
-        emphasizeSetup: true,
-        setupPanel: `<section class="card stack public-companion">
-          <span class="shell-eyebrow">Setup Status</span>
-          <h2>Bootstrap Tenant Data</h2>
-          <p>Bootstrap tenant and membership data to enable console sign-in.</p>
-          <div class="section-list">
-            <div class="pill">No tenants</div>
-            <div class="pill">No memberships</div>
-          </div>
-        </section>`,
-      }),
-    );
+    writePublicPage(response, "Agent Registry", "sign-in", renderMissingBootstrapSignInPage());
+    return;
+  }
+
+  if (tenants.every((tenant) => tenant.memberships.length === 0)) {
+    writePublicPage(response, "Agent Registry", "sign-in", renderMissingBootstrapSignInPage());
     return;
   }
 
@@ -556,70 +523,15 @@ async function renderSignInPage(
     deploymentMode === "hosted"
       ? tenants.find((tenant) => tenant.tenantId === selectedHostedTenantId) ?? tenants[0]
       : selfHostedTenant;
-  const hostedTenantOptions = tenants
-    .map(
-      (tenant) =>
-        `<option value="${escapeHtml(tenant.tenantId)}"${tenant.tenantId === selectedHostedTenant.tenantId ? " selected" : ""}>${escapeHtml(tenant.displayName)} (${escapeHtml(tenant.tenantId)})</option>`,
-    )
-    .join("");
-  const visibleTenant = deploymentMode === "hosted" ? selectedHostedTenant : selfHostedTenant;
-  const subjectOptions = visibleTenant.memberships
-    .map(
-      (membership) =>
-        `<option value="${escapeHtml(membership.subjectId)}">${escapeHtml(membership.subjectId)} [${escapeHtml(membership.roles.join(", ") || "no roles")}]</option>`,
-    )
-    .join("");
-
   writePublicPage(
     response,
     "Agent Registry",
     "sign-in",
-    renderSignInLanding({
-      accessPanel: `<section class="card stack" data-visual-dynamic="sign-in-access">
-        <span class="shell-eyebrow">Registry Access</span>
-        <h2>Mock Sign-In</h2>
-        <p class="meta">Use truthful tenant memberships to enter the current console without changing any existing sign-in behavior.</p>
-        <form class="stack" action="/session" method="post">
-          ${
-            deploymentMode === "self-hosted"
-              ? `<p>Single-tenant deployment</p>
-                 <input type="hidden" name="tenantId" value="${escapeHtml(selfHostedTenant.tenantId)}" />
-                 <p><strong>${escapeHtml(selfHostedTenant.displayName)}</strong> (${escapeHtml(selfHostedTenant.tenantId)})</p>`
-              : `<label>Tenant
-                   <select name="tenantId" onchange="window.location='/?tenantId='+encodeURIComponent(this.value)">
-                     ${hostedTenantOptions}
-                   </select>
-                 </label>`
-          }
-          <label>Subject
-            <select name="subjectId">
-              ${
-                subjectOptions === ""
-                  ? `<option value="" disabled selected>No memberships available for ${escapeHtml(visibleTenant.displayName)}</option>`
-                  : subjectOptions
-              }
-            </select>
-          </label>
-          <button type="submit">Sign In</button>
-        </form>
-      </section>`,
-      emphasizeSetup: false,
-      setupPanel: `<section class="card stack public-companion">
-        <span class="shell-eyebrow">Workspace State</span>
-        <h2>${escapeHtml(visibleTenant.displayName)}</h2>
-        <p>Current deployment mode: <strong>${escapeHtml(deploymentMode)}</strong>.</p>
-        <p class="meta">Tenant selection and membership collapse continue to follow the existing hosted and self-hosted rules.</p>
-        <div class="public-signal-grid">
-          <div class="public-signal">
-            <span class="shell-eyebrow">Tenant</span>
-            <strong>${escapeHtml(visibleTenant.tenantId)}</strong>
-          </div>
-          <div class="public-signal">
-            <span class="shell-eyebrow">Memberships</span>
-            <strong>${String(visibleTenant.memberships.length)}</strong>
-          </div>
-        </div>
-      </section>`,
+    renderInteractiveSignInPage({
+      deploymentMode,
+      selectedTenant: selectedHostedTenant,
+      selfHostedTenant,
+      tenants,
     }),
   );
 }
@@ -920,90 +832,12 @@ async function renderDraftFormPage(
   }
 
   const environments = await environmentService.listEnvironments(principal, tenantId);
-  const publicationFields = environments.environments
-    .map(
-      (environment) =>
-        `<section class="card stack">
-          <h3>${escapeHtml(environment.environmentKey)}</h3>
-          <label>
-            <input type="checkbox" name="publication:${escapeHtml(environment.environmentKey)}:enabled" />
-            Include this environment publication
-          </label>
-          <label>Health endpoint URL
-            <input name="publication:${escapeHtml(environment.environmentKey)}:healthEndpointUrl" placeholder="https://${escapeHtml(environment.environmentKey)}.health.example.com/status" />
-          </label>
-          <label>Optional invocation endpoint override
-            <input name="publication:${escapeHtml(environment.environmentKey)}:invocationEndpoint" placeholder="https://agent.example.com/invoke" />
-          </label>
-          <label>Raw card upload
-            <input type="file" name="publication:${escapeHtml(environment.environmentKey)}:rawCard" />
-          </label>
-        </section>`,
-    )
-    .join("");
 
   writeAuthenticatedPage(response, {
-    body: `<section class="hero card stack page-hero">
-      <span class="shell-eyebrow">Draft Registration</span>
-      <h1>New Draft Registration</h1>
-      <p class="meta">Create one immutable version snapshot with shared metadata and multiple environment-specific cards.</p>
-      <p>Every existing field and multipart upload remains intact while the form now sits inside the shared authenticated shell.</p>
-    </section>
-    <form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/drafts" method="post" enctype="multipart/form-data">
-      <section class="split">
-        <div class="card stack">
-          <label>Version label
-            <input name="versionLabel" placeholder="v1" />
-          </label>
-          <label>Display name
-            <input name="displayName" placeholder="Case Resolver" />
-          </label>
-          <label>Summary
-            <textarea name="summary" rows="5" placeholder="Handles support case routing."></textarea>
-          </label>
-          <label>Capabilities
-            <textarea name="capabilities" rows="4" placeholder="shared-capability, case-routing"></textarea>
-          </label>
-          <label>Tags
-            <textarea name="tags" rows="3" placeholder="shared-tag, routing"></textarea>
-          </label>
-          <label>Required roles
-            <textarea name="requiredRoles" rows="3" placeholder="support-agent"></textarea>
-          </label>
-          <label>Required scopes
-            <textarea name="requiredScopes" rows="3" placeholder="tickets.read, tickets.write"></textarea>
-          </label>
-        </div>
-        <div class="card stack">
-          <label>Header contract JSON
-            <textarea name="headerContract" rows="10">[
-  {
-    "name": "X-User-Id",
-    "required": true,
-    "source": "user.id",
-    "description": "Identifies the calling user."
-  }
-]</textarea>
-          </label>
-          <label>Context contract JSON
-            <textarea name="contextContract" rows="10">[
-  {
-    "key": "client_id",
-    "required": true,
-    "type": "string",
-    "description": "Selects the client partition.",
-    "example": "client-123"
-  }
-]</textarea>
-          </label>
-        </div>
-      </section>
-      <section class="stack" data-visual-dynamic="publication-sections">
-        <h2>Environment Publications</h2>
-        ${publicationFields}
-      </section>
-      <button type="submit">Create Draft</button>
-    </form>`,
+    body: renderDraftRegistrationPage({
+      environments: environments.environments,
+      tenantId,
+    }),
     page: "new-draft-registration",
     principal,
     title: "New Draft Registration",

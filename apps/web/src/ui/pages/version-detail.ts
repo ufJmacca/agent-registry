@@ -184,7 +184,7 @@ function renderTelemetrySection(detail: VersionAdminDetailRecord): string {
               .map(
                 (telemetry) =>
                   `<div class="version-detail-telemetry-window stack">
-                    <p>Window: <code>${escapeHtml(telemetry.windowStartedAt)}</code> to <code>${escapeHtml(telemetry.windowEndedAt)}</code></p>
+                    <p>Window: <code>${escapeHtml(formatTimestamp(telemetry.windowStartedAt))}</code> to <code>${escapeHtml(formatTimestamp(telemetry.windowEndedAt))}</code></p>
                     <p>Invocation count: ${telemetry.invocationCount}</p>
                     <p>Success count: ${telemetry.successCount}</p>
                     <p>Error count: ${telemetry.errorCount}</p>

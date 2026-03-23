@@ -11,14 +11,17 @@
   "scripts": {
     "build": "tsc -b",
     "lint": "tsc -b --pretty false",
-    "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit",
-    "test:inner": "bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit",
+    "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit && npm run test:visual",
+    "test:inner": "bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit && npm run test:visual",
     "test:unit": "tsx --test tests/*.test.ts",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots",
     "verify:devcontainer": "bash .devcontainer/scripts/post-create.sh --verify-only",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^22.13.10",
     "@types/pg": "^8.15.6",
     "tsx": "^4.20.5",
