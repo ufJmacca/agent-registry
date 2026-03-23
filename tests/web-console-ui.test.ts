@@ -41,11 +41,6 @@ interface FreshRegistryDatabase {
   db: AgentRegistryDb;
 }
 
-interface EmptyRegistryDatabase {
-  cleanup(): Promise<void>;
-  databaseUrl: string;
-}
-
 interface WebConsoleContext extends FreshRegistryDatabase {
   baseUrl: string;
   close(): Promise<void>;
@@ -96,32 +91,6 @@ async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
     await adminPool.end();
     throw error;
   }
-}
-
-async function createEmptyRegistryDatabase(): Promise<EmptyRegistryDatabase> {
-  const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
-  const adminPool = new Pool({
-    connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
-  });
-
-  try {
-    await adminPool.query(`create database "${databaseName}" template template0`);
-  } catch (error) {
-    await adminPool.end();
-    throw error;
-  }
-
-  return {
-    async cleanup() {
-      await adminPool.query(
-        "select pg_terminate_backend(pid) from pg_stat_activity where datname = $1 and pid <> pg_backend_pid()",
-        [databaseName],
-      );
-      await adminPool.query(`drop database if exists "${databaseName}"`);
-      await adminPool.end();
-    },
-    databaseUrl: createIsolatedDatabaseUrl(integrationDatabaseUrl, databaseName),
-  };
 }
 
 async function createWebConsoleContext(options: {
@@ -250,6 +219,99 @@ function createRawCard(overrides: Record<string, unknown> = {}): string {
     null,
     2,
   );
+}
+
+function createMembershipRow(
+  overrides: Partial<{
+    registry_capabilities: string[];
+    roles: string[];
+    scopes: string[];
+    subject_id: string;
+    tenant_id: string;
+    user_context: Record<string, unknown>;
+  }> = {},
+) {
+  return {
+    registry_capabilities: [],
+    roles: ["publisher"],
+    scopes: [],
+    subject_id: "publisher-alpha",
+    tenant_id: "tenant-alpha",
+    user_context: {},
+    ...overrides,
+  };
+}
+
+function createSelectBuilder<TResult>(result: TResult | undefined) {
+  return {
+    select() {
+      return this;
+    },
+    where() {
+      return this;
+    },
+    orderBy() {
+      return this;
+    },
+    forUpdate() {
+      return this;
+    },
+    async execute() {
+      return result === undefined ? [] : [result];
+    },
+    async executeTakeFirst() {
+      return result;
+    },
+  };
+}
+
+function createSessionStubDb(
+  membershipRow = createMembershipRow(),
+): AgentRegistryDb {
+  return {
+    selectFrom(table: string) {
+      if (table !== "tenant_memberships") {
+        throw new Error(`Unexpected table '${table}'`);
+      }
+
+      return createSelectBuilder(membershipRow);
+    },
+  } as unknown as AgentRegistryDb;
+}
+
+function createVersionTransitionStubDb(): AgentRegistryDb {
+  return {
+    selectFrom(table: string) {
+      if (table !== "tenant_memberships") {
+        throw new Error(`Unexpected table '${table}'`);
+      }
+
+      return createSelectBuilder(createMembershipRow());
+    },
+    transaction() {
+      return {
+        execute: async (callback: (transaction: unknown) => Promise<unknown>) =>
+          callback({
+            selectFrom(table: string) {
+              if (table !== "agent_versions") {
+                throw new Error(`Unexpected transaction table '${table}'`);
+              }
+
+              return createSelectBuilder({
+                approval_state: "pending_review",
+                version_id: "version-stub",
+              });
+            },
+          }),
+      };
+    },
+  } as unknown as AgentRegistryDb;
+}
+
+function assertRenderedDocumentUsesSharedAssets(html: string): void {
+  assert.match(html, /<link[^>]+rel="preload"[^>]+href="\/assets\/fonts\/manrope-latin-variable\.woff2"/);
+  assert.match(html, /<link[^>]+rel="preload"[^>]+href="\/assets\/fonts\/inter-latin-variable\.woff2"/);
+  assert.match(html, /<link[^>]+rel="stylesheet"[^>]+href="\/assets\/console\.css"/);
 }
 
 function getRedirectLocation(response: Response): string {
@@ -496,12 +558,8 @@ async function seedHealthAndTelemetry(
 }
 
 test("console root renders a setup page before schema bootstrap", async () => {
-  const database = await createEmptyRegistryDatabase();
-  const db = createKyselyDb(database.databaseUrl);
   const config = loadRegistryConfig(
-    {
-      DATABASE_URL: database.databaseUrl,
-    },
+    {},
     {
       requireBootstrapFile: false,
     },
@@ -509,11 +567,16 @@ test("console root renders a setup page before schema bootstrap", async () => {
   const server = http.createServer(
     createWebRequestListener({
       config,
-      db,
+      db: {
+        selectFrom() {
+          throw new Error('relation "tenant_memberships" does not exist');
+        },
+      } as unknown as AgentRegistryDb,
     }),
   );
 
   try {
+    // Arrange
     await new Promise<void>((resolve) => {
       server.listen(0, "127.0.0.1", () => resolve());
     });
@@ -524,13 +587,16 @@ test("console root renders a setup page before schema bootstrap", async () => {
       throw new Error("Expected an IPv4 test server address");
     }
 
+    // Act
     const response = await fetch(`http://127.0.0.1:${address.port}/`);
     const html = await response.text();
 
+    // Assert
     assert.equal(response.status, 200);
     assert.match(html, /<h1>Agent Registry<\/h1>/);
     assert.match(html, /Console Setup Pending/);
     assert.doesNotMatch(html, /<form class="stack" action="\/session"/);
+    assertRenderedDocumentUsesSharedAssets(html);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -542,8 +608,6 @@ test("console root renders a setup page before schema bootstrap", async () => {
         resolve();
       });
     });
-    await destroyKyselyDb(db);
-    await database.cleanup();
   }
 });
 
@@ -582,6 +646,344 @@ test("unexpected console failures return 500 without exposing internal messages"
     assert.equal(response.status, 500);
     assert.match(html, /Internal server error\./);
     assert.doesNotMatch(html, /database offline/);
+    assertRenderedDocumentUsesSharedAssets(html);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
+test("console asset routes serve shared CSS, fonts, and icons without auth", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: {
+        selectFrom() {
+          throw new Error("asset routes should not read from the database");
+        },
+      } as unknown as AgentRegistryDb,
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+
+    // Act
+    const stylesheetResponse = await fetch(`${baseUrl}/assets/console.css`);
+    const stylesheet = await stylesheetResponse.text();
+    const interFontResponse = await fetch(`${baseUrl}/assets/fonts/inter-latin-variable.woff2`);
+    const interFont = await interFontResponse.arrayBuffer();
+    const manropeFontResponse = await fetch(`${baseUrl}/assets/fonts/manrope-latin-variable.woff2`);
+    const manropeFont = await manropeFontResponse.arrayBuffer();
+    const iconsResponse = await fetch(`${baseUrl}/assets/icons.svg`);
+    const icons = await iconsResponse.text();
+
+    // Assert
+    assert.equal(stylesheetResponse.status, 200);
+    assert.match(stylesheetResponse.headers.get("content-type") ?? "", /^text\/css\b/);
+    assert.match(stylesheet, /font-family:\s*"Manrope"/);
+    assert.match(stylesheet, /font-family:\s*"Inter"/);
+    assert.match(stylesheet, /\/assets\/fonts\/manrope-latin-variable\.woff2/);
+    assert.match(stylesheet, /\/assets\/fonts\/inter-latin-variable\.woff2/);
+    assert.equal(interFontResponse.status, 200);
+    assert.match(interFontResponse.headers.get("content-type") ?? "", /^font\/woff2\b/);
+    assert.ok(interFont.byteLength > 0);
+    assert.equal(manropeFontResponse.status, 200);
+    assert.match(manropeFontResponse.headers.get("content-type") ?? "", /^font\/woff2\b/);
+    assert.ok(manropeFont.byteLength > 0);
+    assert.equal(iconsResponse.status, 200);
+    assert.match(iconsResponse.headers.get("content-type") ?? "", /^image\/svg\+xml\b/);
+    assert.match(icons, /<symbol[^>]+id="icon-console"/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
+test("console asset routes return 404 for unknown assets without leaking internal messages", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: {
+        selectFrom() {
+          throw new Error("asset routes should not read from the database");
+        },
+      } as unknown as AgentRegistryDb,
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    // Act
+    const response = await fetch(`http://127.0.0.1:${address.port}/assets/missing.css`);
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 404);
+    assert.match(html, /Asset not found\./);
+    assert.doesNotMatch(html, /asset routes should not read from the database/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
+test("console asset routes support HEAD requests without auth", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: {
+        selectFrom() {
+          throw new Error("asset routes should not read from the database");
+        },
+      } as unknown as AgentRegistryDb,
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    // Act
+    const response = await fetch(`http://127.0.0.1:${address.port}/assets/console.css`, {
+      method: "HEAD",
+    });
+    const body = await response.text();
+
+    // Assert
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/css\b/);
+    assert.equal(body, "");
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
+test("console asset routes return 404 for unsupported methods without auth", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: {
+        selectFrom() {
+          throw new Error("asset routes should not read from the database");
+        },
+      } as unknown as AgentRegistryDb,
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    // Act
+    const response = await fetch(`http://127.0.0.1:${address.port}/assets/console.css`, {
+      method: "POST",
+    });
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 404);
+    assert.match(html, /Asset not found\./);
+    assert.doesNotMatch(html, /asset routes should not read from the database/);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
+test("signed-in console returns 404 for unknown routes", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: createSessionStubDb(),
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const browser = new BrowserSession(`http://127.0.0.1:${address.port}`);
+
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.get("/console/not-a-route");
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 404);
+    assert.match(html, /Route not found\./);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  }
+});
+
+test("invalid version transitions return 409 without changing safe console messaging", async () => {
+  const config = loadRegistryConfig(
+    {},
+    {
+      requireBootstrapFile: false,
+    },
+  );
+  const server = http.createServer(
+    createWebRequestListener({
+      config,
+      db: createVersionTransitionStubDb(),
+    }),
+  );
+
+  try {
+    // Arrange
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+
+    const address = server.address();
+
+    if (address === null || typeof address === "string") {
+      throw new Error("Expected an IPv4 test server address");
+    }
+
+    const browser = new BrowserSession(`http://127.0.0.1:${address.port}`);
+
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.postUrlEncoded(
+      "/tenants/tenant-alpha/agents/agent-stub/versions/version-stub/submit",
+      {},
+    );
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 409);
+    assert.match(html, /Only draft versions can be submitted\./);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
