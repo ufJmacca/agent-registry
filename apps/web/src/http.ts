@@ -112,17 +112,48 @@ function writeHtml(
 }
 
 function writeError(response: ServerResponse, statusCode: number, message: string): void {
-  writeHtml(
-    response,
-    statusCode,
-    "Console Error",
-    `<div class="document-page">
-      <section class="hero card stack">
-        <h1>Console Error</h1>
-        <p>${escapeHtml(message)}</p>
-        <p><a href="/">Return to sign-in</a></p>
-      </section>
-    </div>`,
+  writeConsoleError(response, statusCode, message);
+}
+
+function writeConsoleError(
+  response: ServerResponse,
+  statusCode: number,
+  message: string,
+  options: {
+    principal?: ResolvedPrincipal;
+  } = {},
+): void {
+  const errorBody = `<section class="hero card stack">
+    <h1>Console Error</h1>
+    <p>${escapeHtml(message)}</p>
+    <p><a href="${options.principal === undefined ? "/" : "/console"}">${options.principal === undefined ? "Return to sign-in" : "Return to dashboard"}</a></p>
+  </section>`;
+
+  if (options.principal === undefined) {
+    writeHtml(
+      response,
+      statusCode,
+      "Console Error",
+      `<div class="document-page">
+        ${errorBody}
+      </div>`,
+    );
+    return;
+  }
+
+  response.writeHead(statusCode, {
+    "content-type": "text/html; charset=utf-8",
+  });
+  response.end(
+    renderDocument({
+      body: renderAuthenticatedShell({
+        body: errorBody,
+        navItems: buildShellNavItems(options.principal, "console-error"),
+        page: "console-error",
+        principal: options.principal,
+      }),
+      title: "Console Error",
+    }),
   );
 }
 
@@ -1500,6 +1531,8 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
   const healthRepository = new KyselyHealthRepository(options.db);
 
   return async (request, response) => {
+    let principal: ResolvedPrincipal | null = null;
+
     try {
       const pathname = getPathname(request);
 
@@ -1571,7 +1604,7 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         return;
       }
 
-      const principal = await requirePrincipal(response, principalResolver, request);
+      principal = await requirePrincipal(response, principalResolver, request);
 
       if (principal === null) {
         return;
@@ -1713,20 +1746,28 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         return;
       }
 
-      writeError(response, 404, "Route not found.");
+      writeConsoleError(response, 404, "Route not found.", {
+        principal,
+      });
     } catch (error) {
       if (error instanceof URIError) {
-        writeError(response, 400, "Invalid request path.");
+        writeConsoleError(response, 400, "Invalid request path.", {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof ConsoleAuthorizationError) {
-        writeError(response, 403, error.message);
+        writeConsoleError(response, 403, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof ConsoleValidationError) {
-        writeError(response, 400, error.message);
+        writeConsoleError(response, 400, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1736,7 +1777,9 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentVersionReviewAuthorizationError ||
         error instanceof TenantPolicyOverlayAuthorizationError
       ) {
-        writeError(response, 403, error.message);
+        writeConsoleError(response, 403, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1747,7 +1790,9 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentVersionReviewValidationError ||
         error instanceof AgentVersionProbeTargetPolicyError
       ) {
-        writeError(response, 400, error.message);
+        writeConsoleError(response, 400, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1756,21 +1801,29 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentNotFoundError ||
         error instanceof AgentVersionNotFoundError
       ) {
-        writeError(response, 404, error.message);
+        writeConsoleError(response, 404, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof InvalidVersionTransitionError) {
-        writeError(response, 409, error.message);
+        writeConsoleError(response, 409, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof Error) {
-        writeError(response, 500, "Internal server error.");
+        writeConsoleError(response, 500, "Internal server error.", {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
-      writeError(response, 500, "Internal server error.");
+      writeConsoleError(response, 500, "Internal server error.", {
+        principal: principal ?? undefined,
+      });
     }
   };
 }

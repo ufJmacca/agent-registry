@@ -1019,7 +1019,22 @@ test("signed-in console returns 404 for unknown routes", async () => {
 
     // Assert
     assert.equal(response.status, 404);
+    assertAuthenticatedShellContract(html, {
+      dynamicHooks: [],
+      navLinks: [
+        {
+          href: "/console",
+          label: "Overview",
+        },
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+      ],
+      page: "console-error",
+    });
     assert.match(html, /Route not found\./);
+    assert.match(html, /Return to dashboard/);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
@@ -1073,7 +1088,22 @@ test("invalid version transitions return 409 without changing safe console messa
 
     // Assert
     assert.equal(response.status, 409);
+    assertAuthenticatedShellContract(html, {
+      dynamicHooks: [],
+      navLinks: [
+        {
+          href: "/console",
+          label: "Overview",
+        },
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+      ],
+      page: "console-error",
+    });
     assert.match(html, /Only draft versions can be submitted\./);
+    assert.match(html, /Return to dashboard/);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => {
