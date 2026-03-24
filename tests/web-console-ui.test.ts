@@ -49,7 +49,12 @@ interface WebConsoleContext extends FreshRegistryDatabase {
 
 interface PendingVersionFixture {
   agentId: string;
+  displayName: string;
+  publisherId: string;
+  submittedAt: string;
   versionId: string;
+  versionLabel: string;
+  versionSequence: number;
 }
 
 function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): string {
@@ -1081,10 +1086,57 @@ async function createPendingVersion(
 
   await reviewService.submitVersion(principal, "tenant-alpha", draft.agentId, draft.versionId);
 
+  const persistedVersion = await context.db
+    .selectFrom("agent_versions")
+    .select(["display_name", "publisher_id", "submitted_at", "version_label", "version_sequence"])
+    .where("tenant_id", "=", "tenant-alpha")
+    .where("agent_id", "=", draft.agentId)
+    .where("version_id", "=", draft.versionId)
+    .executeTakeFirstOrThrow();
+
+  if (persistedVersion.submitted_at === null) {
+    throw new Error("Expected submitted review version to have a submission timestamp.");
+  }
+
   return {
     agentId: draft.agentId,
+    displayName: persistedVersion.display_name,
+    publisherId: persistedVersion.publisher_id,
+    submittedAt: String(persistedVersion.submitted_at),
     versionId: draft.versionId,
+    versionLabel: persistedVersion.version_label,
+    versionSequence: persistedVersion.version_sequence,
   };
+}
+
+function assertReviewQueueEntry(
+  html: string,
+  fixture: PendingVersionFixture,
+): void {
+  const versionDetailPath = `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}`;
+  const approvePath = `${versionDetailPath}/approve`;
+  const rejectPath = `${versionDetailPath}/reject`;
+  const postFormPattern = (action: string): string =>
+    `<form[^>]*(?:action="${escapeRegExp(action)}"[^>]*method="post"|method="post"[^>]*action="${escapeRegExp(action)}")[^>]*>`;
+
+  assert.match(
+    html,
+    new RegExp(
+      [
+        "<li[^>]+>",
+        `[\\s\\S]*${escapeRegExp(fixture.displayName)}`,
+        `[\\s\\S]*${escapeRegExp(fixture.versionLabel)}`,
+        `[\\s\\S]*${escapeRegExp(fixture.publisherId)}`,
+        `[\\s\\S]*Submitted`,
+        `[\\s\\S]*${escapeRegExp(fixture.submittedAt)}`,
+        `[\\s\\S]*href="${escapeRegExp(versionDetailPath)}"`,
+        `[\\s\\S]*${postFormPattern(approvePath)}`,
+        `[\\s\\S]*${postFormPattern(rejectPath)}`,
+        `[\\s\\S]*name="reason"`,
+        `[\\s\\S]*</li>`,
+      ].join(""),
+    ),
+  );
 }
 
 async function approvePendingVersion(
@@ -2797,8 +2849,14 @@ test("admin console manages environments, reviews pending versions, edits overla
       navLinks: adminNavLinks,
       page: "review-queue",
     });
-    assert.match(reviewQueueHtml, /Case Router/);
-    assert.match(reviewQueueHtml, /Case Escalator/);
+    assert.match(reviewQueueHtml, /<ol[^>]*aria-label="Pending versions awaiting review"/);
+    assertReviewQueueEntry(reviewQueueHtml, approveFixture);
+    assertReviewQueueEntry(reviewQueueHtml, rejectFixture);
+    assert.doesNotMatch(reviewQueueHtml, /Filter by agent ID, model, or contributor/);
+    assert.doesNotMatch(reviewQueueHtml, />History</);
+    assert.doesNotMatch(reviewQueueHtml, />Sort</);
+    assert.doesNotMatch(reviewQueueHtml, /View Diff/);
+    assert.doesNotMatch(reviewQueueHtml, /Deploy/);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
     assert.equal(approvedVersionPage.status, 200);
