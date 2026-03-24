@@ -7,6 +7,7 @@ import {
   AgentNotFoundError,
   AgentVersionNotFoundError,
   KyselyAgentAdminDetailRepository,
+  KyselyAgentDiscoveryRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
   KyselyHealthRepository,
@@ -44,6 +45,11 @@ import {
 import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
 import {
+  renderDashboardPage,
+  type DashboardActiveAgentLink,
+  type DashboardVersionLink,
+} from "./ui/pages/dashboard.js";
+import {
   renderInteractiveSignInPage,
   renderMissingMembershipBootstrapSignInPage,
   renderMissingBootstrapSignInPage,
@@ -70,14 +76,6 @@ export interface WebRequestListenerOptions {
 interface ConsoleSession {
   subjectId: string;
   tenantId: string;
-}
-
-interface DashboardVersionLink {
-  agentId: string;
-  approvalState: string;
-  displayName: string;
-  versionId: string;
-  versionSequence: number;
 }
 
 interface ReviewQueueEntry {
@@ -596,19 +594,34 @@ async function listDashboardVersions(
 async function listActiveAgents(
   db: AgentRegistryDb,
   tenantId: string,
-): Promise<Array<{ agentId: string; displayName: string }>> {
-  const rows = await db
-    .selectFrom("agents")
-    .select(["agent_id", "display_name"])
-    .where("tenant_id", "=", tenantId)
-    .where("active_version_id", "is not", null)
-    .orderBy("display_name")
-    .execute();
+): Promise<DashboardActiveAgentLink[]> {
+  const publications = await new KyselyAgentDiscoveryRepository(db).listActiveApprovedPublications(
+    tenantId,
+  );
+  const activeAgents = new Map<string, DashboardActiveAgentLink>();
 
-  return rows.map((row) => ({
-    agentId: row.agent_id,
-    displayName: row.display_name,
-  }));
+  for (const publication of publications) {
+    if (
+      publication.agentDisabled ||
+      publication.overlayAgentDisabled ||
+      publication.overlayEnvironmentDisabled
+    ) {
+      continue;
+    }
+
+    if (!activeAgents.has(publication.agentId)) {
+      activeAgents.set(publication.agentId, {
+        agentId: publication.agentId,
+        displayName: publication.displayName,
+      });
+    }
+  }
+
+  return Array.from(activeAgents.values()).sort(
+    (left, right) =>
+      left.displayName.localeCompare(right.displayName) ||
+      left.agentId.localeCompare(right.agentId),
+  );
 }
 
 async function renderDashboard(
@@ -623,61 +636,14 @@ async function renderDashboard(
   ]);
 
   writeAuthenticatedPage(response, {
-    body: `<section class="hero card stack page-hero">
-      <span class="shell-eyebrow">System Overview</span>
-      <h1>Console Dashboard</h1>
-      <p class="meta">${escapeHtml(tenantDisplayName)} (${escapeHtml(principal.tenantId)})</p>
-      <p>Track visible versions, role-sensitive entry points, and the current tenant workspace from one shared shell.</p>
-      <div class="inline-actions">
-        ${
-          canPublish(principal)
-            ? `<a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/drafts/new">New Draft Registration</a>`
-            : ""
-        }
-        ${
-          isTenantAdmin(principal)
-            ? `<a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/environments">Environment Management</a>
-               <a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/review">Review Queue</a>`
-            : ""
-        }
-      </div>
-    </section>
-    <section class="split">
-      <div class="card stack">
-        <h2>Visible Versions</h2>
-        <div class="link-list" data-visual-dynamic="visible-versions">
-          ${
-            versions.length === 0
-              ? "<p>No versions are visible for this identity.</p>"
-              : versions
-                  .map(
-                    (version) =>
-                      `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(version.agentId)}/versions/${encodeURIComponent(version.versionId)}">${escapeHtml(version.displayName)} v${version.versionSequence} (${escapeHtml(version.approvalState)})</a>`,
-                  )
-                  .join("")
-          }
-        </div>
-      </div>
-      ${
-        isTenantAdmin(principal)
-          ? `<div class="card stack">
-               <h2>Active Agents</h2>
-               <div class="link-list" data-visual-dynamic="active-agents">
-                 ${
-                   activeAgents.length === 0
-                     ? "<p>No active approved agents yet.</p>"
-                     : activeAgents
-                         .map(
-                           (agent) =>
-                             `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(agent.agentId)}">${escapeHtml(agent.displayName)}</a>`,
-                         )
-                         .join("")
-                 }
-               </div>
-             </div>`
-          : ""
-      }
-    </section>`,
+    body: renderDashboardPage({
+      activeAgents,
+      canPublish: canPublish(principal),
+      isTenantAdmin: isTenantAdmin(principal),
+      principal,
+      tenantDisplayName,
+      versions,
+    }),
     page: "console-dashboard",
     principal,
     tenantLabel: tenantDisplayName,

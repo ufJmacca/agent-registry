@@ -369,6 +369,57 @@ function getNavMarkup(html: string, variant: "mobile" | "rail"): string {
   return navMatch[0];
 }
 
+function countMatches(input: string, pattern: RegExp): number {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+
+  return Array.from(input.matchAll(new RegExp(pattern.source, flags))).length;
+}
+
+function getDashboardCardMarkup(html: string, cardClass: string): string {
+  const cardMatch = html.match(
+    new RegExp(`<article[^>]+${escapeRegExp(cardClass)}[^>]*>[\\s\\S]*?<\\/article>`),
+  );
+
+  assert.notEqual(cardMatch, null, `Expected dashboard card '${cardClass}' to be rendered`);
+
+  return cardMatch[0];
+}
+
+function listDashboardCardClasses(html: string): string[] {
+  const dashboardCards = Array.from(
+    html.matchAll(/<article[^>]+class="([^"]*\bdashboard-card\b[^"]*)"[^>]*>/g),
+    (match) => match[1],
+  );
+
+  return dashboardCards
+    .map((classNames) =>
+      classNames
+        .split(/\s+/)
+        .find((className) => className.startsWith("dashboard-card--")),
+    )
+    .filter((className): className is string => className !== undefined)
+    .sort();
+}
+
+function listMarkupHrefs(markup: string): string[] {
+  return Array.from(markup.matchAll(/href="([^"]+)"/g), (match) => match[1]).sort();
+}
+
+function assertMarkupContainsLinkWithStrongLabel(
+  markup: string,
+  link: {
+    href: string;
+    label: string;
+  },
+): void {
+  assert.match(
+    markup,
+    new RegExp(
+      `<a[^>]+href="${escapeRegExp(link.href)}"[^>]*>[\\s\\S]*?<strong>${escapeRegExp(link.label)}<\\/strong>[\\s\\S]*?<\\/a>`,
+    ),
+  );
+}
+
 function assertNavContainsLink(
   navMarkup: string,
   link: {
@@ -397,6 +448,14 @@ function assertNavDoesNotContainLink(
       `<a[^>]+href="${escapeRegExp(link.href)}"[^>]*>${escapeRegExp(link.label)}<\\/a>`,
     ),
   );
+}
+
+function assertDocumentContainsHref(html: string, href: string): void {
+  assert.match(html, new RegExp(`href="${escapeRegExp(href)}"`));
+}
+
+function assertDocumentDoesNotContainHref(html: string, href: string): void {
+  assert.doesNotMatch(html, new RegExp(`href="${escapeRegExp(href)}"`));
 }
 
 function assertAuthenticatedShellContract(
@@ -435,6 +494,153 @@ function assertAuthenticatedShellContract(
   for (const hook of options.dynamicHooks) {
     assertHasDataHook(html, "data-visual-dynamic", hook);
   }
+}
+
+function assertDashboardContract(
+  html: string,
+  options: {
+    actionLinks: Array<{
+      href: string;
+      label: string;
+    }>;
+    activeAgentEmptyState?: string;
+    activeAgentLinks?: Array<{
+      href: string;
+      label: string;
+    }>;
+    hiddenActionHrefs?: string[];
+    hiddenVersionLabels?: string[];
+    includeActiveAgents: boolean;
+    metrics: Array<{
+      label: string;
+      value: string;
+    }>;
+    versionEmptyState?: string;
+    versionLinks?: Array<{
+      href: string;
+      label: string;
+    }>;
+  },
+): void {
+  assertHasDataHook(html, "data-dashboard-layout", "bento");
+  assertHasDataHook(html, "data-visual-dynamic", "dashboard-identity");
+  assertHasDataHook(html, "data-visual-dynamic", "dashboard-actions");
+  assertHasDataHook(html, "data-visual-dynamic", "dashboard-versions");
+  const expectedDashboardCards = [
+    "dashboard-card--actions",
+    "dashboard-card--hero",
+    "dashboard-card--identity",
+    "dashboard-card--tenant",
+    "dashboard-card--versions",
+    ...(options.includeActiveAgents ? ["dashboard-card--active-agents"] : []),
+  ].sort();
+
+  assert.deepEqual(listDashboardCardClasses(html), expectedDashboardCards);
+  assert.equal(
+    countMatches(html, /class="[^"]*\bdashboard-card\b[^"]*"/),
+    expectedDashboardCards.length,
+  );
+
+  const heroMarkup = getDashboardCardMarkup(html, "dashboard-card--hero");
+  const actionsMarkup = getDashboardCardMarkup(html, "dashboard-card--actions");
+  const versionsMarkup = getDashboardCardMarkup(html, "dashboard-card--versions");
+
+  assert.match(html, /Signed-In Identity/);
+  assert.match(html, /Tenant Context/);
+  assert.match(actionsMarkup, /Workspace Actions/);
+  assert.match(versionsMarkup, /Visible Versions/);
+  assert.equal(
+    countMatches(heroMarkup, /<div class="dashboard-metric">/),
+    options.metrics.length,
+  );
+
+  for (const metric of options.metrics) {
+    assert.match(
+      heroMarkup,
+      new RegExp(
+        `<div class="dashboard-metric">[\\s\\S]*?<span class="shell-eyebrow">${escapeRegExp(metric.label)}<\\/span>[\\s\\S]*?<strong>${escapeRegExp(metric.value)}<\\/strong>[\\s\\S]*?<\\/div>`,
+      ),
+    );
+  }
+
+  assert.deepEqual(
+    listMarkupHrefs(actionsMarkup),
+    options.actionLinks.map((link) => link.href).sort(),
+  );
+  assert.equal(
+    countMatches(actionsMarkup, /class="dashboard-action(?:\s|")/),
+    options.actionLinks.length,
+  );
+
+  for (const link of options.actionLinks) {
+    assertMarkupContainsLinkWithStrongLabel(actionsMarkup, link);
+  }
+
+  if (options.includeActiveAgents) {
+    assertHasDataHook(html, "data-visual-dynamic", "dashboard-active-agents");
+    const activeAgentsMarkup = getDashboardCardMarkup(html, "dashboard-card--active-agents");
+    const activeAgentLinks = options.activeAgentLinks ?? [];
+
+    assert.match(activeAgentsMarkup, /Active Agents/);
+    assert.deepEqual(
+      listMarkupHrefs(activeAgentsMarkup),
+      activeAgentLinks.map((link) => link.href).sort(),
+    );
+    assert.equal(
+      countMatches(activeAgentsMarkup, /class="dashboard-record"/),
+      activeAgentLinks.length,
+    );
+
+    for (const link of activeAgentLinks) {
+      assertMarkupContainsLinkWithStrongLabel(activeAgentsMarkup, link);
+    }
+
+    if (activeAgentLinks.length === 0) {
+      assert.match(
+        activeAgentsMarkup,
+        new RegExp(escapeRegExp(options.activeAgentEmptyState ?? "")),
+      );
+    } else if (options.activeAgentEmptyState !== undefined) {
+      assert.doesNotMatch(
+        activeAgentsMarkup,
+        new RegExp(escapeRegExp(options.activeAgentEmptyState)),
+      );
+    }
+  } else {
+    assert.doesNotMatch(html, /data-visual-dynamic="dashboard-active-agents"/);
+    assert.doesNotMatch(html, /Active Agents/);
+  }
+
+  for (const href of options.hiddenActionHrefs ?? []) {
+    assertDocumentDoesNotContainHref(actionsMarkup, href);
+  }
+
+  const versionLinks = options.versionLinks ?? [];
+
+  assert.deepEqual(
+    listMarkupHrefs(versionsMarkup),
+    versionLinks.map((link) => link.href).sort(),
+  );
+  assert.equal(
+    countMatches(versionsMarkup, /class="dashboard-record"/),
+    versionLinks.length,
+  );
+
+  for (const link of versionLinks) {
+    assertMarkupContainsLinkWithStrongLabel(versionsMarkup, link);
+  }
+
+  for (const label of options.hiddenVersionLabels ?? []) {
+    assert.doesNotMatch(versionsMarkup, new RegExp(escapeRegExp(label)));
+  }
+
+  if (versionLinks.length === 0) {
+    assert.match(versionsMarkup, new RegExp(escapeRegExp(options.versionEmptyState ?? "")));
+  } else if (options.versionEmptyState !== undefined) {
+    assert.doesNotMatch(versionsMarkup, new RegExp(escapeRegExp(options.versionEmptyState)));
+  }
+
+  assert.doesNotMatch(actionsMarkup, /href="#"/);
 }
 
 function assertPublicSignInShellContract(html: string): void {
@@ -1459,6 +1665,8 @@ test("publisher console creates a multi-environment draft and submits it for rev
     );
     const submittedDetailPage = await browser.get(draftLocation);
     const submittedDetailHtml = await submittedDetailPage.text();
+    const submittedDashboardPage = await browser.get("/console");
+    const submittedDashboardHtml = await submittedDashboardPage.text();
     const environmentsPage = await browser.get("/tenants/tenant-alpha/environments");
     const environmentsHtml = await environmentsPage.text();
 
@@ -1477,10 +1685,31 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.doesNotMatch(tenantBetaSignInHtml, /admin-alpha/);
     assert.doesNotMatch(tenantBetaSignInHtml, /publisher-alpha/);
     assertAuthenticatedShellContract(dashboardHtml, {
-      dynamicHooks: ["visible-versions"],
+      dynamicHooks: ["dashboard-actions", "dashboard-identity", "dashboard-versions"],
       navExcludes: adminOnlyNavLinks,
       navLinks: publisherNavLinks,
       page: "console-dashboard",
+    });
+    assertDashboardContract(dashboardHtml, {
+      actionLinks: [
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+      ],
+      hiddenActionHrefs: ["/tenants/tenant-alpha/environments", "/tenants/tenant-alpha/review"],
+      includeActiveAgents: false,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "0",
+        },
+        {
+          label: "Accessible Actions",
+          value: "1",
+        },
+      ],
+      versionEmptyState: "No versions are visible for this workspace yet.",
     });
     assert.equal(newDraftPage.status, 200);
     assertAuthenticatedShellContract(newDraftHtml, {
@@ -1514,6 +1743,42 @@ test("publisher console creates a multi-environment draft and submits it for rev
       page: "version-detail",
     });
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
+    assert.equal(submittedDashboardPage.status, 200);
+    assertAuthenticatedShellContract(submittedDashboardHtml, {
+      dynamicHooks: ["dashboard-actions", "dashboard-identity", "dashboard-versions"],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "console-dashboard",
+    });
+    assertDashboardContract(submittedDashboardHtml, {
+      actionLinks: [
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+      ],
+      hiddenActionHrefs: ["/tenants/tenant-alpha/environments", "/tenants/tenant-alpha/review"],
+      includeActiveAgents: false,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "1",
+        },
+        {
+          label: "Accessible Actions",
+          value: "1",
+        },
+      ],
+      versionEmptyState: "No versions are visible for this workspace yet.",
+      versionLinks: [
+        {
+          href: draftLocation,
+          label: "Case Resolver",
+        },
+      ],
+    });
+    assert.match(submittedDashboardHtml, /Case Resolver/);
+    assert.match(submittedDashboardHtml, /pending_review/);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
   } finally {
@@ -1559,6 +1824,159 @@ test("publisher console returns 403 for admin-only review and active agent detai
     assert.doesNotMatch(versionDetailHtml, /Invocation count: 12/);
     assert.equal(agentDetailPage.status, 403);
     assert.match(agentDetailHtml, /Tenant admin role is required/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("console dashboard keeps version visibility scoped to publisher ownership while admins see the tenant-wide set", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const publisherBrowser = new BrowserSession(context.baseUrl);
+  const adminBrowser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const publisherNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+    ];
+    const adminNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
+    const adminOnlyNavLinks = adminNavLinks.slice(2);
+    const publisherFixture = await createPendingVersion(context, {
+      displayName: "Alpha Router",
+      environments: ["dev"],
+      publisherId: "publisher-alpha",
+      summary: "Routes tenant alpha support cases.",
+      versionLabel: "v1",
+    });
+    const otherPublisherFixture = await createPendingVersion(context, {
+      displayName: "Bravo Router",
+      environments: ["prod"],
+      publisherId: "publisher-bravo",
+      summary: "Routes another publisher's cases.",
+      versionLabel: "v2",
+    });
+
+    await signIn(publisherBrowser, "tenant-alpha", "publisher-alpha");
+    await signIn(adminBrowser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const publisherDashboardPage = await publisherBrowser.get("/console");
+    const publisherDashboardHtml = await publisherDashboardPage.text();
+    const adminDashboardPage = await adminBrowser.get("/console");
+    const adminDashboardHtml = await adminDashboardPage.text();
+
+    // Assert
+    assert.equal(publisherDashboardPage.status, 200);
+    assertAuthenticatedShellContract(publisherDashboardHtml, {
+      dynamicHooks: ["dashboard-actions", "dashboard-identity", "dashboard-versions"],
+      navExcludes: adminOnlyNavLinks,
+      navLinks: publisherNavLinks,
+      page: "console-dashboard",
+    });
+    assertDashboardContract(publisherDashboardHtml, {
+      actionLinks: [
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+      ],
+      hiddenActionHrefs: ["/tenants/tenant-alpha/environments", "/tenants/tenant-alpha/review"],
+      hiddenVersionLabels: ["Bravo Router"],
+      includeActiveAgents: false,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "1",
+        },
+        {
+          label: "Accessible Actions",
+          value: "1",
+        },
+      ],
+      versionEmptyState: "No versions are visible for this workspace yet.",
+      versionLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${publisherFixture.agentId}/versions/${publisherFixture.versionId}`,
+          label: "Alpha Router",
+        },
+      ],
+    });
+    assert.equal(adminDashboardPage.status, 200);
+    assertAuthenticatedShellContract(adminDashboardHtml, {
+      dynamicHooks: [
+        "dashboard-actions",
+        "dashboard-active-agents",
+        "dashboard-identity",
+        "dashboard-versions",
+      ],
+      navLinks: adminNavLinks,
+      page: "console-dashboard",
+    });
+    assertDashboardContract(adminDashboardHtml, {
+      actionLinks: [
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+        {
+          href: "/tenants/tenant-alpha/environments",
+          label: "Environment Management",
+        },
+        {
+          href: "/tenants/tenant-alpha/review",
+          label: "Review Queue",
+        },
+      ],
+      activeAgentEmptyState: "No active agents are published in this tenant yet.",
+      includeActiveAgents: true,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "2",
+        },
+        {
+          label: "Active Agents",
+          value: "0",
+        },
+      ],
+      versionEmptyState: "No versions are visible for this workspace yet.",
+      versionLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${publisherFixture.agentId}/versions/${publisherFixture.versionId}`,
+          label: "Alpha Router",
+        },
+        {
+          href: `/tenants/tenant-alpha/agents/${otherPublisherFixture.agentId}/versions/${otherPublisherFixture.versionId}`,
+          label: "Bravo Router",
+        },
+      ],
+    });
   } finally {
     await context.close();
   }
@@ -1709,6 +2127,204 @@ test("admin console approval enqueues initial publication probes", async () => {
   }
 });
 
+test("admin dashboard excludes agents disabled by agent and environment overlays", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const adminNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
+    const actionLinks = [
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
+    const agentDisabledFixture = await createPendingVersion(context, {
+      displayName: "Alpha Router",
+      environments: ["prod"],
+      publisherId: "publisher-alpha",
+      summary: "Routes alpha support traffic.",
+      versionLabel: "v1",
+    });
+    const environmentDisabledFixture = await createPendingVersion(context, {
+      displayName: "Bravo Resolver",
+      environments: ["prod"],
+      publisherId: "publisher-alpha",
+      summary: "Routes bravo support traffic.",
+      versionLabel: "v2",
+    });
+
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+    await approvePendingVersion(context, agentDisabledFixture);
+    await approvePendingVersion(context, environmentDisabledFixture);
+
+    const dashboardPage = await browser.get("/console");
+    const dashboardHtml = await dashboardPage.text();
+
+    // Act
+    const disableAgentResponse = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${agentDisabledFixture.agentId}/overlay/disable`,
+      {},
+    );
+    const disableEnvironmentResponse = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${environmentDisabledFixture.agentId}/environments/prod/overlay/disable`,
+      {},
+    );
+    const refreshedDashboardPage = await browser.get("/console");
+    const refreshedDashboardHtml = await refreshedDashboardPage.text();
+    const agentDisabledDetail = await new KyselyAgentAdminDetailRepository(context.db).getAgentDetail(
+      "tenant-alpha",
+      agentDisabledFixture.agentId,
+    );
+    const environmentDisabledDetail = await new KyselyAgentAdminDetailRepository(
+      context.db,
+    ).getAgentDetail("tenant-alpha", environmentDisabledFixture.agentId);
+
+    // Assert
+    assert.equal(dashboardPage.status, 200);
+    assertAuthenticatedShellContract(dashboardHtml, {
+      dynamicHooks: [
+        "dashboard-actions",
+        "dashboard-active-agents",
+        "dashboard-identity",
+        "dashboard-versions",
+      ],
+      navLinks: adminNavLinks,
+      page: "console-dashboard",
+    });
+    assertDashboardContract(dashboardHtml, {
+      actionLinks,
+      activeAgentEmptyState: "No active agents are published in this tenant yet.",
+      activeAgentLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${agentDisabledFixture.agentId}`,
+          label: "Alpha Router",
+        },
+        {
+          href: `/tenants/tenant-alpha/agents/${environmentDisabledFixture.agentId}`,
+          label: "Bravo Resolver",
+        },
+      ],
+      includeActiveAgents: true,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "2",
+        },
+        {
+          label: "Active Agents",
+          value: "2",
+        },
+      ],
+      versionEmptyState: "No versions are visible for this workspace yet.",
+      versionLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${agentDisabledFixture.agentId}/versions/${agentDisabledFixture.versionId}`,
+          label: "Alpha Router",
+        },
+        {
+          href: `/tenants/tenant-alpha/agents/${environmentDisabledFixture.agentId}/versions/${environmentDisabledFixture.versionId}`,
+          label: "Bravo Resolver",
+        },
+      ],
+    });
+    assert.equal(disableAgentResponse.status, 303);
+    assert.equal(
+      getRedirectLocation(disableAgentResponse),
+      `/tenants/tenant-alpha/agents/${agentDisabledFixture.agentId}`,
+    );
+    assert.equal(disableEnvironmentResponse.status, 303);
+    assert.equal(
+      getRedirectLocation(disableEnvironmentResponse),
+      `/tenants/tenant-alpha/agents/${environmentDisabledFixture.agentId}`,
+    );
+    assert.equal(agentDisabledDetail.activeVersionId, agentDisabledFixture.versionId);
+    assert.equal(environmentDisabledDetail.activeVersionId, environmentDisabledFixture.versionId);
+    assert.deepEqual(agentDisabledDetail.overlay.agent, {
+      deprecated: false,
+      disabled: true,
+      requiredRoles: [],
+      requiredScopes: [],
+    });
+    assert.deepEqual(environmentDisabledDetail.overlay.environments, [
+      {
+        deprecated: false,
+        disabled: true,
+        environmentKey: "prod",
+        requiredRoles: [],
+        requiredScopes: [],
+      },
+    ]);
+    assert.equal(refreshedDashboardPage.status, 200);
+    assertAuthenticatedShellContract(refreshedDashboardHtml, {
+      dynamicHooks: [
+        "dashboard-actions",
+        "dashboard-active-agents",
+        "dashboard-identity",
+        "dashboard-versions",
+      ],
+      navLinks: adminNavLinks,
+      page: "console-dashboard",
+    });
+    assertDashboardContract(refreshedDashboardHtml, {
+      actionLinks,
+      activeAgentEmptyState: "No active agents are published in this tenant yet.",
+      includeActiveAgents: true,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "2",
+        },
+        {
+          label: "Active Agents",
+          value: "0",
+        },
+      ],
+      versionEmptyState: "No versions are visible for this workspace yet.",
+      versionLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${agentDisabledFixture.agentId}/versions/${agentDisabledFixture.versionId}`,
+          label: "Alpha Router",
+        },
+        {
+          href: `/tenants/tenant-alpha/agents/${environmentDisabledFixture.agentId}/versions/${environmentDisabledFixture.versionId}`,
+          label: "Bravo Resolver",
+        },
+      ],
+    });
+  } finally {
+    await context.close();
+  }
+});
+
 test("admin console manages environments, reviews pending versions, edits overlays, and inspects details", async () => {
   const context = await createWebConsoleContext({
     deploymentMode: "hosted",
@@ -1776,6 +2392,8 @@ test("admin console manages environments, reviews pending versions, edits overla
       `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}`,
     );
     const approvedVersionHtml = await approvedVersionPage.text();
+    const refreshedDashboardPage = await browser.get("/console");
+    const refreshedDashboardHtml = await refreshedDashboardPage.text();
     const deprecateEnvironmentResponse = await browser.postUrlEncoded(
       `/tenants/tenant-alpha/agents/${approveFixture.agentId}/environments/prod/overlay/deprecate`,
       {},
@@ -1799,9 +2417,52 @@ test("admin console manages environments, reviews pending versions, edits overla
 
     // Assert
     assertAuthenticatedShellContract(dashboardHtml, {
-      dynamicHooks: ["active-agents", "visible-versions"],
+      dynamicHooks: [
+        "dashboard-actions",
+        "dashboard-active-agents",
+        "dashboard-identity",
+        "dashboard-versions",
+      ],
       navLinks: adminNavLinks,
       page: "console-dashboard",
+    });
+    assertDashboardContract(dashboardHtml, {
+      actionLinks: [
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+        {
+          href: "/tenants/tenant-alpha/environments",
+          label: "Environment Management",
+        },
+        {
+          href: "/tenants/tenant-alpha/review",
+          label: "Review Queue",
+        },
+      ],
+      activeAgentEmptyState: "No active agents are published in this tenant yet.",
+      includeActiveAgents: true,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "2",
+        },
+        {
+          label: "Active Agents",
+          value: "0",
+        },
+      ],
+      versionLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}`,
+          label: "Case Router",
+        },
+        {
+          href: `/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}`,
+          label: "Case Escalator",
+        },
+      ],
     });
     assert.equal(environmentsPage.status, 200);
     assertAuthenticatedShellContract(environmentsHtml, {
@@ -1829,6 +2490,66 @@ test("admin console manages environments, reviews pending versions, edits overla
       navLinks: adminNavLinks,
       page: "version-detail",
     });
+    assert.equal(refreshedDashboardPage.status, 200);
+    assertAuthenticatedShellContract(refreshedDashboardHtml, {
+      dynamicHooks: [
+        "dashboard-actions",
+        "dashboard-active-agents",
+        "dashboard-identity",
+        "dashboard-versions",
+      ],
+      navLinks: adminNavLinks,
+      page: "console-dashboard",
+    });
+    assertDashboardContract(refreshedDashboardHtml, {
+      actionLinks: [
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+        {
+          href: "/tenants/tenant-alpha/environments",
+          label: "Environment Management",
+        },
+        {
+          href: "/tenants/tenant-alpha/review",
+          label: "Review Queue",
+        },
+      ],
+      activeAgentEmptyState: "No active agents are published in this tenant yet.",
+      activeAgentLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${approveFixture.agentId}`,
+          label: "Case Router",
+        },
+      ],
+      includeActiveAgents: true,
+      metrics: [
+        {
+          label: "Visible Versions",
+          value: "2",
+        },
+        {
+          label: "Active Agents",
+          value: "1",
+        },
+      ],
+      versionLinks: [
+        {
+          href: `/tenants/tenant-alpha/agents/${approveFixture.agentId}/versions/${approveFixture.versionId}`,
+          label: "Case Router",
+        },
+        {
+          href: `/tenants/tenant-alpha/agents/${rejectFixture.agentId}/versions/${rejectFixture.versionId}`,
+          label: "Case Escalator",
+        },
+      ],
+    });
+    assertDocumentContainsHref(
+      refreshedDashboardHtml,
+      `/tenants/tenant-alpha/agents/${approveFixture.agentId}`,
+    );
+    assert.doesNotMatch(refreshedDashboardHtml, /No active agents are published in this tenant yet\./);
     assert.match(approvedVersionHtml, /Health History/);
     assert.match(approvedVersionHtml, /503/);
     assert.match(approvedVersionHtml, /Invocation count: 12/);
