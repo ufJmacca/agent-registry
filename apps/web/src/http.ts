@@ -44,6 +44,7 @@ import {
 } from "../../api/src/modules/review/service.js";
 import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
+import { renderDraftRegistrationPage } from "./ui/pages/draft-registration.js";
 import {
   renderDashboardPage,
   type DashboardActiveAgentLink,
@@ -800,7 +801,6 @@ async function createEnvironmentFromForm(
 
 async function renderDraftFormPage(
   response: ServerResponse,
-  db: AgentRegistryDb,
   environmentService: TenantEnvironmentCatalogService,
   principal: ResolvedPrincipal,
   tenantId: string,
@@ -814,90 +814,12 @@ async function renderDraftFormPage(
   }
 
   const environments = await environmentService.listEnvironments(principal, tenantId);
-  const publicationFields = environments.environments
-    .map(
-      (environment) =>
-        `<section class="card stack">
-          <h3>${escapeHtml(environment.environmentKey)}</h3>
-          <label>
-            <input type="checkbox" name="publication:${escapeHtml(environment.environmentKey)}:enabled" />
-            Include this environment publication
-          </label>
-          <label>Health endpoint URL
-            <input name="publication:${escapeHtml(environment.environmentKey)}:healthEndpointUrl" placeholder="https://${escapeHtml(environment.environmentKey)}.health.example.com/status" />
-          </label>
-          <label>Optional invocation endpoint override
-            <input name="publication:${escapeHtml(environment.environmentKey)}:invocationEndpoint" placeholder="https://agent.example.com/invoke" />
-          </label>
-          <label>Raw card upload
-            <input type="file" name="publication:${escapeHtml(environment.environmentKey)}:rawCard" />
-          </label>
-        </section>`,
-    )
-    .join("");
 
   writeAuthenticatedPage(response, {
-    body: `<section class="hero card stack page-hero">
-      <span class="shell-eyebrow">Draft Registration</span>
-      <h1>New Draft Registration</h1>
-      <p class="meta">Create one immutable version snapshot with shared metadata and multiple environment-specific cards.</p>
-      <p>Every existing field and multipart upload remains intact while the form now sits inside the shared authenticated shell.</p>
-    </section>
-    <form class="stack" action="/tenants/${encodeURIComponent(tenantId)}/drafts" method="post" enctype="multipart/form-data">
-      <section class="split">
-        <div class="card stack">
-          <label>Version label
-            <input name="versionLabel" placeholder="v1" />
-          </label>
-          <label>Display name
-            <input name="displayName" placeholder="Case Resolver" />
-          </label>
-          <label>Summary
-            <textarea name="summary" rows="5" placeholder="Handles support case routing."></textarea>
-          </label>
-          <label>Capabilities
-            <textarea name="capabilities" rows="4" placeholder="shared-capability, case-routing"></textarea>
-          </label>
-          <label>Tags
-            <textarea name="tags" rows="3" placeholder="shared-tag, routing"></textarea>
-          </label>
-          <label>Required roles
-            <textarea name="requiredRoles" rows="3" placeholder="support-agent"></textarea>
-          </label>
-          <label>Required scopes
-            <textarea name="requiredScopes" rows="3" placeholder="tickets.read, tickets.write"></textarea>
-          </label>
-        </div>
-        <div class="card stack">
-          <label>Header contract JSON
-            <textarea name="headerContract" rows="10">[
-  {
-    "name": "X-User-Id",
-    "required": true,
-    "source": "user.id",
-    "description": "Identifies the calling user."
-  }
-]</textarea>
-          </label>
-          <label>Context contract JSON
-            <textarea name="contextContract" rows="10">[
-  {
-    "key": "client_id",
-    "required": true,
-    "type": "string",
-    "description": "Selects the client partition.",
-    "example": "client-123"
-  }
-]</textarea>
-          </label>
-        </div>
-      </section>
-      <section class="stack" data-visual-dynamic="publication-sections">
-        <h2>Environment Publications</h2>
-        ${publicationFields}
-      </section>
-      <button type="submit">Create Draft</button>
-    </form>`,
+    body: renderDraftRegistrationPage({
+      environments: environments.environments,
+      tenantId,
+    }),
     page: "new-draft-registration",
     principal,
     title: "New Draft Registration",
@@ -1550,7 +1472,6 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
       if (draftNewMatch !== null && request.method === "GET") {
         await renderDraftFormPage(
           response,
-          options.db,
           environmentService,
           principal,
           decodeURIComponent(draftNewMatch[1]),

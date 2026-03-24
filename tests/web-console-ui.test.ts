@@ -355,6 +355,185 @@ function assertHasDataHook(html: string, attribute: string, value: string): void
   assert.match(html, new RegExp(`${attribute}="${value}"`));
 }
 
+function extractBalancedElementMarkup(
+  html: string,
+  options: {
+    startIndex: number;
+    tagName: string;
+  },
+): string {
+  const tagPattern = new RegExp(
+    `<${options.tagName}\\b[^>]*>|</${options.tagName}>`,
+    "g",
+  );
+
+  tagPattern.lastIndex = options.startIndex;
+
+  let depth = 0;
+
+  for (let match = tagPattern.exec(html); match !== null; match = tagPattern.exec(html)) {
+    if (match[0].startsWith(`</${options.tagName}`)) {
+      depth -= 1;
+    } else {
+      depth += 1;
+    }
+
+    if (depth === 0) {
+      return html.slice(options.startIndex, tagPattern.lastIndex);
+    }
+  }
+
+  throw new Error(`Expected balanced <${options.tagName}> markup starting at index ${options.startIndex}`);
+}
+
+function getElementMarkupByDataHook(
+  html: string,
+  options: {
+    attribute: string;
+    tagName: string;
+    value: string;
+  },
+): string {
+  const openingTagPattern = new RegExp(
+    `<${options.tagName}\\b[^>]*${options.attribute}="${escapeRegExp(options.value)}"[^>]*>`,
+  );
+  const openingTagMatch = openingTagPattern.exec(html);
+
+  assert.notEqual(
+    openingTagMatch,
+    null,
+    `Expected <${options.tagName}> with ${options.attribute}="${options.value}"`,
+  );
+
+  return extractBalancedElementMarkup(html, {
+    startIndex: openingTagMatch.index,
+    tagName: options.tagName,
+  });
+}
+
+function assertMarkupContainsField(markup: string, fieldName: string): void {
+  assert.match(markup, new RegExp(`name="${escapeRegExp(fieldName)}"`));
+}
+
+function assertMarkupDoesNotContainField(markup: string, fieldName: string): void {
+  assert.doesNotMatch(markup, new RegExp(`name="${escapeRegExp(fieldName)}"`));
+}
+
+function assertDraftRegistrationFormContract(
+  html: string,
+  options: {
+    environmentKeys: string[];
+    expectSubmitDisabled?: boolean;
+    tenantId: string;
+  },
+): void {
+  assert.match(
+    html,
+    new RegExp(
+      `<form[^>]+action="/tenants/${escapeRegExp(options.tenantId)}/drafts"[^>]+method="post"[^>]+enctype="multipart/form-data"`,
+    ),
+  );
+
+  const metadataRegion = getElementMarkupByDataHook(html, {
+    attribute: "data-form-region",
+    tagName: "section",
+    value: "metadata",
+  });
+  const contractsRegion = getElementMarkupByDataHook(html, {
+    attribute: "data-form-region",
+    tagName: "section",
+    value: "contracts",
+  });
+  const publicationsRegion = getElementMarkupByDataHook(html, {
+    attribute: "data-form-region",
+    tagName: "section",
+    value: "publications",
+  });
+  const actionsRegion = getElementMarkupByDataHook(html, {
+    attribute: "data-form-region",
+    tagName: "section",
+    value: "actions",
+  });
+
+  assert.match(metadataRegion, /General Metadata/);
+  assert.match(contractsRegion, /Shared Contracts/);
+  assert.match(publicationsRegion, /Environment Publications/);
+  assert.match(actionsRegion, /Draft Actions/);
+
+  for (const fieldName of [
+    "versionLabel",
+    "displayName",
+    "summary",
+    "capabilities",
+    "tags",
+    "requiredRoles",
+    "requiredScopes",
+  ]) {
+    assertMarkupContainsField(metadataRegion, fieldName);
+  }
+
+  for (const fieldName of ["headerContract", "contextContract"]) {
+    assertMarkupContainsField(contractsRegion, fieldName);
+  }
+
+  assertMarkupDoesNotContainField(metadataRegion, "headerContract");
+  assertMarkupDoesNotContainField(metadataRegion, "contextContract");
+  assertMarkupDoesNotContainField(contractsRegion, "versionLabel");
+  assertMarkupDoesNotContainField(contractsRegion, "displayName");
+
+  assertMarkupDoesNotContainField(publicationsRegion, "versionLabel");
+  assertMarkupDoesNotContainField(publicationsRegion, "headerContract");
+
+  for (const environmentKey of options.environmentKeys) {
+    const publicationPanel = getElementMarkupByDataHook(publicationsRegion, {
+      attribute: "data-publication-environment",
+      tagName: "section",
+      value: environmentKey,
+    });
+
+    assert.match(publicationPanel, new RegExp(`>${escapeRegExp(environmentKey)}<`));
+
+    for (const suffix of [
+      "enabled",
+      "healthEndpointUrl",
+      "invocationEndpoint",
+      "rawCard",
+    ]) {
+      assertMarkupContainsField(
+        publicationPanel,
+        `publication:${environmentKey}:${suffix}`,
+      );
+    }
+
+    for (const otherEnvironmentKey of options.environmentKeys) {
+      if (otherEnvironmentKey === environmentKey) {
+        continue;
+      }
+
+      assert.doesNotMatch(
+        publicationPanel,
+        new RegExp(`name="${escapeRegExp(`publication:${otherEnvironmentKey}:`)}`),
+      );
+    }
+  }
+
+  if (options.environmentKeys.length === 0) {
+    assert.match(publicationsRegion, /No environments are configured yet for this tenant\./);
+    assert.match(publicationsRegion, /At least one configured environment is required before a draft can be created\./);
+    assert.doesNotMatch(publicationsRegion, /data-publication-environment="/);
+    assert.doesNotMatch(publicationsRegion, /name="publication:/);
+  }
+
+  if (options.expectSubmitDisabled) {
+    assert.match(actionsRegion, /<button[^>]+type="submit"[^>]+disabled[^>]*>Create Draft<\/button>/);
+    return;
+  }
+
+  assert.match(actionsRegion, /<button[^>]+type="submit"[^>]*>Create Draft<\/button>/);
+  assert.doesNotMatch(actionsRegion, /name="versionLabel"/);
+  assert.doesNotMatch(actionsRegion, /name="headerContract"/);
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1684,12 +1863,14 @@ test("publisher console creates a multi-environment draft and submits it for rev
     );
     draftForm.set("publication:dev:enabled", "on");
     draftForm.set("publication:dev:healthEndpointUrl", "https://dev.health.example.com/status");
+    draftForm.set("publication:dev:invocationEndpoint", "https://dev.invoke.example.com");
     draftForm.set(
       "publication:dev:rawCard",
       new File(
         [
           createRawCard({
             capabilities: ["card-search", "dev-capability"],
+            invocationEndpoint: undefined,
             name: "Case Resolver",
             summary: "Handles support case routing.",
             tags: ["card-tag", "dev"],
@@ -1703,12 +1884,14 @@ test("publisher console creates a multi-environment draft and submits it for rev
     );
     draftForm.set("publication:prod:enabled", "on");
     draftForm.set("publication:prod:healthEndpointUrl", "https://prod.health.example.com/status");
+    draftForm.set("publication:prod:invocationEndpoint", "https://prod.invoke.example.com");
     draftForm.set(
       "publication:prod:rawCard",
       new File(
         [
           createRawCard({
             capabilities: ["card-search", "prod-capability"],
+            invocationEndpoint: undefined,
             name: "Case Resolver",
             summary: "Handles support case routing.",
             tags: ["card-tag", "prod"],
@@ -1792,8 +1975,10 @@ test("publisher console creates a multi-environment draft and submits it for rev
       navLinks: publisherNavLinks,
       page: "new-draft-registration",
     });
-    assert.match(newDraftHtml, /type="file"/);
-    assert.match(newDraftHtml, /publication:dev:enabled/);
+    assertDraftRegistrationFormContract(newDraftHtml, {
+      environmentKeys: ["dev", "prod", "staging"],
+      tenantId: "tenant-alpha",
+    });
     assert.equal(createDraftResponse.status, 303);
     assert.equal(draftDetailPage.status, 200);
     assertAuthenticatedShellContract(draftDetailHtml, {
@@ -1805,6 +1990,8 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(draftDetailHtml, /Approval state: draft/);
     assert.match(draftDetailHtml, /Environment: dev/);
     assert.match(draftDetailHtml, /Environment: prod/);
+    assert.match(draftDetailHtml, /https:\/\/dev\.invoke\.example\.com/);
+    assert.match(draftDetailHtml, /https:\/\/prod\.invoke\.example\.com/);
     assert.match(draftDetailHtml, /X-User-Id/);
     assert.match(draftDetailHtml, /client_id/);
     assert.equal(submitResponse.status, 303);
@@ -1855,6 +2042,57 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(submittedDashboardHtml, /pending_review/);
     assert.equal(environmentsPage.status, 403);
     assert.match(environmentsHtml, /Tenant admin role is required/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("publisher console renders an honest empty publication state when no environments are configured", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    await context.db.deleteFrom("tenant_environments").where("tenant_id", "=", "tenant-alpha").execute();
+    await signIn(browser, "tenant-alpha", "publisher-alpha");
+
+    // Act
+    const response = await browser.get("/tenants/tenant-alpha/drafts/new");
+    const html = await response.text();
+
+    // Assert
+    assert.equal(response.status, 200);
+    assertAuthenticatedShellContract(html, {
+      dynamicHooks: ["publication-sections"],
+      navExcludes: [
+        {
+          href: "/tenants/tenant-alpha/environments",
+          label: "Environment Management",
+        },
+        {
+          href: "/tenants/tenant-alpha/review",
+          label: "Review Queue",
+        },
+      ],
+      navLinks: [
+        {
+          href: "/console",
+          label: "Overview",
+        },
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+      ],
+      page: "new-draft-registration",
+    });
+    assertDraftRegistrationFormContract(html, {
+      environmentKeys: [],
+      expectSubmitDisabled: true,
+      tenantId: "tenant-alpha",
+    });
   } finally {
     await context.close();
   }
