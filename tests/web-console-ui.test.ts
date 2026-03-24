@@ -3030,11 +3030,17 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
     assert.equal(agentDetailPage.status, 200);
     assertAuthenticatedShellContract(agentDetailHtml, {
-      dynamicHooks: ["overlay-state", "active-publications", "version-history"],
+      dynamicHooks: [
+        "agent-overview",
+        "overlay-state",
+        "active-publications",
+        "environment-controls",
+        "version-history",
+      ],
       navLinks: adminNavLinks,
       page: "active-agent-detail",
     });
-    assert.match(agentDetailHtml, /Overlay State/);
+    assert.match(agentDetailHtml, /Overlay Controls/);
     assert.match(agentDetailHtml, /Environment overlay for prod/);
     assert.match(agentDetailHtml, /Deprecated: yes/);
     assert.deepEqual(
