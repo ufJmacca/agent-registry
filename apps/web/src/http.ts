@@ -45,6 +45,7 @@ import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
 import {
   renderInteractiveSignInPage,
+  renderMissingMembershipBootstrapSignInPage,
   renderMissingBootstrapSignInPage,
   renderMissingSchemaSignInPage,
   type SignInTenantOption,
@@ -496,7 +497,7 @@ async function renderSignInPage(
       response,
       "Agent Registry",
       "sign-in",
-      renderMissingBootstrapSignInPage(),
+      renderMissingMembershipBootstrapSignInPage(),
     );
     return;
   }

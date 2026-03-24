@@ -835,8 +835,11 @@ test("console root renders setup pending when tenants exist without memberships"
     assert.equal(response.status, 200);
     assertPublicSignInShellContract(html);
     assert.match(html, /Console Setup Pending/);
-    assert.match(html, /Bootstrap Tenant Data/);
+    assert.match(html, /Bootstrap Tenant Memberships/);
     assert.match(html, /Setup Status/);
+    assert.match(html, /Tenants loaded/);
+    assert.match(html, /No memberships/);
+    assert.doesNotMatch(html, /No tenants/);
     assert.doesNotMatch(html, /<form[^>]+action="\/session"/);
     assert.doesNotMatch(html, /name="tenantId"/);
     assert.doesNotMatch(html, /name="subjectId"/);
