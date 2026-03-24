@@ -3044,6 +3044,7 @@ test("admin console manages environments, reviews pending versions, edits overla
         "version-publication-contracts",
         "version-manifest",
         "publication-detail-list",
+        "publication-telemetry",
         "version-actions",
       ],
       navLinks: adminNavLinks,
@@ -3065,8 +3066,13 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
     assert.match(pendingRejectVersionHtml, /name="reason"/);
     assert.doesNotMatch(pendingRejectVersionHtml, /Rejected reason:/);
-    assert.doesNotMatch(pendingRejectVersionHtml, /data-visual-dynamic="publication-telemetry"/);
     assert.doesNotMatch(pendingRejectVersionHtml, /data-visual-dynamic="publication-health-history"/);
+    const pendingTelemetryMarkup = getVisualDynamicSectionMarkup(
+      pendingRejectVersionHtml,
+      "publication-telemetry",
+    );
+    assert.match(pendingTelemetryMarkup, /Operational Telemetry/);
+    assert.match(pendingTelemetryMarkup, /No advisory telemetry submitted\./);
     assert.equal(approveResponse.status, 303);
     assert.equal(getRedirectLocation(approveResponse), `/tenants/tenant-alpha/agents/${approveFixture.agentId}`);
     assert.equal(approvedVersionPage.status, 200);
@@ -3221,6 +3227,7 @@ test("admin console manages environments, reviews pending versions, edits overla
         "version-publication-contracts",
         "version-manifest",
         "publication-detail-list",
+        "publication-telemetry",
       ],
       navLinks: adminNavLinks,
       page: "version-detail",
@@ -3230,8 +3237,13 @@ test("admin console manages environments, reviews pending versions, edits overla
     assert.doesNotMatch(rejectedVersionHtml, /Submit for Review/);
     assert.doesNotMatch(rejectedVersionHtml, /Approve<\/button>/);
     assert.doesNotMatch(rejectedVersionHtml, /Reject<\/button>/);
-    assert.doesNotMatch(rejectedVersionHtml, /data-visual-dynamic="publication-telemetry"/);
     assert.doesNotMatch(rejectedVersionHtml, /data-visual-dynamic="publication-health-history"/);
+    const rejectedTelemetryMarkup = getVisualDynamicSectionMarkup(
+      rejectedVersionHtml,
+      "publication-telemetry",
+    );
+    assert.match(rejectedTelemetryMarkup, /Operational Telemetry/);
+    assert.match(rejectedTelemetryMarkup, /No advisory telemetry submitted\./);
   } finally {
     await context.close();
   }

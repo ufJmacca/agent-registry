@@ -96,7 +96,7 @@ function buildReviewTimeline(detail: VersionAdminDetailRecord): ReviewTimelineIt
   if (items.length === 1 && detail.approvalState === "pending_review") {
     items.push({
       meta: "Pending Review",
-      title: "Manual approval is required before truthful health and telemetry sections are exposed.",
+      title: "Manual approval is required before truthful health history is exposed.",
     });
   }
 
@@ -273,7 +273,8 @@ export function renderVersionDetailPageBody(
 ): string {
   const { actions, detail, healthByEnvironment, isTenantAdmin, tenantId } = options;
   const reviewTimelineItems = buildReviewTimeline(detail);
-  const showAdminHealthSections = isTenantAdmin && detail.approvalState === "approved";
+  const showAdminTelemetry = isTenantAdmin;
+  const showAdminHealthHistory = isTenantAdmin && detail.approvalState === "approved";
 
   return `<section class="card stack page-hero version-detail-hero" data-visual-dynamic="version-overview">
     <div class="version-detail-hero__lead">
@@ -354,8 +355,8 @@ export function renderVersionDetailPageBody(
           ${renderEnvironmentDossiers(detail)}
         </div>
       </section>
-      ${showAdminHealthSections ? renderTelemetrySection(detail) : ""}
-      ${showAdminHealthSections ? renderHealthHistorySection(detail, healthByEnvironment) : ""}
+      ${showAdminTelemetry ? renderTelemetrySection(detail) : ""}
+      ${showAdminHealthHistory ? renderHealthHistorySection(detail, healthByEnvironment) : ""}
     </div>
     <div class="version-detail-side">
       <section class="card stack version-detail-panel version-detail-review-card" data-visual-dynamic="version-metadata">
