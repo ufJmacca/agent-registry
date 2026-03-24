@@ -553,6 +553,18 @@ function getNavMarkup(html: string, variant: "mobile" | "rail"): string {
   return navMatch[0];
 }
 
+function getVisualDynamicSectionMarkup(html: string, hook: string): string {
+  const sectionMatch = html.match(
+    new RegExp(
+      `<section[^>]+data-visual-dynamic="${escapeRegExp(hook)}"[^>]*>[\\s\\S]*?<\\/section>`,
+    ),
+  );
+
+  assert.notEqual(sectionMatch, null, `Expected ${hook} section markup to be rendered`);
+
+  return sectionMatch[0];
+}
+
 function getEnvironmentPanelMarkup(html: string, panel: "inventory" | "creation"): string {
   const panelMatch = html.match(
     new RegExp(
@@ -2346,6 +2358,88 @@ test("console dashboard keeps version visibility scoped to publisher ownership w
   }
 });
 
+test("admin active agent detail keeps overlay controls and version history honest when no version is active", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const pendingFixture = await createPendingVersion(context, {
+      displayName: "Case Router",
+      environments: ["dev", "prod"],
+      publisherId: "publisher-alpha",
+      summary: "Routes support cases.",
+      versionLabel: "v1",
+    });
+
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const agentDetailPage = await browser.get(`/tenants/tenant-alpha/agents/${pendingFixture.agentId}`);
+    const agentDetailHtml = await agentDetailPage.text();
+
+    // Assert
+    assert.equal(agentDetailPage.status, 200);
+    assertAuthenticatedShellContract(agentDetailHtml, {
+      dynamicHooks: [
+        "agent-overview",
+        "overlay-state",
+        "active-publications",
+        "environment-controls",
+        "version-history",
+      ],
+      navLinks: [
+        {
+          href: "/console",
+          label: "Overview",
+        },
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+        {
+          href: "/tenants/tenant-alpha/environments",
+          label: "Environment Management",
+        },
+        {
+          href: "/tenants/tenant-alpha/review",
+          label: "Review Queue",
+        },
+      ],
+      page: "active-agent-detail",
+    });
+    assert.match(
+      agentDetailHtml,
+      new RegExp(
+        `data-visual-dynamic="agent-overview"[\\s\\S]*?<h1>${escapeRegExp(pendingFixture.agentId)}<\\/h1>`,
+      ),
+    );
+    assert.match(agentDetailHtml, /No active approved version is currently published\./);
+    assert.match(
+      agentDetailHtml,
+      new RegExp(
+        `action="${escapeRegExp(`/tenants/tenant-alpha/agents/${pendingFixture.agentId}/overlay/deprecate`)}"`,
+      ),
+    );
+    assert.match(
+      agentDetailHtml,
+      new RegExp(
+        `<a[^>]+href="${escapeRegExp(`/tenants/tenant-alpha/agents/${pendingFixture.agentId}/versions/${pendingFixture.versionId}`)}"[^>]*>[\\s\\S]*?Version 1`,
+      ),
+    );
+    assert.doesNotMatch(
+      agentDetailHtml,
+      new RegExp(
+        `action="${escapeRegExp(`/tenants/tenant-alpha/agents/${pendingFixture.agentId}/environments/dev/overlay/deprecate`)}"`,
+      ),
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("publisher console returns 400 for malformed draft contract JSON", async () => {
   const context = await createWebConsoleContext({
     deploymentMode: "hosted",
@@ -2936,11 +3030,17 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
     assert.equal(agentDetailPage.status, 200);
     assertAuthenticatedShellContract(agentDetailHtml, {
-      dynamicHooks: ["overlay-state", "active-publications", "version-history"],
+      dynamicHooks: [
+        "agent-overview",
+        "overlay-state",
+        "active-publications",
+        "environment-controls",
+        "version-history",
+      ],
       navLinks: adminNavLinks,
       page: "active-agent-detail",
     });
-    assert.match(agentDetailHtml, /Overlay State/);
+    assert.match(agentDetailHtml, /Overlay Controls/);
     assert.match(agentDetailHtml, /Environment overlay for prod/);
     assert.match(agentDetailHtml, /Deprecated: yes/);
     assert.deepEqual(
