@@ -44,11 +44,8 @@ test("root npm scripts fan out to unit and visual regression suites", async () =
   // Assert
   assert.equal(packageJson.devDependencies?.["@playwright/test"], "^1.58.2");
   assert.equal(scripts["test:unit"], "tsx --test tests/*.test.ts");
-  assert.equal(scripts["test:visual:setup"], "bash ./scripts/bootstrap.sh --with-playwright");
-  assert.match(scripts["test:visual"] ?? "", /npm run test:visual:setup/);
-  assert.match(scripts["test:visual"] ?? "", /\bplaywright test\b/);
-  assert.match(scripts["test:visual:update"] ?? "", /npm run test:visual:setup/);
-  assert.match(scripts["test:visual:update"] ?? "", /playwright test --update-snapshots/);
+  assert.equal(scripts["test:visual"], "playwright test");
+  assert.equal(scripts["test:visual:update"], "playwright test --update-snapshots");
   assert.match(scripts.test ?? "", /workspace-foundation\.test\.sh --mode=outer/);
   assert.match(scripts.test ?? "", /npm run test:unit/);
   assert.match(scripts.test ?? "", /npm run test:visual/);
@@ -133,10 +130,31 @@ test("bootstrap script and container images declare the playwright runtime contr
   ];
 
   // Assert
-  assert.match(bootstrapScript, /--with-playwright/);
+  assert.match(bootstrapScript, /PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund/);
+  assert.doesNotMatch(bootstrapScript, /playwright install chromium/);
   assert.match(
-    bootstrapScript,
-    /if \[\[ "\$install_playwright" == "true" \]\]; then[\s\S]*npx playwright install chromium/,
+    workspaceDockerfile,
+    /FROM mcr\.microsoft\.com\/playwright:v1\.58\.2-noble AS playwright_browsers/,
+  );
+  assert.match(
+    workspaceDockerfile,
+    /ENV PLAYWRIGHT_BROWSERS_PATH=\/ms-playwright/,
+  );
+  assert.match(
+    workspaceDockerfile,
+    /COPY --from=playwright_browsers \/ms-playwright\/ \/ms-playwright\//,
+  );
+  assert.match(
+    devcontainerDockerfile,
+    /FROM mcr\.microsoft\.com\/playwright:v1\.58\.2-noble AS playwright_browsers/,
+  );
+  assert.match(
+    devcontainerDockerfile,
+    /ENV PLAYWRIGHT_BROWSERS_PATH=\/ms-playwright/,
+  );
+  assert.match(
+    devcontainerDockerfile,
+    /COPY --from=playwright_browsers \/ms-playwright\/ \/ms-playwright\//,
   );
 
   for (const dockerfile of [workspaceDockerfile, devcontainerDockerfile]) {

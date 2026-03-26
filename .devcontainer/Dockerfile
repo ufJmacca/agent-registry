@@ -1,3 +1,5 @@
+FROM mcr.microsoft.com/playwright:v1.58.2-noble AS playwright_browsers
+
 FROM docker:28-cli AS docker_cli
 
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
@@ -10,9 +12,12 @@ ENV CODEX_HOME=/home/vscode/.codex
 ENV NPM_CONFIG_CACHE=/home/vscode/.npm
 ENV UV_INSTALL_DIR=/usr/local/bin
 ENV PATH=/home/vscode/.local/bin:${PATH}
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 COPY --from=docker_cli /usr/local/bin/docker /usr/local/bin/docker-real
 COPY --from=docker_cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+COPY --from=playwright_browsers /ms-playwright/ /ms-playwright/
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -65,7 +70,7 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' '' 'if [ "$(id -u)" 
     && chmod 0440 /etc/sudoers.d/vscode-docker
 
 RUN mkdir -p /home/vscode/.codex /home/vscode/.npm /workspace \
-    && chown -R vscode:vscode /home/vscode /workspace
+    && chown -R vscode:vscode /home/vscode /workspace /ms-playwright
 
 USER vscode
 WORKDIR /workspace

@@ -14,9 +14,8 @@
     "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit && npm run test:visual",
     "test:inner": "bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit && npm run test:visual",
     "test:unit": "tsx --test tests/*.test.ts",
-    "test:visual:setup": "bash ./scripts/bootstrap.sh --with-playwright",
-    "test:visual": "npm run test:visual:setup && playwright test",
-    "test:visual:update": "npm run test:visual:setup && playwright test --update-snapshots",
+    "test:visual": "playwright test",
+    "test:visual:update": "playwright test --update-snapshots",
     "verify:devcontainer": "bash .devcontainer/scripts/post-create.sh --verify-only",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts"
