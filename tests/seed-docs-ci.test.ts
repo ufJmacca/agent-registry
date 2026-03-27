@@ -760,6 +760,7 @@ test("make test runs the non-recursive public workflow proof before the inner wo
   // Assert: `make test` must exercise the host-side public workflow proof before entering the inner suite.
   assert.ok(commands.includes("$(call require_docker,make test)"));
   assert.ok(commands.includes(outerProofCommand));
+  assert.ok(commands.includes("$(COMPOSE) up -d --build workspace postgres"));
   assert.ok(commands.includes(innerSuiteCommand));
   assert.ok(commands.indexOf(outerProofCommand) < commands.indexOf(innerSuiteCommand));
 });
