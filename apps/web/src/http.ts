@@ -7,6 +7,7 @@ import {
   AgentNotFoundError,
   AgentVersionNotFoundError,
   KyselyAgentAdminDetailRepository,
+  KyselyAgentDiscoveryRepository,
   KyselyAgentDraftRegistrationRepository,
   KyselyAgentReviewRepository,
   KyselyHealthRepository,
@@ -45,9 +46,16 @@ import { resolveStaticAsset, writeStaticAsset } from "./ui/assets.js";
 import { escapeHtml, renderDocument, renderPreformattedJson } from "./ui/document.js";
 import { renderDraftRegistrationPage } from "./ui/pages/draft-registration.js";
 import {
+  renderDashboardPage,
+  type DashboardActiveAgentLink,
+  type DashboardVersionLink,
+} from "./ui/pages/dashboard.js";
+import {
   renderInteractiveSignInPage,
+  renderMissingMembershipBootstrapSignInPage,
   renderMissingBootstrapSignInPage,
   renderMissingSchemaSignInPage,
+  type SignInTenantOption,
 } from "./ui/pages/sign-in.js";
 import { renderVersionDetailPageBody } from "./ui/pages/version-detail.js";
 import { renderAuthenticatedShell, renderPublicShell, type ShellNavItem } from "./ui/shell.js";
@@ -70,25 +78,6 @@ export interface WebRequestListenerOptions {
 interface ConsoleSession {
   subjectId: string;
   tenantId: string;
-}
-
-interface TenantMembershipOption {
-  roles: string[];
-  subjectId: string;
-}
-
-interface TenantConsoleOption {
-  displayName: string;
-  memberships: TenantMembershipOption[];
-  tenantId: string;
-}
-
-interface DashboardVersionLink {
-  agentId: string;
-  approvalState: string;
-  displayName: string;
-  versionId: string;
-  versionSequence: number;
 }
 
 interface ReviewQueueEntry {
@@ -121,17 +110,48 @@ function writeHtml(
 }
 
 function writeError(response: ServerResponse, statusCode: number, message: string): void {
-  writeHtml(
-    response,
-    statusCode,
-    "Console Error",
-    `<div class="document-page">
-      <section class="hero card stack">
-        <h1>Console Error</h1>
-        <p>${escapeHtml(message)}</p>
-        <p><a href="/">Return to sign-in</a></p>
-      </section>
-    </div>`,
+  writeConsoleError(response, statusCode, message);
+}
+
+function writeConsoleError(
+  response: ServerResponse,
+  statusCode: number,
+  message: string,
+  options: {
+    principal?: ResolvedPrincipal;
+  } = {},
+): void {
+  const errorBody = `<section class="hero card stack">
+    <h1>Console Error</h1>
+    <p>${escapeHtml(message)}</p>
+    <p><a href="${options.principal === undefined ? "/" : "/console"}">${options.principal === undefined ? "Return to sign-in" : "Return to dashboard"}</a></p>
+  </section>`;
+
+  if (options.principal === undefined) {
+    writeHtml(
+      response,
+      statusCode,
+      "Console Error",
+      `<div class="document-page">
+        ${errorBody}
+      </div>`,
+    );
+    return;
+  }
+
+  response.writeHead(statusCode, {
+    "content-type": "text/html; charset=utf-8",
+  });
+  response.end(
+    renderDocument({
+      body: renderAuthenticatedShell({
+        body: errorBody,
+        navItems: buildShellNavItems(options.principal, "console-error"),
+        page: "console-error",
+        principal: options.principal,
+      }),
+      title: "Console Error",
+    }),
   );
 }
 
@@ -414,7 +434,7 @@ async function readRawCardField(formData: FormData, fieldName: string): Promise<
   return rawValue.text();
 }
 
-async function loadTenantConsoleOptions(db: AgentRegistryDb): Promise<TenantConsoleOption[]> {
+async function loadTenantConsoleOptions(db: AgentRegistryDb): Promise<SignInTenantOption[]> {
   const [tenants, memberships] = await Promise.all([
     db.selectFrom("tenants").select(["display_name", "tenant_id"]).orderBy("display_name").execute(),
     db
@@ -469,39 +489,24 @@ async function resolvePrincipalFromSession(
   });
 }
 
-function renderSignInLanding(options: {
-  accessPanel: string;
-  emphasizeSetup: boolean;
-  setupPanel: string;
-}): string {
-  return `<section class="public-hero card stack">
-    <span class="shell-eyebrow">Agent Registry Console</span>
-    <h1>Architectural Precision For Tenant Operations</h1>
-    <p class="meta">Manage truthful draft, review, environment, and active agent workflows inside a shared technical curator shell.</p>
-  </section>
-  <section class="public-grid">
-    <div class="stack">
-      ${options.emphasizeSetup ? options.setupPanel : options.accessPanel}
-    </div>
-    <div class="stack">
-      ${options.emphasizeSetup ? options.accessPanel : options.setupPanel}
-    </div>
-  </section>`;
-}
-
 async function renderSignInPage(
   response: ServerResponse,
   db: AgentRegistryDb,
   deploymentMode: "hosted" | "self-hosted",
   selectedHostedTenantId?: string,
 ): Promise<void> {
-  let tenants: TenantConsoleOption[];
+  let tenants: SignInTenantOption[];
 
   try {
     tenants = await loadTenantConsoleOptions(db);
   } catch (error) {
     if (isMissingConsoleSchemaError(error)) {
-      writePublicPage(response, "Agent Registry", "sign-in", renderMissingSchemaSignInPage());
+      writePublicPage(
+        response,
+        "Agent Registry",
+        "sign-in",
+        renderMissingSchemaSignInPage(),
+      );
       return;
     }
 
@@ -509,12 +514,24 @@ async function renderSignInPage(
   }
 
   if (tenants.length === 0) {
-    writePublicPage(response, "Agent Registry", "sign-in", renderMissingBootstrapSignInPage());
+    writePublicPage(
+      response,
+      "Agent Registry",
+      "sign-in",
+      renderMissingBootstrapSignInPage(),
+    );
     return;
   }
 
-  if (tenants.every((tenant) => tenant.memberships.length === 0)) {
-    writePublicPage(response, "Agent Registry", "sign-in", renderMissingBootstrapSignInPage());
+  const hasBootstrapMemberships = tenants.some((tenant) => tenant.memberships.length > 0);
+
+  if (!hasBootstrapMemberships) {
+    writePublicPage(
+      response,
+      "Agent Registry",
+      "sign-in",
+      renderMissingMembershipBootstrapSignInPage(),
+    );
     return;
   }
 
@@ -523,6 +540,7 @@ async function renderSignInPage(
     deploymentMode === "hosted"
       ? tenants.find((tenant) => tenant.tenantId === selectedHostedTenantId) ?? tenants[0]
       : selfHostedTenant;
+
   writePublicPage(
     response,
     "Agent Registry",
@@ -580,19 +598,34 @@ async function listDashboardVersions(
 async function listActiveAgents(
   db: AgentRegistryDb,
   tenantId: string,
-): Promise<Array<{ agentId: string; displayName: string }>> {
-  const rows = await db
-    .selectFrom("agents")
-    .select(["agent_id", "display_name"])
-    .where("tenant_id", "=", tenantId)
-    .where("active_version_id", "is not", null)
-    .orderBy("display_name")
-    .execute();
+): Promise<DashboardActiveAgentLink[]> {
+  const publications = await new KyselyAgentDiscoveryRepository(db).listActiveApprovedPublications(
+    tenantId,
+  );
+  const activeAgents = new Map<string, DashboardActiveAgentLink>();
 
-  return rows.map((row) => ({
-    agentId: row.agent_id,
-    displayName: row.display_name,
-  }));
+  for (const publication of publications) {
+    if (
+      publication.agentDisabled ||
+      publication.overlayAgentDisabled ||
+      publication.overlayEnvironmentDisabled
+    ) {
+      continue;
+    }
+
+    if (!activeAgents.has(publication.agentId)) {
+      activeAgents.set(publication.agentId, {
+        agentId: publication.agentId,
+        displayName: publication.displayName,
+      });
+    }
+  }
+
+  return Array.from(activeAgents.values()).sort(
+    (left, right) =>
+      left.displayName.localeCompare(right.displayName) ||
+      left.agentId.localeCompare(right.agentId),
+  );
 }
 
 async function renderDashboard(
@@ -607,61 +640,14 @@ async function renderDashboard(
   ]);
 
   writeAuthenticatedPage(response, {
-    body: `<section class="hero card stack page-hero">
-      <span class="shell-eyebrow">System Overview</span>
-      <h1>Console Dashboard</h1>
-      <p class="meta">${escapeHtml(tenantDisplayName)} (${escapeHtml(principal.tenantId)})</p>
-      <p>Track visible versions, role-sensitive entry points, and the current tenant workspace from one shared shell.</p>
-      <div class="inline-actions">
-        ${
-          canPublish(principal)
-            ? `<a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/drafts/new">New Draft Registration</a>`
-            : ""
-        }
-        ${
-          isTenantAdmin(principal)
-            ? `<a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/environments">Environment Management</a>
-               <a class="pill" href="/tenants/${encodeURIComponent(principal.tenantId)}/review">Review Queue</a>`
-            : ""
-        }
-      </div>
-    </section>
-    <section class="split">
-      <div class="card stack">
-        <h2>Visible Versions</h2>
-        <div class="link-list" data-visual-dynamic="visible-versions">
-          ${
-            versions.length === 0
-              ? "<p>No versions are visible for this identity.</p>"
-              : versions
-                  .map(
-                    (version) =>
-                      `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(version.agentId)}/versions/${encodeURIComponent(version.versionId)}">${escapeHtml(version.displayName)} v${version.versionSequence} (${escapeHtml(version.approvalState)})</a>`,
-                  )
-                  .join("")
-          }
-        </div>
-      </div>
-      ${
-        isTenantAdmin(principal)
-          ? `<div class="card stack">
-               <h2>Active Agents</h2>
-               <div class="link-list" data-visual-dynamic="active-agents">
-                 ${
-                   activeAgents.length === 0
-                     ? "<p>No active approved agents yet.</p>"
-                     : activeAgents
-                         .map(
-                           (agent) =>
-                             `<a href="/tenants/${encodeURIComponent(principal.tenantId)}/agents/${encodeURIComponent(agent.agentId)}">${escapeHtml(agent.displayName)}</a>`,
-                         )
-                         .join("")
-                 }
-               </div>
-             </div>`
-          : ""
-      }
-    </section>`,
+    body: renderDashboardPage({
+      activeAgents,
+      canPublish: canPublish(principal),
+      isTenantAdmin: isTenantAdmin(principal),
+      principal,
+      tenantDisplayName,
+      versions,
+    }),
     page: "console-dashboard",
     principal,
     tenantLabel: tenantDisplayName,
@@ -818,7 +804,6 @@ async function createEnvironmentFromForm(
 
 async function renderDraftFormPage(
   response: ServerResponse,
-  db: AgentRegistryDb,
   environmentService: TenantEnvironmentCatalogService,
   principal: ResolvedPrincipal,
   tenantId: string,
@@ -1450,6 +1435,8 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
   const healthRepository = new KyselyHealthRepository(options.db);
 
   return async (request, response) => {
+    let principal: ResolvedPrincipal | null = null;
+
     try {
       const pathname = getPathname(request);
 
@@ -1521,7 +1508,7 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         return;
       }
 
-      const principal = await requirePrincipal(response, principalResolver, request);
+      principal = await requirePrincipal(response, principalResolver, request);
 
       if (principal === null) {
         return;
@@ -1553,7 +1540,6 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
       if (draftNewMatch !== null && request.method === "GET") {
         await renderDraftFormPage(
           response,
-          options.db,
           environmentService,
           principal,
           decodeURIComponent(draftNewMatch[1]),
@@ -1663,20 +1649,28 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         return;
       }
 
-      writeError(response, 404, "Route not found.");
+      writeConsoleError(response, 404, "Route not found.", {
+        principal,
+      });
     } catch (error) {
       if (error instanceof URIError) {
-        writeError(response, 400, "Invalid request path.");
+        writeConsoleError(response, 400, "Invalid request path.", {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof ConsoleAuthorizationError) {
-        writeError(response, 403, error.message);
+        writeConsoleError(response, 403, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof ConsoleValidationError) {
-        writeError(response, 400, error.message);
+        writeConsoleError(response, 400, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1686,7 +1680,9 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentVersionReviewAuthorizationError ||
         error instanceof TenantPolicyOverlayAuthorizationError
       ) {
-        writeError(response, 403, error.message);
+        writeConsoleError(response, 403, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1697,7 +1693,9 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentVersionReviewValidationError ||
         error instanceof AgentVersionProbeTargetPolicyError
       ) {
-        writeError(response, 400, error.message);
+        writeConsoleError(response, 400, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
@@ -1706,21 +1704,29 @@ export function createWebRequestListener(options: WebRequestListenerOptions): (r
         error instanceof AgentNotFoundError ||
         error instanceof AgentVersionNotFoundError
       ) {
-        writeError(response, 404, error.message);
+        writeConsoleError(response, 404, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof InvalidVersionTransitionError) {
-        writeError(response, 409, error.message);
+        writeConsoleError(response, 409, error.message, {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
       if (error instanceof Error) {
-        writeError(response, 500, "Internal server error.");
+        writeConsoleError(response, 500, "Internal server error.", {
+          principal: principal ?? undefined,
+        });
         return;
       }
 
-      writeError(response, 500, "Internal server error.");
+      writeConsoleError(response, 500, "Internal server error.", {
+        principal: principal ?? undefined,
+      });
     }
   };
 }

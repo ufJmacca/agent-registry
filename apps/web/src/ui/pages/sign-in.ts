@@ -141,6 +141,17 @@ export function renderMissingBootstrapSignInPage(): string {
   });
 }
 
+export function renderMissingMembershipBootstrapSignInPage(): string {
+  return renderSetupPendingPanel({
+    accessDetail:
+      "Sign-in will appear after at least one tenant membership has been bootstrapped.",
+    accessMeta: "Tenant bootstrap succeeded, but truthful memberships are still required before access is shown.",
+    companionBadges: ["Tenants loaded", "No memberships"],
+    companionBody: "Bootstrap tenant memberships to enable console sign-in for the current workspace.",
+    companionTitle: "Bootstrap Tenant Memberships",
+  });
+}
+
 export function renderInteractiveSignInPage(options: InteractiveSignInOptions): string {
   const visibleTenant =
     options.deploymentMode === "hosted" ? options.selectedTenant : options.selfHostedTenant;

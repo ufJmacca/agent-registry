@@ -130,7 +130,32 @@ test("bootstrap script and container images declare the playwright runtime contr
   ];
 
   // Assert
-  assert.match(bootstrapScript, /npx playwright install chromium/);
+  assert.match(bootstrapScript, /PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund/);
+  assert.doesNotMatch(bootstrapScript, /playwright install chromium/);
+  assert.match(
+    workspaceDockerfile,
+    /FROM mcr\.microsoft\.com\/playwright:v1\.58\.2-noble AS playwright_browsers/,
+  );
+  assert.match(
+    workspaceDockerfile,
+    /ENV PLAYWRIGHT_BROWSERS_PATH=\/ms-playwright/,
+  );
+  assert.match(
+    workspaceDockerfile,
+    /COPY --from=playwright_browsers \/ms-playwright\/ \/ms-playwright\//,
+  );
+  assert.match(
+    devcontainerDockerfile,
+    /FROM mcr\.microsoft\.com\/playwright:v1\.58\.2-noble AS playwright_browsers/,
+  );
+  assert.match(
+    devcontainerDockerfile,
+    /ENV PLAYWRIGHT_BROWSERS_PATH=\/ms-playwright/,
+  );
+  assert.match(
+    devcontainerDockerfile,
+    /COPY --from=playwright_browsers \/ms-playwright\/ \/ms-playwright\//,
+  );
 
   for (const dockerfile of [workspaceDockerfile, devcontainerDockerfile]) {
     for (const packagePattern of requiredRuntimePatterns) {
