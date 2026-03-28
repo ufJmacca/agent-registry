@@ -106,7 +106,7 @@ export function tryStartComposePostgres() {
   } catch (error) {
     const stderr = error instanceof Error && "stderr" in error ? String(error.stderr ?? "") : "";
     const message = stderr.trim() || (error instanceof Error ? error.message : String(error));
-    console.error(`Failed to start compose postgres: ${message}`);
+    throw new Error(`Failed to start compose postgres: ${message}`);
   }
 }
 

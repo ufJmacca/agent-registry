@@ -97,3 +97,20 @@ test("resolveTestDatabaseUrl retries after compose start and returns the first v
   assert.ok(attempts.includes(requestedDatabaseUrl));
   assert.ok(attempts.includes(hostFallbackDatabaseUrl));
 });
+
+test("resolveTestDatabaseUrl surfaces compose startup failures immediately", async () => {
+  await assert.rejects(
+    resolveTestDatabaseUrl({
+      requestedDatabaseUrl: "postgres://registry:registry@postgres:5432/agent_registry",
+      retryDelayMs: 0,
+      timeoutMs: 25,
+      async startComposePostgres() {
+        throw new Error("docker compose is unavailable");
+      },
+      async validateDatabaseUrl() {
+        return false;
+      },
+    }),
+    /Failed to start compose postgres|docker compose is unavailable/,
+  );
+});
