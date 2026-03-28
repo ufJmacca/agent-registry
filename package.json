@@ -12,7 +12,7 @@
     "build": "tsc -b",
     "lint": "tsc -b --pretty false",
     "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit && npm run test:visual",
-    "test:inner": "export DATABASE_URL=\"$(node ./scripts/resolve-test-database-url.mjs)\" && bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit && npm run test:visual",
+    "test:inner": "DATABASE_URL=\"$(node ./scripts/resolve-test-database-url.mjs)\" && export DATABASE_URL && bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit && npm run test:visual",
     "test:unit": "tsx --test tests/*.test.ts",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots",
