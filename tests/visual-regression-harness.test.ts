@@ -52,6 +52,14 @@ test("root npm scripts fan out to unit and visual regression suites", async () =
   assert.match(scripts["test:inner"] ?? "", /workspace-foundation\.test\.sh --mode=inner/);
   assert.match(scripts["test:inner"] ?? "", /npm run test:unit/);
   assert.match(scripts["test:inner"] ?? "", /npm run test:visual/);
+  assert.match(
+    scripts["test:inner"] ?? "",
+    /DATABASE_URL="\$\(node \.\/scripts\/resolve-test-database-url\.mjs\)" && export DATABASE_URL/,
+  );
+  assert.doesNotMatch(
+    scripts["test:inner"] ?? "",
+    /export DATABASE_URL="\$\(node \.\/scripts\/resolve-test-database-url\.mjs\)"/,
+  );
 });
 
 test("playwright visual regression is pinned to chromium desktop and mobile baselines", async () => {

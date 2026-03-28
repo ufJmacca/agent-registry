@@ -29,8 +29,9 @@ import { createWebRequestListener } from "../../apps/web/src/http.ts";
 
 const { Pool } = pg;
 
-const integrationDatabaseUrl =
-  process.env.DATABASE_URL ?? "postgres://registry:registry@postgres:5432/agent_registry";
+function getIntegrationDatabaseUrl(): string {
+  return process.env.DATABASE_URL ?? "postgres://registry:registry@postgres:5432/agent_registry";
+}
 
 export interface FreshRegistryDatabase {
   cleanup(): Promise<void>;
@@ -72,6 +73,7 @@ function createIsolatedDatabaseUrl(baseUrl: string, databaseName: string): strin
 
 async function createFreshRegistryDatabase(): Promise<FreshRegistryDatabase> {
   const databaseName = `agent_registry_test_${randomUUID().replaceAll("-", "_")}`;
+  const integrationDatabaseUrl = getIntegrationDatabaseUrl();
   const adminPool = new Pool({
     connectionString: createIsolatedDatabaseUrl(integrationDatabaseUrl, "postgres"),
   });

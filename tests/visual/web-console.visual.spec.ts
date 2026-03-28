@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import {
   createVisualRegressionFixture,
@@ -94,7 +94,11 @@ async function signInAsAdmin(page: Page, visualFixture: VisualRegressionFixture)
   ]);
 }
 
-async function capturePage(page: Page, route: (typeof visualRoutes)[number]): Promise<void> {
+async function capturePage(
+  page: Page,
+  route: (typeof visualRoutes)[number],
+  testInfo: TestInfo,
+): Promise<void> {
   if (route.requiresSignIn) {
     await signInAsAdmin(page, fixture);
   }
@@ -106,9 +110,10 @@ async function capturePage(page: Page, route: (typeof visualRoutes)[number]): Pr
 
   // Act
   const dynamicRegions = page.locator("[data-visual-dynamic]");
+  const viewportLabel = testInfo.project.name.endsWith("mobile") ? "mobile" : "desktop";
 
   // Assert
-  await expect(page).toHaveScreenshot(`${route.name}.png`, {
+  await expect(page).toHaveScreenshot(`${route.name}-${viewportLabel}.png`, {
     animations: "disabled",
     caret: "hide",
     fullPage: true,
@@ -127,7 +132,7 @@ test.afterAll(async () => {
 });
 
 for (const route of visualRoutes) {
-  test(`matches ${route.name}`, async ({ page }) => {
-    await capturePage(page, route);
+  test(`matches ${route.name}`, async ({ page }, testInfo) => {
+    await capturePage(page, route, testInfo);
   });
 }
