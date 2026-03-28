@@ -17,6 +17,20 @@ function createHostUrl(databaseUrl, hostname) {
   return url.toString();
 }
 
+export function redactDatabaseUrl(databaseUrl) {
+  const url = new URL(databaseUrl);
+
+  if (url.username.length > 0) {
+    url.username = "redacted";
+  }
+
+  if (url.password.length > 0) {
+    url.password = "redacted";
+  }
+
+  return url.toString();
+}
+
 export function buildCandidateUrls(requestedDatabaseUrl) {
   const candidateUrls = [requestedDatabaseUrl];
 
@@ -151,8 +165,9 @@ export async function resolveTestDatabaseUrl(options = {}) {
   }
 
   if (reachableDatabaseUrl === null) {
+    const redactedCandidateUrls = candidateUrls.map(redactDatabaseUrl);
     throw new Error(
-      `Unable to authenticate with a test database using ${candidateUrls.join(" or ")} after starting compose postgres.`,
+      `Unable to authenticate with a test database using ${redactedCandidateUrls.join(" or ")} after starting compose postgres.`,
     );
   }
 

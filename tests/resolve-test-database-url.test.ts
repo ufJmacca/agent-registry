@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildCandidateUrls,
   canUseDatabase,
+  redactDatabaseUrl,
   resolveTestDatabaseUrl,
 } from "../scripts/resolve-test-database-url.mjs";
 
@@ -46,6 +47,21 @@ test("buildCandidateUrls adds host fallbacks for the compose postgres alias", ()
     "postgres://registry:registry@host.docker.internal:5432/agent_registry",
     "postgres://registry:registry@127.0.0.1:5432/agent_registry",
   ]);
+});
+
+test("redactDatabaseUrl removes embedded credentials while preserving the endpoint", () => {
+  assert.equal(
+    redactDatabaseUrl("postgres://registry:secret@postgres:5432/agent_registry"),
+    "postgres://redacted:redacted@postgres:5432/agent_registry",
+  );
+  assert.equal(
+    redactDatabaseUrl("postgres://registry@postgres:5432/agent_registry"),
+    "postgres://redacted@postgres:5432/agent_registry",
+  );
+  assert.equal(
+    redactDatabaseUrl("postgres://postgres:5432/agent_registry"),
+    "postgres://postgres:5432/agent_registry",
+  );
 });
 
 test("canUseDatabase rejects hosts that only accept raw TCP connections", async () => {
@@ -112,5 +128,28 @@ test("resolveTestDatabaseUrl surfaces compose startup failures immediately", asy
       },
     }),
     /Failed to start compose postgres|docker compose is unavailable/,
+  );
+});
+
+test("resolveTestDatabaseUrl redacts credentials from authentication failure output", async () => {
+  const requestedDatabaseUrl = "postgres://secret-user:secret-pass@postgres:5432/agent_registry";
+
+  await assert.rejects(
+    resolveTestDatabaseUrl({
+      requestedDatabaseUrl,
+      retryDelayMs: 0,
+      timeoutMs: 25,
+      async startComposePostgres() {},
+      async validateDatabaseUrl() {
+        return false;
+      },
+    }),
+    (error) => {
+      assert.match(error.message, /Unable to authenticate with a test database using/);
+      assert.match(error.message, /redacted:redacted@postgres:5432\/agent_registry/);
+      assert.doesNotMatch(error.message, /secret-user/);
+      assert.doesNotMatch(error.message, /secret-pass/);
+      return true;
+    },
   );
 });
