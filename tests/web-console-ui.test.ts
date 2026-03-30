@@ -424,6 +424,35 @@ function assertMarkupDoesNotContainField(markup: string, fieldName: string): voi
   assert.doesNotMatch(markup, new RegExp(`name="${escapeRegExp(fieldName)}"`));
 }
 
+function assertMarkupHasClass(markup: string, className: string): void {
+  assert.match(
+    markup,
+    new RegExp(`class="[^"]*\\b${escapeRegExp(className)}\\b[^"]*"`),
+  );
+}
+
+function assertDraftFormPanelMarkup(
+  markup: string,
+  options: {
+    headerText: string;
+    panel: "actions" | "contracts" | "metadata" | "publications";
+    requiresActionFooter?: boolean;
+  },
+): void {
+  assert.match(markup, new RegExp(`data-form-panel="${escapeRegExp(options.panel)}"`));
+  assertMarkupHasClass(markup, "form-panel");
+
+  if (options.requiresActionFooter) {
+    assert.match(markup, /data-form-action-footer="draft-create"/);
+    assertMarkupHasClass(markup, "form-action-footer");
+    assertMarkupHasClass(markup, "form-action-footer__copy");
+  } else {
+    assertMarkupHasClass(markup, "form-panel__header");
+  }
+
+  assert.match(markup, new RegExp(escapeRegExp(options.headerText)));
+}
+
 function assertDraftRegistrationFormContract(
   html: string,
   options: {
@@ -460,10 +489,31 @@ function assertDraftRegistrationFormContract(
     value: "actions",
   });
 
-  assert.match(metadataRegion, /General Metadata/);
-  assert.match(contractsRegion, /Shared Contracts/);
-  assert.match(publicationsRegion, /Environment Publications/);
-  assert.match(actionsRegion, /Draft Actions/);
+  assertDraftFormPanelMarkup(metadataRegion, {
+    headerText: "General Metadata",
+    panel: "metadata",
+  });
+  assertDraftFormPanelMarkup(contractsRegion, {
+    headerText: "Shared Contracts",
+    panel: "contracts",
+  });
+  assertDraftFormPanelMarkup(publicationsRegion, {
+    headerText: "Environment Publications",
+    panel: "publications",
+  });
+  assertDraftFormPanelMarkup(actionsRegion, {
+    headerText: "Draft Actions",
+    panel: "actions",
+    requiresActionFooter: true,
+  });
+  assert.equal(
+    countMatches(metadataRegion, /class="[^"]*\bform-field\b[^"]*"/),
+    7,
+  );
+  assert.equal(
+    countMatches(contractsRegion, /class="[^"]*\bform-field\b[^"]*"/),
+    2,
+  );
 
   for (const fieldName of [
     "versionLabel",
@@ -496,7 +546,16 @@ function assertDraftRegistrationFormContract(
       value: environmentKey,
     });
 
+    assertMarkupHasClass(publicationPanel, "form-subpanel");
     assert.match(publicationPanel, new RegExp(`>${escapeRegExp(environmentKey)}<`));
+    assert.match(publicationPanel, /Include publication/);
+    assert.match(publicationPanel, /Health Endpoint URL/);
+    assert.match(publicationPanel, /Optional Invocation Endpoint Override/);
+    assert.match(publicationPanel, /Raw Card Upload/);
+    assert.equal(
+      countMatches(publicationPanel, /class="[^"]*\bform-field\b[^"]*"/),
+      3,
+    );
 
     for (const suffix of [
       "enabled",
@@ -523,10 +582,13 @@ function assertDraftRegistrationFormContract(
   }
 
   if (options.environmentKeys.length === 0) {
+    assert.match(publicationsRegion, /data-form-empty-state="publication-environments"/);
     assert.match(publicationsRegion, /No environments are configured yet for this tenant\./);
     assert.match(publicationsRegion, /At least one configured environment is required before a draft can be created\./);
     assert.doesNotMatch(publicationsRegion, /data-publication-environment="/);
     assert.doesNotMatch(publicationsRegion, /name="publication:/);
+    assert.doesNotMatch(publicationsRegion, /type="checkbox"/);
+    assert.doesNotMatch(publicationsRegion, /type="file"/);
   }
 
   if (options.expectSubmitDisabled) {

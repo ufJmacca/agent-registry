@@ -794,6 +794,131 @@ test(
 );
 
 test(
+  "implementation notes record the /tenants/:tenantId/drafts/new fidelity pass, truthful substitutions, and remaining deltas",
+  async () => {
+    // Arrange
+    const implementationNotesPath = path.join(
+      repositoryRoot,
+      "design-reference",
+      "IMPLEMENTATION_NOTES.md",
+    );
+
+    // Act
+    const notes = await readFile(implementationNotesPath, "utf8");
+    const draftRegistrationSection = extractSection(
+      notes,
+      "### `/tenants/:tenantId/drafts/new`",
+    );
+    const residualDeltaRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Residual Delta Log",
+      [...expectedReferenceAuditResidualDeltaHeaders],
+    );
+    const omissionRows = parseMarkdownTable(notes, "## Omissions and Truthful Substitutions", [
+      "Route",
+      "Reference asset",
+      "Mock-only content or unsupported control",
+      "Truthful implementation replacement or omission",
+      "Reason",
+    ]);
+    const draftRegistrationResidualDeltaRow = residualDeltaRows.find(
+      (row) => row["Current route"] === "/tenants/:tenantId/drafts/new",
+    );
+    const draftRegistrationOmissionRow = omissionRows.find(
+      (row) =>
+        row.Route === "/tenants/:tenantId/drafts/new" &&
+        row["Reference asset"] === "new_draft_registration",
+    );
+
+    // Assert
+    assert.ok(
+      draftRegistrationResidualDeltaRow,
+      "Expected a residual-delta row for /tenants/:tenantId/drafts/new",
+    );
+    assert.match(
+      draftRegistrationResidualDeltaRow["Audit pass"],
+      /Draft-registration fidelity pass completed on \d{4}-\d{2}-\d{2} UTC\./,
+      "Expected /tenants/:tenantId/drafts/new to record the completed draft-registration fidelity pass",
+    );
+    assert.doesNotMatch(
+      draftRegistrationResidualDeltaRow["Audit pass"],
+      /Phase 0 reference audit/i,
+      "Expected /tenants/:tenantId/drafts/new to move beyond the Phase 0 audit state",
+    );
+    assert.match(
+      draftRegistrationResidualDeltaRow["Highest-value unresolved fidelity delta"],
+      /hero, upper grid, and footer.*widest desktop breakpoint/i,
+      "Expected /tenants/:tenantId/drafts/new residual delta to document the remaining screenshot-level spacing polish",
+    );
+    assert.match(
+      draftRegistrationResidualDeltaRow["Truthful constraint to preserve"],
+      /every current field name.*multipart behavior.*publisher restriction.*create-draft submission path.*truthful no-environments state.*no fake publication controls/i,
+      "Expected /tenants/:tenantId/drafts/new residual delta to preserve the draft route's truthful form and empty-state constraints",
+    );
+    assert.match(
+      draftRegistrationResidualDeltaRow["Next implementation target"],
+      /hero-to-panel.*mobile footer spacing/i,
+      "Expected /tenants/:tenantId/drafts/new residual delta to keep the remaining spacing follow-up explicit",
+    );
+
+    assert.ok(
+      draftRegistrationOmissionRow,
+      "Expected an omissions and truthful substitutions row for /tenants/:tenantId/drafts/new",
+    );
+    assert.match(
+      draftRegistrationOmissionRow["Mock-only content or unsupported control"],
+      /Model picker.*autosave messaging.*save-as-draft.*submit-for-review footer actions/i,
+      "Expected /tenants/:tenantId/drafts/new omissions row to list the unsupported mock workflow controls",
+    );
+    assert.match(
+      draftRegistrationOmissionRow["Truthful implementation replacement or omission"],
+      /Real draft metadata fields.*shared contract JSON textareas.*per-environment multipart publication panels.*truthful no-environments empty state.*single create-draft submit action/i,
+      "Expected /tenants/:tenantId/drafts/new omissions row to document the truthful draft workflow replacements",
+    );
+
+    const ctaTreatment = extractBulletValue(
+      draftRegistrationSection,
+      "CTA treatment and hierarchy",
+    );
+    assert.match(
+      ctaTreatment,
+      /single gradient Create Draft action/i,
+      "Expected /tenants/:tenantId/drafts/new review notes to keep the single draft-creation CTA explicit",
+    );
+    assert.match(
+      ctaTreatment,
+      /review submission remains deferred to version detail/i,
+      "Expected /tenants/:tenantId/drafts/new review notes to document the truthful create-then-review workflow",
+    );
+
+    const functionalConstraints = extractBulletValue(
+      draftRegistrationSection,
+      "Functional constraints to preserve",
+    );
+    assert.match(
+      functionalConstraints,
+      /All existing field names.*multipart uploads.*POST target.*publisher permissions.*data-visual-dynamic="publication-sections".*per-environment publication semantics/i,
+      "Expected /tenants/:tenantId/drafts/new review notes to preserve the current multipart contract and visual masking hook",
+    );
+
+    const intentionalDeviations = extractBulletValue(
+      draftRegistrationSection,
+      "Intentional deviations and truthful substitutions",
+    );
+    assert.match(
+      intentionalDeviations,
+      /Mock model selection.*autosave language.*save\/submit dual actions/i,
+      "Expected /tenants/:tenantId/drafts/new review notes to cite the omitted mock workflow affordances",
+    );
+    assert.match(
+      intentionalDeviations,
+      /create-then-review workflow.*truthful empty state.*disabled publication controls/i,
+      "Expected /tenants/:tenantId/drafts/new review notes to document the truthful workflow and no-environments substitution",
+    );
+  },
+);
+
+test(
   "implementation notes include a completed omissions and truthful substitutions row for each in-scope route",
   async () => {
     // Arrange

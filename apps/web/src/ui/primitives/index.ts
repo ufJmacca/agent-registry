@@ -3,8 +3,10 @@ import {
   formatConsoleTimestamp as formatConsoleTimestampImplementation,
 } from "./formatters.js";
 import {
+  renderFormActionFooter as renderFormActionFooterImplementation,
   renderFormField as renderFormFieldImplementation,
   renderFormSection as renderFormSectionImplementation,
+  renderFormSubpanel as renderFormSubpanelImplementation,
 } from "./forms.js";
 import {
   renderActionCluster as renderActionClusterImplementation,
@@ -26,8 +28,10 @@ interface PrimitiveOverrideMap {
   renderActionCluster: typeof renderActionClusterImplementation;
   renderCardHead: typeof renderCardHeadImplementation;
   renderEmptyState: typeof renderEmptyStateImplementation;
+  renderFormActionFooter: typeof renderFormActionFooterImplementation;
   renderFormField: typeof renderFormFieldImplementation;
   renderFormSection: typeof renderFormSectionImplementation;
+  renderFormSubpanel: typeof renderFormSubpanelImplementation;
   renderPill: typeof renderPillImplementation;
   renderPillList: typeof renderPillListImplementation;
   renderRecordList: typeof renderRecordListImplementation;
@@ -76,8 +80,20 @@ export function renderFormField(...args: Parameters<typeof renderFormFieldImplem
   return callPrimitive("renderFormField", renderFormFieldImplementation, ...args);
 }
 
+export function renderFormActionFooter(
+  ...args: Parameters<typeof renderFormActionFooterImplementation>
+) {
+  return callPrimitive("renderFormActionFooter", renderFormActionFooterImplementation, ...args);
+}
+
 export function renderFormSection(...args: Parameters<typeof renderFormSectionImplementation>) {
   return callPrimitive("renderFormSection", renderFormSectionImplementation, ...args);
+}
+
+export function renderFormSubpanel(
+  ...args: Parameters<typeof renderFormSubpanelImplementation>
+) {
+  return callPrimitive("renderFormSubpanel", renderFormSubpanelImplementation, ...args);
 }
 
 export function renderActionCluster(
