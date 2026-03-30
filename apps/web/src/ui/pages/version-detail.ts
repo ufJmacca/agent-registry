@@ -2,6 +2,16 @@ import type { PublicationHealthDetailResponse } from "@agent-registry/contracts"
 import type { VersionAdminDetailRecord } from "@agent-registry/db";
 
 import { escapeHtml, renderPreformattedJson } from "../document.js";
+import {
+  formatConsoleState,
+  formatConsoleTimestamp,
+  renderActionCluster,
+  renderCardHead,
+  renderPill,
+  renderPillList,
+  renderSidePanel,
+  renderStatTile,
+} from "../primitives/index.js";
 
 interface RenderVersionDetailPageBodyOptions {
   actions: string[];
@@ -14,31 +24,6 @@ interface RenderVersionDetailPageBodyOptions {
 interface ReviewTimelineItem {
   meta: string;
   title: string;
-}
-
-function humanizeConsoleState(value: string): string {
-  return value
-    .split(/[_-]/)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(" ");
-}
-
-function renderPillList(values: string[]): string {
-  if (values.length === 0) {
-    return `<span class="pill">none</span>`;
-  }
-
-  return values.map((value) => `<span class="pill">${escapeHtml(value)}</span>`).join("");
-}
-
-function formatTimestamp(value: Date | string | null | undefined): string {
-  if (value === null || value === undefined) {
-    return "n/a";
-  }
-
-  const timestamp = value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-
-  return timestamp.replace(".000Z", "Z");
 }
 
 function buildVersionManifest(detail: VersionAdminDetailRecord): Record<string, unknown> {
@@ -74,21 +59,21 @@ function buildReviewTimeline(detail: VersionAdminDetailRecord): ReviewTimelineIt
     });
   } else {
     items.push({
-      meta: formatTimestamp(detail.review.submittedAt),
+      meta: formatConsoleTimestamp(detail.review.submittedAt),
       title: `Version submitted by ${detail.review.submittedBy ?? "unknown reviewer"}`,
     });
   }
 
   if (detail.review.approvedAt !== null) {
     items.push({
-      meta: formatTimestamp(detail.review.approvedAt),
+      meta: formatConsoleTimestamp(detail.review.approvedAt),
       title: `Version approved by ${detail.review.approvedBy ?? "unknown reviewer"}`,
     });
   }
 
   if (detail.review.rejectedAt !== null) {
     items.push({
-      meta: formatTimestamp(detail.review.rejectedAt),
+      meta: formatConsoleTimestamp(detail.review.rejectedAt),
       title: `Version rejected by ${detail.review.rejectedBy ?? "unknown reviewer"}`,
     });
   }
@@ -115,22 +100,24 @@ function renderEnvironmentDossiers(detail: VersionAdminDetailRecord): string {
     .map(
       (publication) =>
         `<article class="version-detail-publication-card stack">
-          <div class="version-detail-card-head">
-            <div class="stack">
-              <span class="shell-eyebrow">Environment: ${escapeHtml(publication.environmentKey)}</span>
-              <h3>${escapeHtml(publication.environmentKey)}</h3>
-            </div>
-            <div class="pill">${escapeHtml(publication.healthStatus ?? "unknown")}</div>
-          </div>
+          ${renderCardHead({
+            className: "version-detail-card-head",
+            eyebrow: `Environment: ${publication.environmentKey}`,
+            title: publication.environmentKey,
+            titleTag: "h3",
+            trailingContent: renderPill(publication.healthStatus ?? "unknown"),
+          })}
           <div class="version-detail-publication-meta">
-            <div class="version-detail-stat">
-              <span class="shell-eyebrow">Health Endpoint</span>
-              <strong><code>${escapeHtml(publication.healthEndpointUrl)}</code></strong>
-            </div>
-            <div class="version-detail-stat">
-              <span class="shell-eyebrow">Invocation Endpoint</span>
-              <strong><code>${escapeHtml(publication.invocationEndpoint ?? "none")}</code></strong>
-            </div>
+            ${renderStatTile({
+              className: "version-detail-stat",
+              eyebrow: "Health Endpoint",
+              valueMarkup: `<code>${escapeHtml(publication.healthEndpointUrl)}</code>`,
+            })}
+            ${renderStatTile({
+              className: "version-detail-stat",
+              eyebrow: "Invocation Endpoint",
+              valueMarkup: `<code>${escapeHtml(publication.invocationEndpoint ?? "none")}</code>`,
+            })}
           </div>
           <div class="version-detail-contract-grid version-detail-contract-grid--publication">
             <div class="version-detail-contract-card stack">
@@ -161,30 +148,32 @@ function renderTelemetrySection(detail: VersionAdminDetailRecord): string {
         .map((publication) => {
           if (publication.telemetry.length === 0) {
             return `<article class="version-detail-telemetry-card stack">
-              <div class="version-detail-card-head">
-                <div class="stack">
-                  <span class="shell-eyebrow">Environment Telemetry</span>
-                  <h3>${escapeHtml(publication.environmentKey)}</h3>
-                </div>
-                <div class="pill">No advisory telemetry</div>
-              </div>
+              ${renderCardHead({
+                className: "version-detail-card-head",
+                eyebrow: "Environment Telemetry",
+                title: publication.environmentKey,
+                titleTag: "h3",
+                trailingContent: renderPill("No advisory telemetry"),
+              })}
               <p>No advisory telemetry submitted.</p>
             </article>`;
           }
 
           return `<article class="version-detail-telemetry-card stack">
-            <div class="version-detail-card-head">
-              <div class="stack">
-                <span class="shell-eyebrow">Environment Telemetry</span>
-                <h3>${escapeHtml(publication.environmentKey)}</h3>
-              </div>
-              <div class="pill">${publication.telemetry.length} recorded window${publication.telemetry.length === 1 ? "" : "s"}</div>
-            </div>
+            ${renderCardHead({
+              className: "version-detail-card-head",
+              eyebrow: "Environment Telemetry",
+              title: publication.environmentKey,
+              titleTag: "h3",
+              trailingContent: renderPill(
+                `${publication.telemetry.length} recorded window${publication.telemetry.length === 1 ? "" : "s"}`,
+              ),
+            })}
             ${publication.telemetry
               .map(
                 (telemetry) =>
                   `<div class="version-detail-telemetry-window stack">
-                    <p>Window: <code>${escapeHtml(formatTimestamp(telemetry.windowStartedAt))}</code> to <code>${escapeHtml(formatTimestamp(telemetry.windowEndedAt))}</code></p>
+                    <p>Window: <code>${escapeHtml(formatConsoleTimestamp(telemetry.windowStartedAt))}</code> to <code>${escapeHtml(formatConsoleTimestamp(telemetry.windowEndedAt))}</code></p>
                     <p>Invocation count: ${telemetry.invocationCount}</p>
                     <p>Success count: ${telemetry.successCount}</p>
                     <p>Error count: ${telemetry.errorCount}</p>
@@ -217,13 +206,15 @@ function renderHealthHistorySection(
           const health = healthByEnvironment.get(publication.environmentKey);
 
           return `<article class="version-detail-health-card stack">
-            <div class="version-detail-card-head">
-              <div class="stack">
-                <span class="shell-eyebrow">Environment Health</span>
-                <h3>${escapeHtml(publication.environmentKey)}</h3>
-              </div>
-              <div class="pill">${escapeHtml(health?.current.healthStatus ?? publication.healthStatus ?? "unknown")}</div>
-            </div>
+            ${renderCardHead({
+              className: "version-detail-card-head",
+              eyebrow: "Environment Health",
+              title: publication.environmentKey,
+              titleTag: "h3",
+              trailingContent: renderPill(
+                health?.current.healthStatus ?? publication.healthStatus ?? "unknown",
+              ),
+            })}
             <p>Health endpoint: <code>${escapeHtml(publication.healthEndpointUrl)}</code></p>
             ${
               health === undefined
@@ -232,8 +223,8 @@ function renderHealthHistorySection(
                      <p>Current status: ${escapeHtml(health.current.healthStatus)}</p>
                      <p>Recent failures: ${health.current.recentFailures}</p>
                      <p>Consecutive failures: ${health.current.consecutiveFailures}</p>
-                     <p>Last checked: ${escapeHtml(formatTimestamp(health.current.lastCheckedAt))}</p>
-                     <p>Last success: ${escapeHtml(formatTimestamp(health.current.lastSuccessAt))}</p>
+                     <p>Last checked: ${escapeHtml(formatConsoleTimestamp(health.current.lastCheckedAt))}</p>
+                     <p>Last success: ${escapeHtml(formatConsoleTimestamp(health.current.lastSuccessAt))}</p>
                      ${
                        health.current.lastError === null
                          ? ""
@@ -248,7 +239,7 @@ function renderHealthHistorySection(
                               .map(
                                 (entry) =>
                                   `<div class="version-detail-history-item stack">
-                                    <p><code>${escapeHtml(formatTimestamp(entry.checkedAt))}</code></p>
+                                    <p><code>${escapeHtml(formatConsoleTimestamp(entry.checkedAt))}</code></p>
                                     <p>Status code: ${entry.statusCode === null ? "n/a" : String(entry.statusCode)}</p>
                                     ${
                                       entry.error === null
@@ -286,13 +277,15 @@ export function renderVersionDetailPageBody(
       <p class="meta">${escapeHtml(detail.summary)}</p>
     </div>
     <div class="version-detail-pill-row">
-      <span class="pill">${escapeHtml(humanizeConsoleState(detail.approvalState))}</span>
-      <span class="pill">${escapeHtml(detail.versionLabel)}</span>
-      <span class="pill">Sequence ${detail.versionSequence}</span>
-      <span class="pill">Publisher ${escapeHtml(detail.publisherId)}</span>
+      ${renderPill(formatConsoleState(detail.approvalState))}
+      ${renderPill(detail.versionLabel)}
+      ${renderPill(`Sequence ${detail.versionSequence}`)}
+      ${renderPill(`Publisher ${detail.publisherId}`)}
       ${
         detail.active
-          ? `<a class="pill" href="/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(detail.agentId)}">Open active agent detail</a>`
+          ? renderPill("Open active agent detail", {
+              href: `/tenants/${encodeURIComponent(tenantId)}/agents/${encodeURIComponent(detail.agentId)}`,
+            })
           : ""
       }
     </div>
@@ -358,32 +351,37 @@ export function renderVersionDetailPageBody(
       ${showAdminTelemetry ? renderTelemetrySection(detail) : ""}
       ${showAdminHealthHistory ? renderHealthHistorySection(detail, healthByEnvironment) : ""}
     </div>
-    <div class="version-detail-side">
-      <section class="card stack version-detail-panel version-detail-review-card" data-visual-dynamic="version-metadata">
-        <div class="version-detail-card-head">
-          <div class="stack">
-            <span class="shell-eyebrow">Release Metadata</span>
-            <h2>Release Metadata</h2>
-          </div>
-          <div class="pill">${escapeHtml(humanizeConsoleState(detail.approvalState))}</div>
-        </div>
+    ${renderSidePanel({
+      className: "version-detail-side",
+      sections: [
+        `<section class="card stack version-detail-panel version-detail-review-card" data-visual-dynamic="version-metadata">
+        ${renderCardHead({
+          className: "version-detail-card-head",
+          eyebrow: "Release Metadata",
+          title: "Release Metadata",
+          trailingContent: renderPill(formatConsoleState(detail.approvalState)),
+        })}
         <div class="version-detail-stat-grid">
-          <div class="version-detail-stat">
-            <span class="shell-eyebrow">Approval State</span>
-            <strong>${escapeHtml(detail.approvalState)}</strong>
-          </div>
-          <div class="version-detail-stat">
-            <span class="shell-eyebrow">Version Label</span>
-            <strong>${escapeHtml(detail.versionLabel)}</strong>
-          </div>
-          <div class="version-detail-stat">
-            <span class="shell-eyebrow">Version Sequence</span>
-            <strong>${detail.versionSequence}</strong>
-          </div>
-          <div class="version-detail-stat">
-            <span class="shell-eyebrow">Active Publication</span>
-            <strong>${detail.active ? "yes" : "no"}</strong>
-          </div>
+          ${renderStatTile({
+            className: "version-detail-stat",
+            eyebrow: "Approval State",
+            value: detail.approvalState,
+          })}
+          ${renderStatTile({
+            className: "version-detail-stat",
+            eyebrow: "Version Label",
+            value: detail.versionLabel,
+          })}
+          ${renderStatTile({
+            className: "version-detail-stat",
+            eyebrow: "Version Sequence",
+            value: String(detail.versionSequence),
+          })}
+          ${renderStatTile({
+            className: "version-detail-stat",
+            eyebrow: "Active Publication",
+            value: detail.active ? "yes" : "no",
+          })}
         </div>
         <p>Approval state: ${escapeHtml(detail.approvalState)}</p>
         <p>Version label: ${escapeHtml(detail.versionLabel)} | Version sequence: ${detail.versionSequence}</p>
@@ -395,8 +393,7 @@ export function renderVersionDetailPageBody(
                  <p>Rejected reason: ${escapeHtml(detail.review.rejectedReason)}</p>
                </div>`
         }
-      </section>
-      ${
+      </section>`,
         actions.length === 0
           ? ""
           : `<section class="card stack version-detail-panel" data-visual-dynamic="version-actions">
@@ -407,12 +404,12 @@ export function renderVersionDetailPageBody(
                  </div>
                  <p class="meta">Current state controls remain wired to the existing submit, approve, and reject routes.</p>
                </div>
-               <div class="inline-actions version-detail-action-grid">
-                 ${actions.join("")}
-               </div>
-             </section>`
-      }
-      <section class="card stack version-detail-panel">
+               ${renderActionCluster({
+                 actions,
+                 className: "version-detail-action-grid",
+               })}
+             </section>`,
+        `<section class="card stack version-detail-panel">
         <div class="version-detail-section-head">
           <div class="stack">
             <span class="shell-eyebrow">Review Timeline</span>
@@ -431,7 +428,8 @@ export function renderVersionDetailPageBody(
             )
             .join("")}
         </div>
-      </section>
-    </div>
+      </section>`,
+      ].filter((section) => section !== ""),
+    })}
   </div>`;
 }
