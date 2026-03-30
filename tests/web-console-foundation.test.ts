@@ -1,5 +1,5 @@
 import type { PublicationHealthDetailResponse } from "@agent-registry/contracts";
-import type { VersionAdminDetailRecord } from "@agent-registry/db";
+import type { AgentAdminDetailRecord, VersionAdminDetailRecord } from "@agent-registry/db";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -16,6 +16,7 @@ import {
   renderEmptyState,
   renderFormField,
   renderFormSection,
+  renderPageHero,
   renderPill,
   renderPillList,
   renderRecordList,
@@ -26,6 +27,7 @@ import {
 
 const repositoryRoot = process.cwd();
 const dashboardPageModuleUrl = new URL("../apps/web/src/ui/pages/dashboard.js", import.meta.url).href;
+const agentDetailPageModuleUrl = new URL("../apps/web/src/ui/pages/agent-detail.js", import.meta.url).href;
 const draftRegistrationPageModuleUrl = new URL(
   "../apps/web/src/ui/pages/draft-registration.js",
   import.meta.url,
@@ -156,6 +158,92 @@ function buildVersionDetailFixture(): {
   };
 }
 
+function buildAgentDetailFixture(): {
+  detail: AgentAdminDetailRecord;
+  emptyDetail: AgentAdminDetailRecord;
+} {
+  return {
+    detail: {
+      activeVersion: {
+        approvalState: "approved",
+        publications: [
+          {
+            environmentKey: "dev",
+            healthEndpointUrl: "https://dev.example.com/health",
+            healthStatus: "healthy",
+            publicationId: "publication-dev",
+            telemetry: [],
+          },
+          {
+            environmentKey: "prod",
+            healthEndpointUrl: "https://prod.example.com/health",
+            healthStatus: "degraded",
+            publicationId: "publication-prod",
+            telemetry: [],
+          },
+        ],
+        review: {
+          approvedAt: "2026-03-30T09:00:00.000Z",
+          approvedBy: "admin-alpha",
+          rejectedAt: null,
+          rejectedBy: null,
+          rejectedReason: null,
+          submittedAt: "2026-03-29T09:00:00.000Z",
+          submittedBy: "publisher-alpha",
+        },
+        versionId: "version-2",
+        versionSequence: 2,
+      },
+      activeVersionId: "version-2",
+      agentId: "agent-populated",
+      overlay: {
+        agent: {
+          deprecated: true,
+          disabled: false,
+          requiredRoles: ["tenant-admin"],
+          requiredScopes: ["agents.write"],
+        },
+        environments: [
+          {
+            deprecated: false,
+            disabled: true,
+            environmentKey: "prod",
+            requiredRoles: ["operator"],
+            requiredScopes: ["deployments.write"],
+          },
+        ],
+      },
+      versions: [
+        {
+          approvalState: "approved",
+          versionId: "version-1",
+          versionSequence: 1,
+        },
+        {
+          approvalState: "approved",
+          versionId: "version-2",
+          versionSequence: 2,
+        },
+      ],
+    },
+    emptyDetail: {
+      activeVersion: null,
+      activeVersionId: null,
+      agentId: "agent-empty",
+      overlay: {
+        agent: {
+          deprecated: false,
+          disabled: false,
+          requiredRoles: [],
+          requiredScopes: [],
+        },
+        environments: [],
+      },
+      versions: [],
+    },
+  };
+}
+
 test("document helpers escape unsafe content and preserve formatted JSON output", () => {
   // Arrange
   const unsafeText = `alpha <beta> & "gamma" 'delta'`;
@@ -177,6 +265,13 @@ test("document helpers escape unsafe content and preserve formatted JSON output"
 
 test("shared primitives render the escaped wrapper markup used by the console pages", () => {
   // Arrange
+  const pageHeroMarkup = renderPageHero({
+    attributes: {
+      "data-visual-dynamic": "hero",
+    },
+    body: '<div class="stack"><h1>Hero</h1></div>',
+    className: "card stack page-hero--dossier",
+  });
   const sectionFrameMarkup = renderSectionFrame({
     as: "article",
     attributes: {
@@ -280,6 +375,10 @@ test("shared primitives render the escaped wrapper markup used by the console pa
   assert.equal(formattedState, "Pending Review");
   assert.equal(formattedTimestamp, "2026-03-13T10:00:00Z");
   assert.equal(emptyTimestamp, "n/a");
+  assert.equal(
+    normalizeMarkup(pageHeroMarkup),
+    '<section class="page-hero card stack page-hero--dossier" data-visual-dynamic="hero"><div class="stack"><h1>Hero</h1></div></section>',
+  );
   assert.equal(
     normalizeMarkup(sectionFrameMarkup),
     normalizeMarkup(`<article class="section-frame page-hero card stack" data-region="overview" hidden>
@@ -712,6 +811,165 @@ test(
   assert.deepEqual(fieldCalls, ["Environment key", "Environment key"]);
   assert.deepEqual(emptyStateCalls, ["No environments have been configured yet."]);
   assert.match(populatedMarkup, /action="\/tenants\/tenant-alpha\/environments"/);
+  },
+);
+
+test(
+  "agent detail page delegates hero, sections, card heads, stat tiles, side panel, record lists, and empty states to shared primitives",
+  { concurrency: false },
+  async (t) => {
+  // Arrange
+  const { detail, emptyDetail } = buildAgentDetailFixture();
+  const cardHeadCalls: string[] = [];
+  const emptyStateCalls: string[] = [];
+  const pageHeroCalls: string[] = [];
+  const recordListCalls: Array<{
+    items: number;
+    listClassName: string | undefined;
+  }> = [];
+  const sectionCalls: string[] = [];
+  const sidePanelCalls: number[] = [];
+  const stateFormatCalls: string[] = [];
+  const statTileCalls: string[] = [];
+
+  resetPrimitiveTestOverrides();
+  t.after(() => resetPrimitiveTestOverrides());
+  installPrimitiveTestOverrides({
+    formatConsoleState: (value) => {
+      stateFormatCalls.push(value);
+      return `sentinel-state:${value}`;
+    },
+    renderCardHead: (options) => {
+      cardHeadCalls.push(options.title);
+      return `<sentinel-agent-card-head data-title="${options.title}">${options.trailingContent ?? ""}</sentinel-agent-card-head>`;
+    },
+    renderEmptyState: (options) => {
+      emptyStateCalls.push(options.title);
+      return `<sentinel-agent-empty data-title="${options.title}"></sentinel-agent-empty>`;
+    },
+    renderPageHero: (options) => {
+      pageHeroCalls.push(String(options.attributes?.["data-visual-dynamic"] ?? ""));
+      return `<sentinel-agent-hero data-hook="${String(options.attributes?.["data-visual-dynamic"] ?? "")}">${options.body}</sentinel-agent-hero>`;
+    },
+    renderRecordList: (options) => {
+      recordListCalls.push({
+        items: options.items.length,
+        listClassName: options.listClassName,
+      });
+      return `<sentinel-agent-record-list data-items="${String(options.items.length)}" data-class="${escapeHtml(options.listClassName ?? "")}">${options.items.length === 0 ? (options.emptyState ?? "") : options.items.join("")}</sentinel-agent-record-list>`;
+    },
+    renderSectionFrame: (options) => {
+      sectionCalls.push(options.title);
+      return `<sentinel-agent-section data-title="${options.title}">${options.body}</sentinel-agent-section>`;
+    },
+    renderSidePanel: (options) => {
+      sidePanelCalls.push(options.sections.length);
+      return `<sentinel-agent-side-panel data-sections="${String(options.sections.length)}">${options.sections.join("")}</sentinel-agent-side-panel>`;
+    },
+    renderStatTile: (options) => {
+      statTileCalls.push(options.eyebrow);
+      return `<sentinel-agent-stat data-eyebrow="${options.eyebrow}"></sentinel-agent-stat>`;
+    },
+  });
+  const { renderAgentDetailPage } = await import(agentDetailPageModuleUrl);
+
+  // Act
+  const populatedMarkup = renderAgentDetailPage({
+    detail,
+    tenantId: "tenant-alpha",
+  });
+  const emptyMarkup = renderAgentDetailPage({
+    detail: emptyDetail,
+    tenantId: "tenant-alpha",
+  });
+
+  // Assert
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-agent-hero data-hook="agent-overview">',
+    "Expected the agent overview to render through the shared page-hero primitive.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-agent-side-panel data-sections="2">',
+    "Expected the overlay and environment control column to render through the shared side-panel primitive.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-agent-card-head data-title="dev">',
+    "Expected publication cards to render through the shared card-head primitive.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-agent-stat data-eyebrow="Tenant"></sentinel-agent-stat>',
+    "Expected the dossier summary facts to render through the shared stat-tile primitive.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    'data-class="record-list record-list--publication-cards agent-detail-publication-list"',
+    "Expected active publications to render through the shared record-list primitive.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    'data-class="record-list record-list--history agent-detail-history-list"',
+    "Expected version history to render through the shared record-list primitive.",
+  );
+  assertContainsMarkup(
+    emptyMarkup,
+    '<sentinel-agent-empty data-title="No active approved version is currently published."></sentinel-agent-empty>',
+    "Expected the no-approved-version state to render through the shared empty-state primitive.",
+  );
+  assertContainsMarkup(
+    emptyMarkup,
+    '<sentinel-agent-empty data-title="No environment overlays have been applied."></sentinel-agent-empty>',
+    "Expected the no-environment-overlay state to render through the shared empty-state primitive.",
+  );
+  assertContainsMarkup(
+    emptyMarkup,
+    '<sentinel-agent-empty data-title="No versions have been registered for this agent yet."></sentinel-agent-empty>',
+    "Expected the no-version-history state to render through the shared empty-state primitive.",
+  );
+  assert.deepEqual(pageHeroCalls, ["agent-overview", "agent-overview"]);
+  assert.ok(sectionCalls.includes("Active Publications"));
+  assert.ok(sectionCalls.includes("Overlay Controls"));
+  assert.ok(sectionCalls.includes("Environment Controls"));
+  assert.ok(sectionCalls.includes("Version History"));
+  assert.deepEqual(sidePanelCalls, [2, 2]);
+  assert.ok(cardHeadCalls.includes("Agent overlay"));
+  assert.ok(cardHeadCalls.includes("Environment overlay for prod"));
+  assert.ok(cardHeadCalls.includes("dev"));
+  assert.ok(cardHeadCalls.includes("prod"));
+  assert.equal(statTileCalls.filter((value) => value === "Tenant").length, 2);
+  assert.deepEqual(recordListCalls, [
+    {
+      items: 1,
+      listClassName: "record-list record-list--overlay-state agent-detail-overlay-list",
+    },
+    {
+      items: 2,
+      listClassName: "record-list record-list--publication-cards agent-detail-publication-list",
+    },
+    {
+      items: 2,
+      listClassName: "record-list record-list--environment-controls agent-detail-control-list",
+    },
+    {
+      items: 2,
+      listClassName: "record-list record-list--history agent-detail-history-list",
+    },
+  ]);
+  assert.deepEqual(emptyStateCalls, [
+    "No environment overlays have been applied.",
+    "No active approved version is currently published.",
+    "No environment overlays can be applied until an approved version is active.",
+    "No versions have been registered for this agent yet.",
+  ]);
+  assert.deepEqual(stateFormatCalls, ["approved", "approved", "approved", "approved", "approved"]);
+  assert.match(populatedMarkup, /data-agent-detail-layout="dossier"/);
+  assert.match(
+    populatedMarkup,
+    /action="\/tenants\/tenant-alpha\/agents\/agent-populated\/environments\/prod\/overlay\/disable"/,
+  );
   },
 );
 

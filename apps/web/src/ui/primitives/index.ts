@@ -14,6 +14,7 @@ import {
   renderEmptyState as renderEmptyStateImplementation,
   renderPill as renderPillImplementation,
   renderPillList as renderPillListImplementation,
+  renderPageHero as renderPageHeroImplementation,
   renderRecordList as renderRecordListImplementation,
   renderSectionFrame as renderSectionFrameImplementation,
   renderSidePanel as renderSidePanelImplementation,
@@ -34,6 +35,7 @@ interface PrimitiveOverrideMap {
   renderFormSubpanel: typeof renderFormSubpanelImplementation;
   renderPill: typeof renderPillImplementation;
   renderPillList: typeof renderPillListImplementation;
+  renderPageHero: typeof renderPageHeroImplementation;
   renderRecordList: typeof renderRecordListImplementation;
   renderSectionFrame: typeof renderSectionFrameImplementation;
   renderSidePanel: typeof renderSidePanelImplementation;
@@ -116,6 +118,10 @@ export function renderPill(...args: Parameters<typeof renderPillImplementation>)
 
 export function renderPillList(...args: Parameters<typeof renderPillListImplementation>) {
   return callPrimitive("renderPillList", renderPillListImplementation, ...args);
+}
+
+export function renderPageHero(...args: Parameters<typeof renderPageHeroImplementation>) {
+  return callPrimitive("renderPageHero", renderPageHeroImplementation, ...args);
 }
 
 export function renderRecordList(...args: Parameters<typeof renderRecordListImplementation>) {

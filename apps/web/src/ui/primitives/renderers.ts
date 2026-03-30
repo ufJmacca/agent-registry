@@ -19,6 +19,12 @@ interface SectionFrameOptions {
   titleTag?: HeadingTag;
 }
 
+interface PageHeroOptions {
+  attributes?: PrimitiveAttributes;
+  body: string;
+  className?: string;
+}
+
 interface CardHeadOptions {
   className?: string;
   description?: string;
@@ -93,6 +99,13 @@ export function renderPillList(values: string[], options: { emptyLabel?: string 
   }
 
   return values.map((value) => renderPill(value)).join("");
+}
+
+export function renderPageHero(options: PageHeroOptions): string {
+  return `<section${renderAttributes({
+    class: joinClassNames("page-hero", options.className),
+    ...options.attributes,
+  })}>${options.body}</section>`;
 }
 
 export function renderCardHead(options: CardHeadOptions): string {
