@@ -296,6 +296,7 @@
   }
 
   .section-frame__header,
+  .form-panel__header,
   .card-head {
     display: flex;
     align-items: flex-start;
@@ -304,6 +305,7 @@
   }
 
   .section-frame__lead,
+  .form-panel__lead,
   .card-head__lead {
     gap: 0.45rem;
   }
@@ -1194,7 +1196,8 @@
   gap: 1rem;
 }
 
-.draft-publication-card {
+.draft-publication-card,
+.form-subpanel {
   padding: 1.25rem;
   border-radius: 1.3rem;
   background:
@@ -1253,7 +1256,8 @@
     0 14px 28px rgba(42, 52, 57, 0.04);
 }
 
-.draft-action-footer {
+.draft-action-footer,
+.form-action-footer {
   padding: clamp(1.35rem, 2.5vw, 2rem);
   display: flex;
   align-items: center;
@@ -1261,7 +1265,8 @@
   gap: 1rem;
 }
 
-.draft-action-copy {
+.draft-action-copy,
+.form-action-footer__copy {
   display: grid;
   gap: 0.55rem;
   max-width: 40rem;
@@ -1825,7 +1830,8 @@
     grid-template-columns: 1fr;
   }
 
-  .draft-action-footer {
+  .draft-action-footer,
+  .form-action-footer {
     align-items: stretch;
     flex-direction: column;
   }

@@ -1,8 +1,10 @@
 import { escapeHtml } from "../document.js";
 import {
   renderEmptyState,
+  renderFormActionFooter,
   renderFormField,
   renderFormSection,
+  renderFormSubpanel,
   renderPill,
 } from "../primitives/index.js";
 
@@ -13,19 +15,11 @@ interface DraftRegistrationEnvironment {
 function renderPublicationSection(environment: DraftRegistrationEnvironment): string {
   const environmentKey = escapeHtml(environment.environmentKey);
 
-  return `<section class="draft-publication-card stack" data-publication-environment="${environmentKey}">
-    <div class="draft-publication-header">
-      <div class="stack">
-        <span class="shell-eyebrow">Environment Publication</span>
-        <h3>${environmentKey}</h3>
-        <p class="meta">Each environment keeps its own enablement flag, health probe, invocation override, and raw card file.</p>
-      </div>
-      <label class="draft-toggle">
-        <input type="checkbox" name="publication:${environmentKey}:enabled" />
-        <span>Include publication</span>
-      </label>
-    </div>
-    <div class="draft-publication-grid">
+  return renderFormSubpanel({
+    attributes: {
+      "data-publication-environment": environment.environmentKey,
+    },
+    body: `<div class="draft-publication-grid">
       ${renderFormField({
         fieldClassName: "draft-field",
         inputMarkup: `<input name="publication:${environmentKey}:healthEndpointUrl" placeholder="https://${environmentKey}.health.example.com/status" />`,
@@ -44,8 +38,18 @@ function renderPublicationSection(environment: DraftRegistrationEnvironment): st
         label: "Raw Card Upload",
         supportingText: "Uploaded as multipart form data and validated against the current raw-card rules.",
       })}
-    </div>
-  </section>`;
+    </div>`,
+    className: "draft-publication-card stack",
+    description:
+      "Each environment keeps its own enablement flag, health probe, invocation override, and raw card file.",
+    eyebrow: "Environment Publication",
+    headerClassName: "draft-publication-header form-panel__header",
+    headerContent: `<label class="draft-toggle">
+      <input type="checkbox" name="publication:${environmentKey}:enabled" />
+      <span>Include publication</span>
+    </label>`,
+    title: environment.environmentKey,
+  });
 }
 
 export function renderDraftRegistrationPage(options: {
@@ -55,13 +59,13 @@ export function renderDraftRegistrationPage(options: {
   const hasEnvironments = options.environments.length > 0;
   const publicationMarkup = hasEnvironments
     ? options.environments.map((environment) => renderPublicationSection(environment)).join("")
-    : renderEmptyState({
+    : `<div data-form-empty-state="publication-environments">${renderEmptyState({
         body: "At least one configured environment is required before a draft can be created.",
         className: "draft-empty-state",
         eyebrow: "Environment Publications",
         meta: "The page keeps the current draft route and multipart form semantics, but it does not invent disabled publication controls when the tenant has no environments.",
         title: "No environments are configured yet for this tenant.",
-      });
+      })}</div>`;
 
   return `<section class="hero card stack page-hero draft-page-hero">
     <span class="shell-eyebrow">Draft Registration</span>
@@ -73,6 +77,7 @@ export function renderDraftRegistrationPage(options: {
     <section class="draft-grid">
       ${renderFormSection({
         attributes: {
+          "data-form-panel": "metadata",
           "data-form-region": "metadata",
         },
         body: `<div class="draft-metadata-grid">
@@ -117,11 +122,11 @@ export function renderDraftRegistrationPage(options: {
             label: "Required Scopes",
           })}
         </div>`,
-        className: "draft-section card stack",
+        className: "draft-section card stack form-panel",
         description:
           "Shared agent identity, summary, and capability requirements captured once for the full draft.",
         eyebrow: "General Metadata",
-        headerClassName: "draft-section__header",
+        headerClassName: "draft-section__header form-panel__header",
         headerContent: `<div class="draft-pill-row" aria-hidden="true">
           ${renderPill("Version")}
           ${renderPill("Identity")}
@@ -131,6 +136,7 @@ export function renderDraftRegistrationPage(options: {
       })}
       ${renderFormSection({
         attributes: {
+          "data-form-panel": "contracts",
           "data-form-region": "contracts",
         },
         body: `<div class="draft-contract-grid">
@@ -162,11 +168,11 @@ export function renderDraftRegistrationPage(options: {
             supportingText: "Required context keys are enforced exactly as they are in the current backend flow.",
           })}
         </div>`,
-        className: "draft-section card stack",
+        className: "draft-section card stack form-panel",
         description:
           "Header and context contract JSON is validated server-side and applied to every publication in the created draft.",
         eyebrow: "Shared Contracts",
-        headerClassName: "draft-section__header",
+        headerClassName: "draft-section__header form-panel__header",
         headerContent: `<div class="draft-pill-row" aria-hidden="true">
           ${renderPill("JSON")}
           ${renderPill("Shared")}
@@ -176,30 +182,37 @@ export function renderDraftRegistrationPage(options: {
     </section>
     ${renderFormSection({
       attributes: {
+        "data-form-panel": "publications",
         "data-form-region": "publications",
         "data-visual-dynamic": "publication-sections",
       },
       body: `<div class="draft-publication-stack">
         ${publicationMarkup}
       </div>`,
-      className: "draft-section card stack",
+      className: "draft-section card stack form-panel",
       description:
         "Each tenant environment gets its own technical panel so publication metadata stays scannable without changing any field names.",
       eyebrow: "Environment Publications",
-      headerClassName: "draft-section__header",
+      headerClassName: "draft-section__header form-panel__header",
       headerContent: `<div class="draft-pill-row" aria-hidden="true">
         ${renderPill(`${String(options.environments.length)} configured`)}
         ${renderPill("Multipart")}
       </div>`,
       title: "Environment Publications",
     })}
-    <section class="draft-action-footer card" data-form-region="actions">
-      <div class="draft-action-copy">
-        <span class="shell-eyebrow">Draft Actions</span>
-        <h2>Draft Actions</h2>
-        <p>Create the draft now, then use the existing version-detail route to inspect it and submit it for review.</p>
-      </div>
-      <button class="draft-action-button" type="submit"${hasEnvironments ? "" : " disabled"}>Create Draft</button>
-    </section>
+    ${renderFormActionFooter({
+      actionMarkup: `<button class="draft-action-button" type="submit"${hasEnvironments ? "" : " disabled"}>Create Draft</button>`,
+      attributes: {
+        "data-form-action-footer": "draft-create",
+        "data-form-panel": "actions",
+        "data-form-region": "actions",
+      },
+      className: "draft-action-footer card",
+      copyClassName: "draft-action-copy",
+      description:
+        "Create the draft now, then use the existing version-detail route to inspect it and submit it for review.",
+      eyebrow: "Draft Actions",
+      title: "Draft Actions",
+    })}
   </form>`;
 }
