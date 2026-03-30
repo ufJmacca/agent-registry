@@ -919,6 +919,122 @@ test(
 );
 
 test(
+  "implementation notes record the /tenants/:tenantId/review fidelity pass, truthful substitutions, and remaining deltas",
+  async () => {
+    // Arrange
+    const implementationNotesPath = path.join(
+      repositoryRoot,
+      "design-reference",
+      "IMPLEMENTATION_NOTES.md",
+    );
+
+    // Act
+    const notes = await readFile(implementationNotesPath, "utf8");
+    const reviewQueueSection = extractSection(notes, "### `/tenants/:tenantId/review`");
+    const residualDeltaRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Residual Delta Log",
+      [...expectedReferenceAuditResidualDeltaHeaders],
+    );
+    const omissionRows = parseMarkdownTable(notes, "## Omissions and Truthful Substitutions", [
+      "Route",
+      "Reference asset",
+      "Mock-only content or unsupported control",
+      "Truthful implementation replacement or omission",
+      "Reason",
+    ]);
+    const reviewQueueResidualDeltaRow = residualDeltaRows.find(
+      (row) => row["Current route"] === "/tenants/:tenantId/review",
+    );
+    const reviewQueueOmissionRow = omissionRows.find(
+      (row) =>
+        row.Route === "/tenants/:tenantId/review" &&
+        row["Reference asset"] === "review_queue",
+    );
+
+    // Assert
+    assert.ok(
+      reviewQueueResidualDeltaRow,
+      "Expected a residual-delta row for /tenants/:tenantId/review",
+    );
+    assert.match(
+      reviewQueueResidualDeltaRow["Audit pass"],
+      /Review queue fidelity pass completed on \d{4}-\d{2}-\d{2} UTC\./,
+      "Expected /tenants/:tenantId/review to record the completed review-queue fidelity pass",
+    );
+    assert.doesNotMatch(
+      reviewQueueResidualDeltaRow["Audit pass"],
+      /Phase 0 reference audit/i,
+      "Expected /tenants/:tenantId/review to move beyond the Phase 0 audit state",
+    );
+    assert.match(
+      reviewQueueResidualDeltaRow["Highest-value unresolved fidelity delta"],
+      /richer machine-generated diagnostics.*avatar\/icon treatment/i,
+      "Expected /tenants/:tenantId/review residual delta to record the remaining truthful review-queue gap",
+    );
+    assert.match(
+      reviewQueueResidualDeltaRow["Truthful constraint to preserve"],
+      /tenant-admin-only access.*approve and reject.*version-detail linking/i,
+      "Expected /tenants/:tenantId/review residual delta to preserve admin gating and live decision routing",
+    );
+    assert.match(
+      reviewQueueResidualDeltaRow["Next implementation target"],
+      /approved queue composition.*desktop and mobile baselines.*decision-first layout/i,
+      "Expected /tenants/:tenantId/review residual delta to keep the remaining review-queue follow-up explicit",
+    );
+
+    assert.ok(
+      reviewQueueOmissionRow,
+      "Expected an omissions and truthful substitutions row for /tenants/:tenantId/review",
+    );
+    assert.match(
+      reviewQueueOmissionRow["Mock-only content or unsupported control"],
+      /History tab.*search.*filters.*load-more affordance.*diff tooling/i,
+      "Expected /tenants/:tenantId/review omissions row to list the unsupported mock review controls",
+    );
+    assert.match(
+      reviewQueueOmissionRow["Truthful implementation replacement or omission"],
+      /pending-review entries.*version detail links.*approve action.*reject reason input.*reject action/i,
+      "Expected /tenants/:tenantId/review omissions row to document the truthful review-queue replacements",
+    );
+
+    const ctaTreatment = extractBulletValue(reviewQueueSection, "CTA treatment and hierarchy");
+    assert.match(
+      ctaTreatment,
+      /Approve stays the primary gradient action/i,
+      "Expected /tenants/:tenantId/review review notes to keep approve as the dominant decision action",
+    );
+    assert.match(
+      ctaTreatment,
+      /reject remains visually distinct.*reason input.*version-detail navigation.*same immediate action cluster/i,
+      "Expected /tenants/:tenantId/review review notes to document the reject reason field and detail-link action grouping",
+    );
+
+    const intentionalDeviations = extractBulletValue(
+      reviewQueueSection,
+      "Intentional deviations and truthful substitutions",
+    );
+    assert.match(
+      intentionalDeviations,
+      /Search, filter, history, load-more, and diff tooling remain omitted/i,
+      "Expected /tenants/:tenantId/review review notes to cite the omitted mock queue controls",
+    );
+    assert.match(
+      intentionalDeviations,
+      /publisher, submission timestamp, and live version-detail access/i,
+      "Expected /tenants/:tenantId/review review notes to document the truthful queue replacements",
+    );
+
+    const residualDelta = extractBulletValue(reviewQueueSection, "Residual fidelity delta");
+    assert.match(
+      residualDelta,
+      /richer machine-generated diagnostics.*avatar\/icon treatment/i,
+      "Expected /tenants/:tenantId/review review notes to keep the remaining fidelity delta explicit",
+    );
+  },
+);
+
+test(
   "implementation notes include a completed omissions and truthful substitutions row for each in-scope route",
   async () => {
     // Arrange

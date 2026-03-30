@@ -681,6 +681,14 @@ function getEnvironmentPanelMarkup(html: string, panel: "inventory" | "creation"
   });
 }
 
+function getReviewQueueMarkup(html: string): string {
+  return getElementMarkupByDataHook(html, {
+    attribute: "data-visual-dynamic",
+    tagName: "section",
+    value: "review-queue",
+  });
+}
+
 function getFirstFormMarkup(markup: string): string {
   const formMatch = /<form\b[^>]*>/.exec(markup);
 
@@ -909,6 +917,50 @@ function assertEnvironmentManagementPage(
       assert.match(inventoryPanel, new RegExp(`<h3>${escapeRegExp(environmentKey)}<\\/h3>`));
     }
   }
+}
+
+function assertReviewQueuePage(
+  html: string,
+  options: {
+    navLinks: Array<{
+      href: string;
+      label: string;
+    }>;
+    state: "empty" | "populated";
+    tenantId: string;
+  },
+): void {
+  assertAuthenticatedShellContract(html, {
+    dynamicHooks: ["review-queue"],
+    navLinks: options.navLinks,
+    page: "review-queue",
+  });
+
+  const reviewQueueMarkup = getReviewQueueMarkup(html);
+
+  assertHasDataHook(html, "data-review-layout", "curated-queue");
+  assertHasDataHook(html, "data-review-state", options.state);
+  assert.match(html, /data-review-intro="hero"/);
+  assert.ok(
+    html.indexOf('data-review-intro="hero"') < html.indexOf('data-visual-dynamic="review-queue"'),
+    "Expected the review queue hero to precede the dynamic queue region",
+  );
+  assert.match(reviewQueueMarkup, /Decision Queue/);
+  assert.match(reviewQueueMarkup, new RegExp(escapeRegExp(`Pending versions for ${options.tenantId}`)));
+  assert.doesNotMatch(reviewQueueMarkup, /Filter by agent ID, model, or contributor/);
+  assert.doesNotMatch(reviewQueueMarkup, />History</);
+  assert.doesNotMatch(reviewQueueMarkup, />Sort</);
+  assert.doesNotMatch(reviewQueueMarkup, /View Diff/);
+  assert.doesNotMatch(reviewQueueMarkup, /Load more/i);
+
+  if (options.state === "empty") {
+    assert.match(reviewQueueMarkup, /No versions are awaiting review\./);
+    assert.doesNotMatch(reviewQueueMarkup, /data-review-entry="/);
+    assert.doesNotMatch(reviewQueueMarkup, /name="reason"/);
+    return;
+  }
+
+  assert.match(reviewQueueMarkup, /<ol[^>]*aria-label="Pending versions awaiting review"/);
 }
 
 function assertDashboardContract(
@@ -1322,27 +1374,37 @@ function assertReviewQueueEntry(
   html: string,
   fixture: PendingVersionFixture,
 ): void {
+  const entryMarkup = getElementMarkupByDataHook(html, {
+    attribute: "data-review-entry",
+    tagName: "li",
+    value: fixture.versionId,
+  });
   const versionDetailPath = `/tenants/tenant-alpha/agents/${fixture.agentId}/versions/${fixture.versionId}`;
   const approvePath = `${versionDetailPath}/approve`;
   const rejectPath = `${versionDetailPath}/reject`;
   const postFormPattern = (action: string): string =>
     `<form[^>]*(?:action="${escapeRegExp(action)}"[^>]*method="post"|method="post"[^>]*action="${escapeRegExp(action)}")[^>]*>`;
 
+  assertMarkupHasClass(entryMarkup, "review-queue-record");
   assert.match(
-    html,
+    entryMarkup,
     new RegExp(
       [
-        "<li[^>]+>",
+        `data-review-object="curated"`,
+        `[\\s\\S]*data-review-band="identity"`,
         `[\\s\\S]*${escapeRegExp(fixture.displayName)}`,
         `[\\s\\S]*${escapeRegExp(fixture.versionLabel)}`,
+        `[\\s\\S]*data-review-band="facts"`,
         `[\\s\\S]*${escapeRegExp(fixture.publisherId)}`,
         `[\\s\\S]*Submitted`,
         `[\\s\\S]*${escapeRegExp(fixture.submittedAt)}`,
+        `[\\s\\S]*data-review-band="actions"`,
         `[\\s\\S]*href="${escapeRegExp(versionDetailPath)}"`,
         `[\\s\\S]*${postFormPattern(approvePath)}`,
+        `[\\s\\S]*>Approve<`,
         `[\\s\\S]*${postFormPattern(rejectPath)}`,
         `[\\s\\S]*name="reason"`,
-        `[\\s\\S]*</li>`,
+        `[\\s\\S]*>Reject<`,
       ].join(""),
     ),
   );
@@ -3202,18 +3264,13 @@ test("admin console manages environments, reviews pending versions, edits overla
       tenantId: "tenant-alpha",
     });
     assert.equal(reviewQueuePage.status, 200);
-    assertAuthenticatedShellContract(reviewQueueHtml, {
-      dynamicHooks: ["review-queue"],
+    assertReviewQueuePage(reviewQueueHtml, {
       navLinks: adminNavLinks,
-      page: "review-queue",
+      state: "populated",
+      tenantId: "tenant-alpha",
     });
-    assert.match(reviewQueueHtml, /<ol[^>]*aria-label="Pending versions awaiting review"/);
     assertReviewQueueEntry(reviewQueueHtml, approveFixture);
     assertReviewQueueEntry(reviewQueueHtml, rejectFixture);
-    assert.doesNotMatch(reviewQueueHtml, /Filter by agent ID, model, or contributor/);
-    assert.doesNotMatch(reviewQueueHtml, />History</);
-    assert.doesNotMatch(reviewQueueHtml, />Sort</);
-    assert.doesNotMatch(reviewQueueHtml, /View Diff/);
     assert.doesNotMatch(reviewQueueHtml, /Deploy/);
     assert.equal(pendingRejectVersionPage.status, 200);
     assertAuthenticatedShellContract(pendingRejectVersionHtml, {
@@ -3423,6 +3480,53 @@ test("admin console manages environments, reviews pending versions, edits overla
     );
     assert.match(rejectedTelemetryMarkup, /Operational Telemetry/);
     assert.match(rejectedTelemetryMarkup, /No advisory telemetry submitted\./);
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin review queue shows a truthful empty state when no versions are pending", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const adminNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    // Act
+    const reviewQueuePage = await browser.get("/tenants/tenant-alpha/review");
+    const reviewQueueHtml = await reviewQueuePage.text();
+
+    // Assert
+    assert.equal(reviewQueuePage.status, 200);
+    assertReviewQueuePage(reviewQueueHtml, {
+      navLinks: adminNavLinks,
+      state: "empty",
+      tenantId: "tenant-alpha",
+    });
+    assert.doesNotMatch(reviewQueueHtml, /action="\/tenants\/tenant-alpha\/agents\/[^"]+\/versions\/[^"]+\/approve"/);
+    assert.doesNotMatch(reviewQueueHtml, /action="\/tenants\/tenant-alpha\/agents\/[^"]+\/versions\/[^"]+\/reject"/);
+    assert.doesNotMatch(reviewQueueHtml, /href="\/tenants\/tenant-alpha\/agents\/[^"]+\/versions\/[^"]+"/);
   } finally {
     await context.close();
   }
