@@ -13,7 +13,7 @@
     "lint": "tsc -b --pretty false",
     "test": "bash tests/workspace-foundation.test.sh --mode=outer && npm run test:unit && npm run test:visual",
     "test:inner": "DATABASE_URL=\"$(node ./scripts/resolve-test-database-url.mjs)\" && export DATABASE_URL && bash tests/workspace-foundation.test.sh --mode=inner && npm run test:unit && npm run test:visual",
-    "test:unit": "tsx --test tests/*.test.ts",
+    "test:unit": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots",
     "verify:devcontainer": "bash .devcontainer/scripts/post-create.sh --verify-only",
