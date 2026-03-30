@@ -63,6 +63,50 @@ const requiredReviewFields = [
   "Intentional deviations and truthful substitutions",
 ] as const;
 
+const requiredReferenceAuditHeadings = [
+  "## Reference Audit Overview",
+  "## Reference Audit Shared Patterns",
+  "## Reference Audit Route Matrix",
+  "## Reference Audit Residual Delta Log",
+] as const;
+
+const expectedReferenceAuditOverviewHeaders = [
+  "Audit focus",
+  "Reference evidence",
+  "Implementation consequence",
+] as const;
+
+const expectedReferenceAuditSharedPatternHeaders = [
+  "Pattern group",
+  "Observed across references",
+  "Audit implication for implementation",
+] as const;
+
+const expectedReferenceAuditRouteMatrixHeaders = [
+  "Current route",
+  "Reference asset pair",
+  "Shared patterns carried forward",
+  "Route-unique reference pattern",
+  "Truthful substitutions required",
+  "Mock-only elements to omit",
+] as const;
+
+const expectedReferenceAuditResidualDeltaHeaders = [
+  "Current route",
+  "Audit pass",
+  "Highest-value unresolved fidelity delta",
+  "Truthful constraint to preserve",
+  "Next implementation target",
+] as const;
+
+const expectedSharedPatternGroups = [
+  "Public shell traits",
+  "Authenticated shell traits",
+  "Repeated component patterns",
+  "Truthful substitutions policy",
+  "Mock-only omissions policy",
+] as const;
+
 const expectedOmissionRows = [
   { route: "/", asset: "sign_in_landing_page" },
   { route: "/console", asset: "console_dashboard" },
@@ -108,6 +152,19 @@ function extractSection(notes: string, heading: string): string {
 
   const remainingNotes = notes.slice(headingMatch.index + headingMatch[0].length);
   const nextHeadingIndex = remainingNotes.search(/^## |^### /m);
+
+  return nextHeadingIndex === -1
+    ? remainingNotes
+    : remainingNotes.slice(0, nextHeadingIndex);
+}
+
+function extractTopLevelSection(notes: string, heading: string): string {
+  const headingPattern = new RegExp(`^${escapeRegExp(heading)}$`, "m");
+  const headingMatch = headingPattern.exec(notes);
+  assert.ok(headingMatch, `Expected section heading ${heading}`);
+
+  const remainingNotes = notes.slice(headingMatch.index + headingMatch[0].length);
+  const nextHeadingIndex = remainingNotes.search(/^## /m);
 
   return nextHeadingIndex === -1
     ? remainingNotes
@@ -165,6 +222,183 @@ function assertCompletedNarrative(value: string, label: string): void {
   assert.match(value, /[A-Za-z]/, `Expected ${label} to contain readable content`);
   assert.doesNotMatch(value, placeholderPattern, `Expected ${label} to avoid placeholders`);
 }
+
+test(
+  "implementation notes include the required reference audit block before sign-off with exact machine-readable tables",
+  async () => {
+    // Arrange
+    const implementationNotesPath = path.join(
+      repositoryRoot,
+      "design-reference",
+      "IMPLEMENTATION_NOTES.md",
+    );
+
+    // Act
+    const notes = await readFile(implementationNotesPath, "utf8");
+    const signOffHeadingIndex = notes.indexOf("## Sign-Off Record");
+
+    // Assert
+    assert.notEqual(signOffHeadingIndex, -1, "Expected a sign-off record section");
+
+    for (const heading of requiredReferenceAuditHeadings) {
+      const headingIndex = notes.indexOf(heading);
+      assert.notEqual(headingIndex, -1, `Expected audit heading ${heading}`);
+      assert.ok(
+        headingIndex < signOffHeadingIndex,
+        `Expected ${heading} to appear before ## Sign-Off Record`,
+      );
+    }
+
+    const overviewRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Overview",
+      [...expectedReferenceAuditOverviewHeaders],
+    );
+    assert.ok(overviewRows.length >= 3, "Expected multiple overview audit rows");
+    for (const row of overviewRows) {
+      assertCompletedNarrative(row["Audit focus"], "reference audit overview focus");
+      assertCompletedNarrative(
+        row["Reference evidence"],
+        "reference audit overview evidence",
+      );
+      assertCompletedNarrative(
+        row["Implementation consequence"],
+        "reference audit overview implementation consequence",
+      );
+    }
+
+    const sharedPatternRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Shared Patterns",
+      [...expectedReferenceAuditSharedPatternHeaders],
+    );
+    assert.equal(
+      sharedPatternRows.length,
+      expectedSharedPatternGroups.length,
+      "Expected the shared-pattern audit to keep the approved five pattern groups",
+    );
+    for (const patternGroup of expectedSharedPatternGroups) {
+      const patternRow = sharedPatternRows.find(
+        (row) => row["Pattern group"] === patternGroup,
+      );
+      assert.ok(patternRow, `Expected shared-pattern row for ${patternGroup}`);
+      assertCompletedNarrative(
+        patternRow["Observed across references"],
+        `${patternGroup} observed pattern`,
+      );
+      assertCompletedNarrative(
+        patternRow["Audit implication for implementation"],
+        `${patternGroup} implementation implication`,
+      );
+    }
+
+    const routeMatrixRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Route Matrix",
+      [...expectedReferenceAuditRouteMatrixHeaders],
+    );
+    assert.equal(
+      routeMatrixRows.length,
+      expectedOmissionRows.length,
+      "Expected one route-audit matrix row per in-scope route",
+    );
+
+    for (const { route, asset } of expectedOmissionRows) {
+      const routeMatrixRow = routeMatrixRows.find((row) => row["Current route"] === route);
+      assert.ok(routeMatrixRow, `Expected route-audit matrix row for ${route}`);
+      assert.match(
+        routeMatrixRow["Reference asset pair"],
+        new RegExp(`${escapeRegExp(asset)}/code\\.html`),
+        `Expected ${route} route-audit row to cite ${asset}/code.html`,
+      );
+      assert.match(
+        routeMatrixRow["Reference asset pair"],
+        new RegExp(`${escapeRegExp(asset)}/screen\\.png`),
+        `Expected ${route} route-audit row to cite ${asset}/screen.png`,
+      );
+      assertCompletedNarrative(
+        routeMatrixRow["Shared patterns carried forward"],
+        `${route} shared patterns carried forward`,
+      );
+      assertCompletedNarrative(
+        routeMatrixRow["Route-unique reference pattern"],
+        `${route} route-unique reference pattern`,
+      );
+      assertCompletedNarrative(
+        routeMatrixRow["Truthful substitutions required"],
+        `${route} truthful substitutions required`,
+      );
+      assertCompletedNarrative(
+        routeMatrixRow["Mock-only elements to omit"],
+        `${route} mock-only elements to omit`,
+      );
+    }
+
+    const residualDeltaRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Residual Delta Log",
+      [...expectedReferenceAuditResidualDeltaHeaders],
+    );
+    assert.equal(
+      residualDeltaRows.length,
+      expectedOmissionRows.length,
+      "Expected one residual-delta row per in-scope route",
+    );
+
+    for (const { route } of expectedOmissionRows) {
+      const residualDeltaRow = residualDeltaRows.find(
+        (row) => row["Current route"] === route,
+      );
+      assert.ok(residualDeltaRow, `Expected residual-delta row for ${route}`);
+      assertCompletedNarrative(residualDeltaRow["Audit pass"], `${route} audit pass`);
+      assertCompletedNarrative(
+        residualDeltaRow["Highest-value unresolved fidelity delta"],
+        `${route} unresolved fidelity delta`,
+      );
+      assertCompletedNarrative(
+        residualDeltaRow["Truthful constraint to preserve"],
+        `${route} truthful constraint`,
+      );
+      assertCompletedNarrative(
+        residualDeltaRow["Next implementation target"],
+        `${route} next implementation target`,
+      );
+    }
+  },
+);
+
+test(
+  "implementation notes keep parser-sensitive route headings inside the fidelity review ledger only",
+  async () => {
+    // Arrange
+    const implementationNotesPath = path.join(
+      repositoryRoot,
+      "design-reference",
+      "IMPLEMENTATION_NOTES.md",
+    );
+
+    // Act
+    const notes = await readFile(implementationNotesPath, "utf8");
+    const fidelityLedgerSection = extractTopLevelSection(notes, "## Fidelity Review Ledger");
+    const routeHeadingMatches = [
+      ...notes.matchAll(/^### `\/[^`]*`$/gm),
+    ].map((match) => match[0]);
+
+    // Assert
+    assert.deepEqual(
+      routeHeadingMatches,
+      requiredReviewRoutes.map((route) => `### \`${route}\``),
+      "Expected the notes file to keep exactly the seven approved route headings",
+    );
+
+    const notesOutsideFidelityLedger = notes.replace(fidelityLedgerSection, "");
+    assert.doesNotMatch(
+      notesOutsideFidelityLedger,
+      /^### `\/[^`]*`$/m,
+      "Expected route-level ### headings to remain confined to the fidelity review ledger",
+    );
+  },
+);
 
 test(
   "approved visual baselines are committed under tests/visual/__screenshots__ for every route and viewport",
