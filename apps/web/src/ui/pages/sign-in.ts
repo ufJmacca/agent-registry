@@ -41,6 +41,7 @@ function renderSignInLanding(options: SignInLandingOptions): string {
     ${renderSectionFrame({
       as: "section",
       attributes: {
+        id: "sign-in-hero",
         "data-visual-dynamic": "sign-in-hero",
       },
       body: "",
@@ -79,13 +80,13 @@ function renderStatusTiles(values: Array<{ label: string; value: string }>): str
 
 function renderSetupPendingPanel(options: SetupPendingOptions): string {
   return renderSignInLanding({
-    accessPanel: `<section class="card stack sign-in-access sign-in-access--pending" data-visual-dynamic="sign-in-access">
+    accessPanel: `<section id="sign-in-access" class="card stack sign-in-access sign-in-access--pending" data-visual-dynamic="sign-in-access">
       <span class="shell-eyebrow">Registry Access</span>
       <h2>Console Setup Pending</h2>
       <p>${escapeHtml(options.accessDetail)}</p>
       <p class="meta">${escapeHtml(options.accessMeta)}</p>
     </section>`,
-    companionPanel: `<section class="card stack public-companion sign-in-companion" data-visual-dynamic="sign-in-companion">
+    companionPanel: `<section id="sign-in-companion" class="card stack public-companion sign-in-companion" data-visual-dynamic="sign-in-companion">
       <div class="sign-in-companion__lead stack">
         <span class="sign-in-companion__index" aria-hidden="true">01</span>
         <span class="shell-eyebrow">Setup Status</span>
@@ -168,7 +169,7 @@ export function renderInteractiveSignInPage(options: InteractiveSignInOptions): 
     options.deploymentMode === "hosted" ? options.selectedTenant : options.selfHostedTenant;
 
   return renderSignInLanding({
-    accessPanel: `<section class="card stack sign-in-access" data-visual-dynamic="sign-in-access">
+    accessPanel: `<section id="sign-in-access" class="card stack sign-in-access" data-visual-dynamic="sign-in-access">
       <div class="stack sign-in-panel__intro">
         <span class="shell-eyebrow">Registry Access</span>
         <h2>Mock Sign-In</h2>
@@ -200,7 +201,7 @@ export function renderInteractiveSignInPage(options: InteractiveSignInOptions): 
       </form>
       <p class="meta sign-in-note">The existing /session POST target and tenantId and subjectId fields remain unchanged.</p>
     </section>`,
-    companionPanel: `<section class="card stack public-companion sign-in-companion" data-visual-dynamic="sign-in-companion">
+    companionPanel: `<section id="sign-in-companion" class="card stack public-companion sign-in-companion" data-visual-dynamic="sign-in-companion">
       <div class="sign-in-companion__lead stack">
         <span class="sign-in-companion__index" aria-hidden="true">01</span>
         <span class="shell-eyebrow">Workspace State</span>

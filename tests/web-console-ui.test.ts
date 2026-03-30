@@ -960,7 +960,17 @@ function assertPublicSignInShellContract(html: string): void {
   assertHasDataHook(html, "data-visual-dynamic", "sign-in-hero");
   assertHasDataHook(html, "data-visual-dynamic", "sign-in-access");
   assertHasDataHook(html, "data-visual-dynamic", "sign-in-companion");
+  assert.match(
+    html,
+    /<header class="public-topbar">[\s\S]*?<div class="public-topbar__actions">[\s\S]*?href="#sign-in-access"[\s\S]*?href="\/console"[\s\S]*?<\/header>/,
+  );
+  assert.match(
+    html,
+    /<footer class="public-footer">[\s\S]*?Architectural Precision[\s\S]*?href="#sign-in-access"[\s\S]*?href="#sign-in-companion"[\s\S]*?href="\/console"[\s\S]*?<\/footer>/,
+  );
   assert.doesNotMatch(html, /data-nav="/);
+  assert.doesNotMatch(html, /class="shell-topbar"/);
+  assert.doesNotMatch(html, /class="shell-frame"/);
   assertRenderedDocumentUsesSharedAssets(html);
 }
 
@@ -1293,7 +1303,12 @@ test("console root renders a setup-pending public landing before schema bootstra
     assertPublicSignInShellContract(html);
     assert.match(html, /Architectural Precision For Tenant Operations/);
     assert.match(html, /Console Setup Pending/);
+    assert.match(html, /Initialize The Console/);
     assert.match(html, /Setup Status/);
+    assert.match(html, /Schema missing/);
+    assert.match(html, /Bootstrap required/);
+    assert.doesNotMatch(html, /Bootstrap Tenant Data/);
+    assert.doesNotMatch(html, /Bootstrap Tenant Memberships/);
     assert.doesNotMatch(html, /<form[^>]+action="\/session"/);
     assert.doesNotMatch(html, /name="tenantId"/);
     assert.doesNotMatch(html, /name="subjectId"/);
@@ -1347,6 +1362,10 @@ test("console root renders setup pending without sign-in controls when bootstrap
     assertPublicSignInShellContract(html);
     assert.match(html, /Console Setup Pending/);
     assert.match(html, /Bootstrap Tenant Data/);
+    assert.match(html, /No tenants/);
+    assert.match(html, /No memberships/);
+    assert.doesNotMatch(html, /Schema missing/);
+    assert.doesNotMatch(html, /Bootstrap Tenant Memberships/);
     assert.doesNotMatch(html, /<form[^>]+action="\/session"/);
     assert.doesNotMatch(html, /name="tenantId"/);
     assert.doesNotMatch(html, /name="subjectId"/);
@@ -1404,6 +1423,8 @@ test("console root renders setup pending when tenants exist without memberships"
     assert.match(html, /Tenants loaded/);
     assert.match(html, /No memberships/);
     assert.doesNotMatch(html, /No tenants/);
+    assert.doesNotMatch(html, /Schema missing/);
+    assert.doesNotMatch(html, /Bootstrap Tenant Data/);
     assert.doesNotMatch(html, /<form[^>]+action="\/session"/);
     assert.doesNotMatch(html, /name="tenantId"/);
     assert.doesNotMatch(html, /name="subjectId"/);

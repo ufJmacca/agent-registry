@@ -36,13 +36,33 @@ export function renderPublicShell(options: PublicShellOptions): string {
   return `<div class="app-shell app-shell--public" data-shell="public" data-page="${escapeHtml(options.page)}">
     <header class="public-topbar">
       <div class="public-topbar__inner">
-        <a class="shell-brand__mark" href="/">Technical Curator</a>
-        <p class="public-topbar__copy">Architectural precision for truthful agent operations.</p>
+        <div class="public-topbar__brand">
+          <a class="shell-brand__mark" href="/">Technical Curator</a>
+          <p class="public-topbar__copy">Architectural precision for truthful agent operations.</p>
+        </div>
+        <nav class="public-topbar__nav" aria-label="Public sections">
+          <a class="public-topbar__nav-link" href="#sign-in-hero">Overview</a>
+          <a class="public-topbar__nav-link" href="#sign-in-companion">Setup</a>
+        </nav>
+        <div class="public-topbar__actions">
+          <a class="public-topbar__action" href="#sign-in-access">Access</a>
+          <a class="public-topbar__cta" href="/console">Console</a>
+        </div>
       </div>
     </header>
     <div class="public-canvas">
       ${options.body}
     </div>
+    <footer class="public-footer">
+      <div class="public-footer__inner">
+        <p class="public-footer__copy">© 2026 Technical Curator Registry. Architectural Precision.</p>
+        <div class="public-footer__links">
+          <a class="public-footer__link" href="#sign-in-access">Registry Access</a>
+          <a class="public-footer__link" href="#sign-in-companion">Setup Status</a>
+          <a class="public-footer__link" href="/console">Console</a>
+        </div>
+      </div>
+    </footer>
   </div>`;
 }
 

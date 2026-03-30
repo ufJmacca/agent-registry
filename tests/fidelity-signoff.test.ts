@@ -586,6 +586,105 @@ test(
 );
 
 test(
+  "implementation notes record the / sign-in fidelity pass and public-shell truthful substitutions",
+  async () => {
+    // Arrange
+    const implementationNotesPath = path.join(
+      repositoryRoot,
+      "design-reference",
+      "IMPLEMENTATION_NOTES.md",
+    );
+
+    // Act
+    const notes = await readFile(implementationNotesPath, "utf8");
+    const signInSection = extractSection(notes, "### `/`");
+    const residualDeltaRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Residual Delta Log",
+      [...expectedReferenceAuditResidualDeltaHeaders],
+    );
+    const omissionRows = parseMarkdownTable(notes, "## Omissions and Truthful Substitutions", [
+      "Route",
+      "Reference asset",
+      "Mock-only content or unsupported control",
+      "Truthful implementation replacement or omission",
+      "Reason",
+    ]);
+    const signInResidualDeltaRow = residualDeltaRows.find(
+      (row) => row["Current route"] === "/",
+    );
+    const signInOmissionRow = omissionRows.find(
+      (row) => row.Route === "/" && row["Reference asset"] === "sign_in_landing_page",
+    );
+
+    // Assert
+    assert.ok(signInResidualDeltaRow, "Expected a residual-delta row for /");
+    assert.match(
+      signInResidualDeltaRow["Audit pass"],
+      /Public sign-in fidelity pass completed on \d{4}-\d{2}-\d{2} UTC\./,
+      "Expected / to record the completed sign-in fidelity pass",
+    );
+    assert.doesNotMatch(
+      signInResidualDeltaRow["Audit pass"],
+      /Phase 0 reference audit/i,
+      "Expected / to move beyond the Phase 0 audit state",
+    );
+    assert.match(
+      signInResidualDeltaRow["Highest-value unresolved fidelity delta"],
+      /extra marketing destinations.*intentionally absent/i,
+      "Expected / residual delta to capture the intentionally omitted mock marketing controls",
+    );
+    assert.match(
+      signInResidualDeltaRow["Truthful constraint to preserve"],
+      /signed-in redirect behavior.*tenant-aware selection.*self-hosted collapse.*setup-pending prominence/i,
+      "Expected / residual delta to preserve the real sign-in flow constraints",
+    );
+
+    assert.ok(
+      signInOmissionRow,
+      "Expected an omissions and truthful substitutions row for /",
+    );
+    assert.match(
+      signInOmissionRow["Mock-only content or unsupported control"],
+      /SSO login.*biometrics.*marketing navigation links/i,
+      "Expected / omissions row to list the unsupported mock auth and marketing controls",
+    );
+    assert.match(
+      signInOmissionRow["Truthful implementation replacement or omission"],
+      /tenant selector.*subject selector.*\/session.*\/console/i,
+      "Expected / omissions row to document the truthful sign-in controls and routed destination",
+    );
+
+    const navigationTreatment = extractBulletValue(signInSection, "Navigation treatment");
+    assert.match(
+      navigationTreatment,
+      /extra marketing links were intentionally omitted/i,
+      "Expected / review notes to record the omitted mock navigation controls",
+    );
+    assert.match(
+      navigationTreatment,
+      /truthful in-page anchors.*\/console/i,
+      "Expected / review notes to document the truthful public-shell navigation replacements",
+    );
+
+    const intentionalDeviations = extractBulletValue(
+      signInSection,
+      "Intentional deviations and truthful substitutions",
+    );
+    assert.match(
+      intentionalDeviations,
+      /tenant-membership sign-in flow/i,
+      "Expected / review notes to cite the truthful membership-based sign-in flow",
+    );
+    assert.match(
+      intentionalDeviations,
+      /truthful in-page sections and `?\/console`?/i,
+      "Expected / review notes to keep the public-shell link substitutions explicit",
+    );
+  },
+);
+
+test(
   "implementation notes include a completed omissions and truthful substitutions row for each in-scope route",
   async () => {
     // Arrange
