@@ -2738,6 +2738,9 @@ test("admin active agent detail keeps overlay controls and version history hones
         `data-visual-dynamic="agent-overview"[\\s\\S]*?<h1>${escapeRegExp(pendingFixture.agentId)}<\\/h1>`,
       ),
     );
+    assert.match(agentDetailHtml, /data-agent-detail-layout="dossier"/);
+    assert.match(agentDetailHtml, /class="[^"]*\bpage-hero--dossier\b[^"]*"/);
+    assert.match(agentDetailHtml, /class="[^"]*\bside-panel\b[^"]*\bagent-detail-side\b[^"]*"/);
     assert.match(agentDetailHtml, /No active approved version is currently published\./);
     assert.match(
       agentDetailHtml,
@@ -2755,6 +2758,110 @@ test("admin active agent detail keeps overlay controls and version history hones
       agentDetailHtml,
       new RegExp(
         `action="${escapeRegExp(`/tenants/tenant-alpha/agents/${pendingFixture.agentId}/environments/dev/overlay/deprecate`)}"`,
+      ),
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin active agent detail renders approved publications and environment overlay actions inside the dossier layout", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const approvedFixture = await createPendingVersion(context, {
+      displayName: "Case Router",
+      environments: ["dev", "prod"],
+      publisherId: "publisher-alpha",
+      summary: "Routes support cases.",
+      versionLabel: "v1",
+    });
+
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    const approveResponse = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}/approve`,
+      {},
+    );
+    const overlayResponse = await browser.postUrlEncoded(
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/environments/prod/overlay/deprecate`,
+      {},
+    );
+
+    // Act
+    const agentDetailPage = await browser.get(`/tenants/tenant-alpha/agents/${approvedFixture.agentId}`);
+    const agentDetailHtml = await agentDetailPage.text();
+
+    // Assert
+    assert.equal(approveResponse.status, 303);
+    assert.equal(
+      getRedirectLocation(approveResponse),
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}`,
+    );
+    assert.equal(overlayResponse.status, 303);
+    assert.equal(
+      getRedirectLocation(overlayResponse),
+      `/tenants/tenant-alpha/agents/${approvedFixture.agentId}`,
+    );
+    assert.equal(agentDetailPage.status, 200);
+    assertAuthenticatedShellContract(agentDetailHtml, {
+      dynamicHooks: [
+        "agent-overview",
+        "overlay-state",
+        "active-publications",
+        "environment-controls",
+        "version-history",
+      ],
+      navLinks: [
+        {
+          href: "/console",
+          label: "Overview",
+        },
+        {
+          href: "/tenants/tenant-alpha/drafts/new",
+          label: "New Draft Registration",
+        },
+        {
+          href: "/tenants/tenant-alpha/environments",
+          label: "Environment Management",
+        },
+        {
+          href: "/tenants/tenant-alpha/review",
+          label: "Review Queue",
+        },
+      ],
+      page: "active-agent-detail",
+    });
+    assert.match(agentDetailHtml, /data-agent-detail-layout="dossier"/);
+    assert.match(
+      agentDetailHtml,
+      /class="[^"]*\brecord-list\b[^"]*\brecord-list--publication-cards\b[^"]*"/,
+    );
+    assert.match(
+      agentDetailHtml,
+      /class="[^"]*\brecord-list\b[^"]*\brecord-list--environment-controls\b[^"]*"/,
+    );
+    assert.match(
+      agentDetailHtml,
+      /class="[^"]*\brecord-list\b[^"]*\brecord-list--history\b[^"]*"/,
+    );
+    assert.match(agentDetailHtml, /Environment overlay for prod/);
+    assert.match(agentDetailHtml, /Deprecated: yes/);
+    assert.match(agentDetailHtml, /Health endpoint:/);
+    assert.match(
+      agentDetailHtml,
+      new RegExp(
+        `href="${escapeRegExp(`/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}`)}"`,
+      ),
+    );
+    assert.match(
+      agentDetailHtml,
+      new RegExp(
+        `action="${escapeRegExp(`/tenants/tenant-alpha/agents/${approvedFixture.agentId}/environments/prod/overlay/deprecate`)}"`,
       ),
     );
   } finally {

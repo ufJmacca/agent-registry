@@ -760,8 +760,16 @@
 }
 
 @layer pages {
-  .agent-detail-hero {
+  .page-hero--dossier {
   gap: 1.5rem;
+  }
+
+  .agent-detail-layout {
+  display: grid;
+  gap: 1rem;
+  }
+
+  .agent-detail-hero {
   background:
     radial-gradient(circle at top right, rgba(86, 94, 116, 0.12), transparent 34%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(240, 244, 247, 0.92));
@@ -854,6 +862,18 @@
 
 .agent-detail-history-list {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.record-list--publication-cards {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.record-list--publication-cards > :nth-child(2) {
+  transform: translateY(1.1rem);
+}
+
+.record-list--publication-cards > :nth-child(3) {
+  transform: translateY(2.2rem);
 }
 
 .agent-detail-history-item {
@@ -1878,14 +1898,23 @@
   }
 
   .agent-detail-card-head,
+  .card-head,
   .dashboard-section-head,
   .agent-detail-section-head,
+  .section-frame__header,
   .version-detail-card-head,
   .version-detail-section-head {
     flex-direction: column;
   }
 
+  .record-list--publication-cards > :nth-child(2),
+  .record-list--publication-cards > :nth-child(3) {
+    transform: none;
+  }
+
   .agent-detail-history-list,
+  .record-list--publication-cards,
+  .record-list--history,
   .version-detail-contract-grid--publication {
     grid-template-columns: 1fr;
   }
