@@ -30,6 +30,10 @@ const draftRegistrationPageModuleUrl = new URL(
   "../apps/web/src/ui/pages/draft-registration.js",
   import.meta.url,
 ).href;
+const environmentManagementPageModuleUrl = new URL(
+  "../apps/web/src/ui/pages/environment-management.js",
+  import.meta.url,
+).href;
 const signInPageModuleUrl = new URL("../apps/web/src/ui/pages/sign-in.js", import.meta.url).href;
 const versionDetailPageModuleUrl = new URL(
   "../apps/web/src/ui/pages/version-detail.js",
@@ -585,6 +589,129 @@ test(
   );
   assert.deepEqual(emptyStateCalls, ["No environments are configured yet for this tenant."]);
   assert.match(emptyMarkup, /<button class="draft-action-button" type="submit" disabled>/);
+  },
+);
+
+test(
+  "environment management page delegates inventory framing, form wrappers, and empty states to shared primitives",
+  { concurrency: false },
+  async (t) => {
+  // Arrange
+  const emptyStateCalls: string[] = [];
+  const fieldCalls: string[] = [];
+  const formSectionCalls: string[] = [];
+  const recordListCalls: Array<{ items: number; region: string }> = [];
+  const sectionCalls: string[] = [];
+  const sidePanelCalls: number[] = [];
+
+  resetPrimitiveTestOverrides();
+  t.after(() => resetPrimitiveTestOverrides());
+  installPrimitiveTestOverrides({
+    renderEmptyState: (options) => {
+      emptyStateCalls.push(options.title);
+      return `<sentinel-environment-empty data-title="${options.title}"></sentinel-environment-empty>`;
+    },
+    renderFormField: (options) => {
+      fieldCalls.push(options.label);
+      return `<sentinel-environment-field data-label="${options.label}"></sentinel-environment-field>`;
+    },
+    renderFormSection: (options) => {
+      formSectionCalls.push(options.title);
+      return `<sentinel-environment-form-section data-title="${options.title}">${options.body}</sentinel-environment-form-section>`;
+    },
+    renderRecordList: (options) => {
+      const region = String(options.attributes?.["data-visual-dynamic"] ?? "none");
+      recordListCalls.push({
+        items: options.items.length,
+        region,
+      });
+      return `<sentinel-environment-record-list data-region="${region}" data-items="${String(options.items.length)}">${
+        options.items.length === 0 ? (options.emptyState ?? "") : options.items.join("")
+      }</sentinel-environment-record-list>`;
+    },
+    renderSectionFrame: (options) => {
+      sectionCalls.push(options.title);
+      return `<sentinel-environment-section data-title="${options.title}">${options.headerContent ?? ""}${options.body}</sentinel-environment-section>`;
+    },
+    renderSidePanel: (options) => {
+      sidePanelCalls.push(options.sections.length);
+      return `<sentinel-environment-side-panel data-sections="${String(options.sections.length)}">${options.sections.join("")}</sentinel-environment-side-panel>`;
+    },
+  });
+  const { renderEnvironmentManagementPage } = await import(environmentManagementPageModuleUrl);
+  const populatedMarkup = renderEnvironmentManagementPage({
+    environmentKeys: ["dev", "prod"],
+    tenantId: "tenant-alpha",
+  });
+
+  // Act
+  const emptyMarkup = renderEnvironmentManagementPage({
+    environmentKeys: [],
+    tenantId: "tenant-alpha",
+  });
+
+  // Assert
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-environment-section data-title="Environment Management">',
+    "Expected the environment page hero to emit the shared section-frame sentinel.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-environment-section data-title="Configured Environments">',
+    "Expected the inventory panel to emit the shared section-frame sentinel.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-environment-record-list data-region="environment-list" data-items="2">',
+    "Expected the environment inventory to emit the shared record-list sentinel.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-environment-side-panel data-sections="2">',
+    "Expected the secondary creation rail to emit the shared side-panel sentinel.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-environment-form-section data-title="Register Environment">',
+    "Expected the add-environment workflow to emit the shared form-section sentinel.",
+  );
+  assertContainsMarkup(
+    populatedMarkup,
+    '<sentinel-environment-field data-label="Environment key"></sentinel-environment-field>',
+    "Expected the add-environment form field to emit the shared form-field sentinel.",
+  );
+  assert.match(populatedMarkup, /<button[^>]*type="submit"[^>]*>Add Environment<\/button>/);
+  assert.doesNotMatch(
+    populatedMarkup,
+    /<button[^>]*type="submit"[^>]*disabled[^>]*>Add Environment<\/button>/,
+  );
+  assertContainsMarkup(
+    emptyMarkup,
+    '<sentinel-environment-empty data-title="No environments have been configured yet."></sentinel-environment-empty>',
+    "Expected the empty inventory panel to emit the shared empty-state sentinel.",
+  );
+  assert.ok(sectionCalls.includes("Environment Management"));
+  assert.equal(
+    sectionCalls.filter((title) => title === "Configured Environments").length,
+    2,
+    "Expected the environment inventory frame to render through the shared section-frame helper in both populated and empty states.",
+  );
+  assert.deepEqual(recordListCalls, [
+    {
+      items: 2,
+      region: "environment-list",
+    },
+    {
+      items: 0,
+      region: "environment-list",
+    },
+  ]);
+  assert.deepEqual(sidePanelCalls, [2, 2]);
+  assert.deepEqual(formSectionCalls, ["Register Environment", "Register Environment"]);
+  assert.deepEqual(fieldCalls, ["Environment key", "Environment key"]);
+  assert.deepEqual(emptyStateCalls, ["No environments have been configured yet."]);
+  assert.match(populatedMarkup, /action="\/tenants\/tenant-alpha\/environments"/);
   },
 );
 

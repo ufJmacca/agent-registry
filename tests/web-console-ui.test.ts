@@ -607,15 +607,35 @@ function assertPublicationDossierMarkup(
 }
 
 function getEnvironmentPanelMarkup(html: string, panel: "inventory" | "creation"): string {
-  const panelMatch = html.match(
-    new RegExp(
-      `<(?:section|aside)[^>]+data-environment-panel="${panel}"[^>]*>[\\s\\S]*?<\\/(?:section|aside)>`,
-    ),
-  );
+  const panelMatch = new RegExp(
+    `<(?<tagName>section|aside)\\b[^>]+data-environment-panel="${panel}"[^>]*>`,
+  ).exec(html);
 
   assert.notEqual(panelMatch, null, `Expected ${panel} panel markup to be rendered`);
 
-  return panelMatch[0];
+  return extractBalancedElementMarkup(html, {
+    startIndex: panelMatch.index,
+    tagName: panelMatch.groups?.tagName ?? "section",
+  });
+}
+
+function getFirstFormMarkup(markup: string): string {
+  const formMatch = /<form\b[^>]*>/.exec(markup);
+
+  assert.notEqual(formMatch, null, "Expected form markup to be rendered");
+
+  return extractBalancedElementMarkup(markup, {
+    startIndex: formMatch.index,
+    tagName: "form",
+  });
+}
+
+function getFormAction(markup: string): string {
+  const actionMatch = markup.match(/\saction="([^"]+)"/);
+
+  assert.notEqual(actionMatch, null, "Expected rendered form action to be present");
+
+  return actionMatch[1];
 }
 
 function countMatches(input: string, pattern: RegExp): number {
@@ -780,6 +800,7 @@ function assertEnvironmentManagementPage(
   });
   const inventoryPanel = getEnvironmentPanelMarkup(html, "inventory");
   const creationPanel = getEnvironmentPanelMarkup(html, "creation");
+  const creationForm = getFirstFormMarkup(creationPanel);
   const inventoryPanelIndex = html.indexOf('data-environment-panel="inventory"');
   const creationPanelIndex = html.indexOf('data-environment-panel="creation"');
   const createEnvironmentFormPattern = new RegExp(
@@ -795,13 +816,19 @@ function assertEnvironmentManagementPage(
   assert.match(inventoryPanel, /Configured Environments/);
   assert.match(inventoryPanel, /class="environment-list"/);
   assert.match(creationPanel, /Add Environment/);
-  assert.match(creationPanel, /class="environment-form"/);
-  assert.match(creationPanel, createEnvironmentFormPattern);
-  assert.match(creationPanel, /<input[^>]+name="environmentKey"/);
+  assert.match(creationForm, /class="environment-form"/);
+  assert.match(creationForm, createEnvironmentFormPattern);
+  assert.match(creationForm, /<input[^>]+name="environmentKey"/);
+  assert.match(creationForm, /<button[^>]*type="submit"[^>]*>Add Environment<\/button>/);
+  assert.doesNotMatch(
+    creationForm,
+    /<button[^>]*type="submit"[^>]*disabled[^>]*>Add Environment<\/button>/,
+  );
   assert.doesNotMatch(inventoryPanel, createEnvironmentFormPattern);
   assert.doesNotMatch(inventoryPanel, /<input[^>]+name="environmentKey"/);
   assert.doesNotMatch(creationPanel, /<article[^>]+class="environment-entry"/);
   assert.doesNotMatch(html, /Active Clusters|Avg Uptime|Registry Load|Instances|Region|Last Deploy/);
+  assert.doesNotMatch(html, /Export Config \(JSON\)|Global Logs|more_vert/);
 
   if (options.state === "empty") {
     assert.match(inventoryPanel, /No environments have been configured yet\./);
@@ -3384,6 +3411,79 @@ test("admin environment management shows a truthful empty inventory state", asyn
       unexpectedEnvironmentKeys: ["dev", "prod", "qa", "staging"],
     });
     assert.match(environmentsHtml, /Tenant tenant-alpha/);
+  } finally {
+    await context.close();
+  }
+});
+
+test("admin environment management submits the rendered empty-state creation form", async () => {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+  const browser = new BrowserSession(context.baseUrl);
+
+  try {
+    // Arrange
+    const adminNavLinks = [
+      {
+        href: "/console",
+        label: "Overview",
+      },
+      {
+        href: "/tenants/tenant-alpha/drafts/new",
+        label: "New Draft Registration",
+      },
+      {
+        href: "/tenants/tenant-alpha/environments",
+        label: "Environment Management",
+      },
+      {
+        href: "/tenants/tenant-alpha/review",
+        label: "Review Queue",
+      },
+    ];
+    await context.db
+      .deleteFrom("tenant_environments")
+      .where("tenant_id", "=", "tenant-alpha")
+      .execute();
+    await signIn(browser, "tenant-alpha", "admin-alpha");
+
+    const environmentsPage = await browser.get("/tenants/tenant-alpha/environments");
+    const environmentsHtml = await environmentsPage.text();
+    const creationPanel = getEnvironmentPanelMarkup(environmentsHtml, "creation");
+    const creationForm = getFirstFormMarkup(creationPanel);
+    const createEnvironmentAction = getFormAction(creationForm);
+
+    // Act
+    const createEnvironmentResponse = await browser.postUrlEncoded(createEnvironmentAction, {
+      environmentKey: "qa",
+    });
+    const updatedEnvironmentsPage = await browser.get("/tenants/tenant-alpha/environments");
+    const updatedEnvironmentsHtml = await updatedEnvironmentsPage.text();
+
+    // Assert
+    assert.equal(environmentsPage.status, 200);
+    assertEnvironmentManagementPage(environmentsHtml, {
+      navLinks: adminNavLinks,
+      state: "empty",
+      tenantId: "tenant-alpha",
+      unexpectedEnvironmentKeys: ["dev", "prod", "qa", "staging"],
+    });
+    assert.equal(getFormAction(creationForm), "/tenants/tenant-alpha/environments");
+    assert.match(creationForm, /<button[^>]*type="submit"[^>]*>Add Environment<\/button>/);
+    assert.doesNotMatch(
+      creationForm,
+      /<button[^>]*type="submit"[^>]*disabled[^>]*>Add Environment<\/button>/,
+    );
+    assert.equal(createEnvironmentResponse.status, 303);
+    assert.equal(getRedirectLocation(createEnvironmentResponse), "/tenants/tenant-alpha/environments");
+    assert.equal(updatedEnvironmentsPage.status, 200);
+    assertEnvironmentManagementPage(updatedEnvironmentsHtml, {
+      expectedEnvironmentKeys: ["qa"],
+      navLinks: adminNavLinks,
+      state: "populated",
+      tenantId: "tenant-alpha",
+    });
   } finally {
     await context.close();
   }
