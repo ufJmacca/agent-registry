@@ -1,25 +1,13 @@
 import { escapeHtml } from "../document.js";
+import {
+  renderEmptyState,
+  renderFormField,
+  renderFormSection,
+  renderPill,
+} from "../primitives/index.js";
 
 interface DraftRegistrationEnvironment {
   environmentKey: string;
-}
-
-function renderMetadataField(options: {
-  fieldClassName?: string;
-  fieldName: string;
-  inputMarkup: string;
-  label: string;
-  supportingText?: string;
-}): string {
-  return `<label class="draft-field${options.fieldClassName ? ` ${options.fieldClassName}` : ""}">
-    <span class="shell-eyebrow">${escapeHtml(options.label)}</span>
-    ${options.inputMarkup}
-    ${
-      options.supportingText === undefined
-        ? ""
-        : `<span class="draft-field__support">${escapeHtml(options.supportingText)}</span>`
-    }
-  </label>`;
 }
 
 function renderPublicationSection(environment: DraftRegistrationEnvironment): string {
@@ -38,21 +26,20 @@ function renderPublicationSection(environment: DraftRegistrationEnvironment): st
       </label>
     </div>
     <div class="draft-publication-grid">
-      ${renderMetadataField({
-        fieldName: `publication:${environmentKey}:healthEndpointUrl`,
+      ${renderFormField({
+        fieldClassName: "draft-field",
         inputMarkup: `<input name="publication:${environmentKey}:healthEndpointUrl" placeholder="https://${environmentKey}.health.example.com/status" />`,
         label: "Health Endpoint URL",
         supportingText: "Required when this environment publication is enabled.",
       })}
-      ${renderMetadataField({
-        fieldName: `publication:${environmentKey}:invocationEndpoint`,
+      ${renderFormField({
+        fieldClassName: "draft-field",
         inputMarkup: `<input name="publication:${environmentKey}:invocationEndpoint" placeholder="https://${environmentKey}.invoke.example.com" />`,
         label: "Optional Invocation Endpoint Override",
         supportingText: "Leave blank to keep the endpoint declared in the raw card.",
       })}
-      ${renderMetadataField({
-        fieldClassName: "draft-field--wide",
-        fieldName: `publication:${environmentKey}:rawCard`,
+      ${renderFormField({
+        fieldClassName: "draft-field draft-field--wide",
         inputMarkup: `<input type="file" name="publication:${environmentKey}:rawCard" />`,
         label: "Raw Card Upload",
         supportingText: "Uploaded as multipart form data and validated against the current raw-card rules.",
@@ -68,12 +55,13 @@ export function renderDraftRegistrationPage(options: {
   const hasEnvironments = options.environments.length > 0;
   const publicationMarkup = hasEnvironments
     ? options.environments.map((environment) => renderPublicationSection(environment)).join("")
-    : `<div class="draft-empty-state stack">
-        <span class="shell-eyebrow">Environment Publications</span>
-        <h3>No environments are configured yet for this tenant.</h3>
-        <p>At least one configured environment is required before a draft can be created.</p>
-        <p class="meta">The page keeps the current draft route and multipart form semantics, but it does not invent disabled publication controls when the tenant has no environments.</p>
-      </div>`;
+    : renderEmptyState({
+        body: "At least one configured environment is required before a draft can be created.",
+        className: "draft-empty-state",
+        eyebrow: "Environment Publications",
+        meta: "The page keeps the current draft route and multipart form semantics, but it does not invent disabled publication controls when the tenant has no environments.",
+        title: "No environments are configured yet for this tenant.",
+      });
 
   return `<section class="hero card stack page-hero draft-page-hero">
     <span class="shell-eyebrow">Draft Registration</span>
@@ -83,79 +71,71 @@ export function renderDraftRegistrationPage(options: {
   </section>
   <form class="draft-form stack" action="/tenants/${encodeURIComponent(options.tenantId)}/drafts" method="post" enctype="multipart/form-data">
     <section class="draft-grid">
-      <section class="draft-section card stack" data-form-region="metadata">
-        <div class="draft-section__header">
-          <div class="stack">
-            <span class="shell-eyebrow">General Metadata</span>
-            <h2>General Metadata</h2>
-            <p class="meta">Shared agent identity, summary, and capability requirements captured once for the full draft.</p>
-          </div>
-          <div class="draft-pill-row" aria-hidden="true">
-            <span class="pill">Version</span>
-            <span class="pill">Identity</span>
-            <span class="pill">Requirements</span>
-          </div>
-        </div>
-        <div class="draft-metadata-grid">
-          ${renderMetadataField({
-            fieldName: "versionLabel",
+      ${renderFormSection({
+        attributes: {
+          "data-form-region": "metadata",
+        },
+        body: `<div class="draft-metadata-grid">
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup: `<input name="versionLabel" placeholder="v1" />`,
             label: "Version Label",
           })}
-          ${renderMetadataField({
-            fieldName: "displayName",
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup: `<input name="displayName" placeholder="Case Resolver" />`,
             label: "Display Name",
           })}
-          ${renderMetadataField({
-            fieldClassName: "draft-field--wide",
-            fieldName: "summary",
+          ${renderFormField({
+            fieldClassName: "draft-field draft-field--wide",
             inputMarkup:
               '<textarea name="summary" rows="5" placeholder="Handles support case routing."></textarea>',
             label: "Summary",
           })}
-          ${renderMetadataField({
-            fieldClassName: "draft-field--wide",
-            fieldName: "capabilities",
+          ${renderFormField({
+            fieldClassName: "draft-field draft-field--wide",
             inputMarkup:
               '<textarea name="capabilities" rows="4" placeholder="shared-capability, case-routing"></textarea>',
             label: "Capabilities",
             supportingText: "Comma-separated or newline-delimited values are preserved by the current parser.",
           })}
-          ${renderMetadataField({
-            fieldName: "tags",
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup: '<textarea name="tags" rows="3" placeholder="shared-tag, routing"></textarea>',
             label: "Tags",
           })}
-          ${renderMetadataField({
-            fieldName: "requiredRoles",
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup:
               '<textarea name="requiredRoles" rows="3" placeholder="support-agent"></textarea>',
             label: "Required Roles",
           })}
-          ${renderMetadataField({
-            fieldName: "requiredScopes",
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup:
               '<textarea name="requiredScopes" rows="3" placeholder="tickets.read, tickets.write"></textarea>',
             label: "Required Scopes",
           })}
-        </div>
-      </section>
-      <section class="draft-section card stack" data-form-region="contracts">
-        <div class="draft-section__header">
-          <div class="stack">
-            <span class="shell-eyebrow">Shared Contracts</span>
-            <h2>Shared Contracts</h2>
-            <p class="meta">Header and context contract JSON is validated server-side and applied to every publication in the created draft.</p>
-          </div>
-          <div class="draft-pill-row" aria-hidden="true">
-            <span class="pill">JSON</span>
-            <span class="pill">Shared</span>
-          </div>
-        </div>
-        <div class="draft-contract-grid">
-          ${renderMetadataField({
-            fieldName: "headerContract",
+        </div>`,
+        className: "draft-section card stack",
+        description:
+          "Shared agent identity, summary, and capability requirements captured once for the full draft.",
+        eyebrow: "General Metadata",
+        headerClassName: "draft-section__header",
+        headerContent: `<div class="draft-pill-row" aria-hidden="true">
+          ${renderPill("Version")}
+          ${renderPill("Identity")}
+          ${renderPill("Requirements")}
+        </div>`,
+        title: "General Metadata",
+      })}
+      ${renderFormSection({
+        attributes: {
+          "data-form-region": "contracts",
+        },
+        body: `<div class="draft-contract-grid">
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup: `<textarea name="headerContract" rows="12">[
   {
     "name": "X-User-Id",
@@ -167,8 +147,8 @@ export function renderDraftRegistrationPage(options: {
             label: "Header Contract JSON",
             supportingText: "Malformed JSON still returns the current 400 field-level validation error.",
           })}
-          ${renderMetadataField({
-            fieldName: "contextContract",
+          ${renderFormField({
+            fieldClassName: "draft-field",
             inputMarkup: `<textarea name="contextContract" rows="12">[
   {
     "key": "client_id",
@@ -181,25 +161,38 @@ export function renderDraftRegistrationPage(options: {
             label: "Context Contract JSON",
             supportingText: "Required context keys are enforced exactly as they are in the current backend flow.",
           })}
-        </div>
-      </section>
+        </div>`,
+        className: "draft-section card stack",
+        description:
+          "Header and context contract JSON is validated server-side and applied to every publication in the created draft.",
+        eyebrow: "Shared Contracts",
+        headerClassName: "draft-section__header",
+        headerContent: `<div class="draft-pill-row" aria-hidden="true">
+          ${renderPill("JSON")}
+          ${renderPill("Shared")}
+        </div>`,
+        title: "Shared Contracts",
+      })}
     </section>
-    <section class="draft-section card stack" data-form-region="publications" data-visual-dynamic="publication-sections">
-      <div class="draft-section__header">
-        <div class="stack">
-          <span class="shell-eyebrow">Environment Publications</span>
-          <h2>Environment Publications</h2>
-          <p class="meta">Each tenant environment gets its own technical panel so publication metadata stays scannable without changing any field names.</p>
-        </div>
-        <div class="draft-pill-row" aria-hidden="true">
-          <span class="pill">${String(options.environments.length)} configured</span>
-          <span class="pill">Multipart</span>
-        </div>
-      </div>
-      <div class="draft-publication-stack">
+    ${renderFormSection({
+      attributes: {
+        "data-form-region": "publications",
+        "data-visual-dynamic": "publication-sections",
+      },
+      body: `<div class="draft-publication-stack">
         ${publicationMarkup}
-      </div>
-    </section>
+      </div>`,
+      className: "draft-section card stack",
+      description:
+        "Each tenant environment gets its own technical panel so publication metadata stays scannable without changing any field names.",
+      eyebrow: "Environment Publications",
+      headerClassName: "draft-section__header",
+      headerContent: `<div class="draft-pill-row" aria-hidden="true">
+        ${renderPill(`${String(options.environments.length)} configured`)}
+        ${renderPill("Multipart")}
+      </div>`,
+      title: "Environment Publications",
+    })}
     <section class="draft-action-footer card" data-form-region="actions">
       <div class="draft-action-copy">
         <span class="shell-eyebrow">Draft Actions</span>

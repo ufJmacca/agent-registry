@@ -1,4 +1,5 @@
 import { escapeHtml } from "../document.js";
+import { renderPill, renderSectionFrame, renderStatTile } from "../primitives/index.js";
 
 export interface SignInMembershipOption {
   roles: string[];
@@ -37,11 +38,19 @@ function renderSignInLanding(options: SignInLandingOptions): string {
   const secondaryPanel = options.emphasizeSetup ? options.accessPanel : options.companionPanel;
 
   return `<div class="sign-in-landing">
-    <section class="public-hero sign-in-hero card stack" data-visual-dynamic="sign-in-hero">
-      <span class="shell-eyebrow">Agent Registry Console</span>
-      <h1>Architectural Precision For Tenant Operations</h1>
-      <p class="meta">Securely access the current console for truthful draft, review, environment, and active agent workflows inside the shared technical curator shell.</p>
-    </section>
+    ${renderSectionFrame({
+      as: "section",
+      attributes: {
+        "data-visual-dynamic": "sign-in-hero",
+      },
+      body: "",
+      className: "public-hero sign-in-hero card stack",
+      description:
+        "Securely access the current console for truthful draft, review, environment, and active agent workflows inside the shared technical curator shell.",
+      eyebrow: "Agent Registry Console",
+      title: "Architectural Precision For Tenant Operations",
+      titleTag: "h1",
+    })}
     <section class="public-grid sign-in-stage">
       <div class="stack sign-in-stage__primary">
         ${primaryPanel}
@@ -57,10 +66,12 @@ function renderStatusTiles(values: Array<{ label: string; value: string }>): str
   return `<div class="sign-in-status-grid">
     ${values
       .map(
-        (value) => `<div class="sign-in-status">
-          <span class="shell-eyebrow">${escapeHtml(value.label)}</span>
-          <strong>${escapeHtml(value.value)}</strong>
-        </div>`,
+        (value) =>
+          renderStatTile({
+            className: "sign-in-status",
+            eyebrow: value.label,
+            value: value.value,
+          }),
       )
       .join("")}
   </div>`;
@@ -83,7 +94,7 @@ function renderSetupPendingPanel(options: SetupPendingOptions): string {
       </div>
       <div class="sign-in-pill-row">
         ${options.companionBadges
-          .map((badge) => `<div class="pill">${escapeHtml(badge)}</div>`)
+          .map((badge) => renderPill(badge))
           .join("")}
       </div>
     </section>`,
