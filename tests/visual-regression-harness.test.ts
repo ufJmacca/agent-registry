@@ -43,7 +43,7 @@ test("root npm scripts fan out to unit and visual regression suites", async () =
 
   // Assert
   assert.equal(packageJson.devDependencies?.["@playwright/test"], "^1.58.2");
-  assert.equal(scripts["test:unit"], "tsx --test tests/*.test.ts");
+  assert.equal(scripts["test:unit"], "tsx --test --test-concurrency=1 tests/*.test.ts");
   assert.equal(scripts["test:visual"], "playwright test");
   assert.equal(scripts["test:visual:update"], "playwright test --update-snapshots");
   assert.match(scripts.test ?? "", /workspace-foundation\.test\.sh --mode=outer/);
