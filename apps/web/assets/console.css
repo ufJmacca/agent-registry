@@ -749,6 +749,13 @@
   gap: 1rem;
   }
 
+  .shell-mobile-nav,
+  .shell-nav--mobile,
+  .shell-content {
+  min-width: 0;
+  width: 100%;
+  }
+
   .shell-content {
   display: grid;
   gap: 1rem;
@@ -913,6 +920,12 @@
     linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(240, 244, 247, 0.92));
 }
 
+.version-detail-layout {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
 .version-detail-hero__lead {
   display: grid;
   gap: 0.85rem;
@@ -950,11 +963,14 @@
 .version-detail-side,
 .version-detail-contract-grid,
 .version-detail-publication-list,
+.version-detail-review-signals,
+.version-detail-metadata-list,
 .version-detail-timeline,
 .version-detail-telemetry-list,
 .version-detail-health-list {
   display: grid;
   gap: 0.9rem;
+  min-width: 0;
 }
 
 .version-detail-panel {
@@ -982,6 +998,7 @@
 .version-detail-timeline-item,
 .version-detail-note,
 .version-detail-history-item {
+  min-width: 0;
   padding: 1rem 1.05rem;
   border-radius: 1.15rem;
   background: rgba(255, 255, 255, 0.72);
@@ -1005,7 +1022,7 @@
 }
 
 .version-detail-contract-grid {
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .version-detail-contract-grid--publication {
@@ -1018,23 +1035,85 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+  min-width: 0;
+}
+
+.version-detail-side {
+  position: sticky;
+  top: 5.9rem;
 }
 
 .version-detail-review-card {
-  position: sticky;
-  top: 5.9rem;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(240, 244, 247, 0.94)),
+    rgba(255, 255, 255, 0.98);
+  border-top: 4px solid rgba(93, 93, 120, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 20px 40px rgba(42, 52, 57, 0.06);
 }
 
 .version-detail-action-grid > * {
   flex: 1 1 240px;
 }
 
+.version-detail-review-signal,
 .version-detail-telemetry-window,
-.version-detail-health-summary {
+.version-detail-health-summary,
+.version-detail-metadata-row {
+  min-width: 0;
   padding: 0.85rem 0.9rem;
   border-radius: 1rem;
   background: rgba(240, 244, 247, 0.74);
   box-shadow: inset 0 0 0 1px rgba(42, 52, 57, 0.04);
+}
+
+.version-detail-metadata-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.version-detail-metadata-row strong {
+  font-family: "Manrope", "Inter", sans-serif;
+  font-size: 0.96rem;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.version-detail-publication-meta strong,
+.version-detail-publication-meta code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.version-detail-publication-meta code {
+  white-space: break-spaces;
+}
+
+.version-detail-pill-row .pill,
+.version-detail-review-signal p,
+.version-detail-note p,
+.version-detail-metadata-row strong,
+.version-detail-contract-card h3,
+.version-detail-contract-card p,
+.version-detail-telemetry-card p,
+.version-detail-telemetry-card code,
+.version-detail-health-card p,
+.version-detail-health-card code,
+.version-detail-health-summary p,
+.version-detail-history-item p,
+.version-detail-history-item code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.version-detail-telemetry-card code,
+.version-detail-health-card code,
+.version-detail-history-item code {
+  white-space: break-spaces;
 }
 
 .version-detail-health-history-list {
@@ -1044,6 +1123,10 @@
 
 .version-detail-raw-card pre {
   background: rgba(248, 250, 252, 0.96);
+}
+
+.version-detail-manifest pre {
+  border-left: 4px solid rgba(86, 94, 116, 0.74);
 }
 
 .review-queue-page {
@@ -1913,6 +1996,7 @@
   }
 
   .agent-detail-history-list,
+  .version-detail-contract-grid,
   .record-list--publication-cards,
   .record-list--history,
   .version-detail-contract-grid--publication {
@@ -1966,7 +2050,7 @@
     padding: 0.9rem;
   }
 
-  .version-detail-review-card {
+  .version-detail-side {
     position: static;
   }
 }

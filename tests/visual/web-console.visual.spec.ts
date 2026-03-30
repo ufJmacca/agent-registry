@@ -1,7 +1,12 @@
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 
 import {
+  approvePendingVersion,
+  createPendingVersion,
+  createRawCard,
+  createWebConsoleContext,
   createVisualRegressionFixture,
+  seedHealthAndTelemetry,
   type VisualRegressionFixture,
 } from "../support/web-console.ts";
 
@@ -43,7 +48,28 @@ const visualRoutes = [
   },
 ] as const;
 
+interface AdminSignInFixture {
+  baseUrl: string;
+  routes: {
+    consoleDashboard: string;
+    signInLanding: string;
+  };
+  tenantId: string;
+}
+
+interface LongPayloadVisualFixture extends AdminSignInFixture {
+  close(): Promise<void>;
+  routes: AdminSignInFixture["routes"] & {
+    versionDetail: string;
+  };
+}
+
 let fixture: VisualRegressionFixture;
+let longPayloadFixture: LongPayloadVisualFixture;
+
+function isMobileProject(testInfo: TestInfo): boolean {
+  return testInfo.project.name.endsWith("mobile");
+}
 
 async function prepareForSnapshot(page: Page): Promise<void> {
   await page.emulateMedia({
@@ -80,7 +106,7 @@ async function prepareForSnapshot(page: Page): Promise<void> {
   });
 }
 
-async function signInAsAdmin(page: Page, visualFixture: VisualRegressionFixture): Promise<void> {
+async function signInAsAdmin(page: Page, visualFixture: AdminSignInFixture): Promise<void> {
   await page.goto(`${visualFixture.baseUrl}${visualFixture.routes.signInLanding}`);
 
   if ((await page.locator('select[name="tenantId"]').count()) > 0) {
@@ -92,6 +118,75 @@ async function signInAsAdmin(page: Page, visualFixture: VisualRegressionFixture)
     page.waitForURL(`${visualFixture.baseUrl}${visualFixture.routes.consoleDashboard}`),
     page.locator('form[action="/session"] button[type="submit"]').click(),
   ]);
+}
+
+async function createLongPayloadFixture(): Promise<LongPayloadVisualFixture> {
+  const context = await createWebConsoleContext({
+    deploymentMode: "hosted",
+  });
+
+  try {
+    const longToken = `trace-${"segment".repeat(18)}`;
+    const sharedSummary =
+      "Curates long manifest and raw-card payloads without introducing unsupported controls.";
+    const approvedFixture = await createPendingVersion(context, {
+      capabilities: ["shared-capability", longToken],
+      contextContract: [
+        {
+          description:
+            "Preserves a deliberately long routing partition example so the mobile dossier shows raw payload handling truthfully.",
+          example: `partition-${"1234567890".repeat(12)}`,
+          key: `routing_${"partition".repeat(8)}`,
+          required: true,
+          type: "string",
+        },
+      ],
+      displayName: "Network Cartographer",
+      environments: ["dev", "prod"],
+      headerContract: [
+        {
+          description:
+            "Threads a long reviewer attribution key through the publication envelope without inventing copy utilities.",
+          name: `X-Trace-${"Header".repeat(8)}`,
+          required: true,
+          source: "session.traceId",
+        },
+      ],
+      publications: ["dev", "prod"].map((environmentKey) => ({
+        environmentKey,
+        healthEndpointUrl: `https://${environmentKey}.health.example.com/status`,
+        rawCard: createRawCard({
+          capabilities: ["card-search", `${environmentKey}-${longToken}`],
+          compatibilityWindow: `${environmentKey}-${"window".repeat(16)}`,
+          name: "Network Cartographer",
+          summary: sharedSummary,
+          tags: [`scope-${"tag".repeat(16)}`, environmentKey],
+        }),
+      })),
+      publisherId: "publisher-alpha",
+      requiredRoles: ["support-agent", `reviewer-${"ops".repeat(10)}`],
+      requiredScopes: ["tickets.read", `contracts.${"scope".repeat(12)}`],
+      summary: sharedSummary,
+      tags: ["shared-tag", `metadata-${"atlas".repeat(12)}`],
+      versionLabel: "v-mobile-long",
+    });
+
+    await approvePendingVersion(context, approvedFixture);
+    await seedHealthAndTelemetry(context.db, approvedFixture);
+
+    return {
+      ...context,
+      routes: {
+        consoleDashboard: "/console",
+        signInLanding: "/",
+        versionDetail: `/tenants/tenant-alpha/agents/${approvedFixture.agentId}/versions/${approvedFixture.versionId}`,
+      },
+      tenantId: "tenant-alpha",
+    };
+  } catch (error) {
+    await context.close();
+    throw error;
+  }
 }
 
 async function capturePage(
@@ -125,9 +220,11 @@ async function capturePage(
 
 test.beforeAll(async () => {
   fixture = await createVisualRegressionFixture();
+  longPayloadFixture = await createLongPayloadFixture();
 });
 
 test.afterAll(async () => {
+  await longPayloadFixture?.close();
   await fixture.close();
 });
 
@@ -136,3 +233,61 @@ for (const route of visualRoutes) {
     await capturePage(page, route, testInfo);
   });
 }
+
+test("version-detail mobile keeps long manifest and raw-card payloads contained", async ({
+  page,
+}, testInfo) => {
+  test.skip(!isMobileProject(testInfo), "This coverage targets the required mobile dossier overflow case.");
+
+  // Arrange
+  await signInAsAdmin(page, longPayloadFixture);
+  await page.goto(`${longPayloadFixture.baseUrl}${longPayloadFixture.routes.versionDetail}`);
+  await page.waitForLoadState("networkidle");
+  await prepareForSnapshot(page);
+
+  const manifestSection = page.locator('[data-visual-dynamic="version-manifest"]');
+  const publicationSection = page.locator('[data-visual-dynamic="publication-detail-list"]');
+  const payloadPanels = page.locator(
+    '[data-visual-dynamic="version-manifest"] pre, .version-detail-raw-card pre',
+  );
+
+  // Act
+  const viewportMetrics = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }));
+  const payloadMetrics = await payloadPanels.evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const element = node as HTMLElement;
+
+      return {
+        clientWidth: element.clientWidth,
+        overflowX: window.getComputedStyle(element).overflowX,
+        scrollWidth: element.scrollWidth,
+      };
+    }),
+  );
+
+  // Assert
+  expect(viewportMetrics.scrollWidth).toBeLessThanOrEqual(viewportMetrics.clientWidth + 1);
+  expect(payloadMetrics.length).toBeGreaterThanOrEqual(3);
+  expect(payloadMetrics.some((metric) => metric.scrollWidth > metric.clientWidth)).toBeTruthy();
+
+  for (const metric of payloadMetrics) {
+    expect(metric.overflowX).toBe("auto");
+  }
+
+  await expect(manifestSection).toHaveScreenshot("version-detail-mobile-proof-manifest.png", {
+    animations: "disabled",
+    caret: "hide",
+    scale: "css",
+  });
+  await expect(publicationSection).toHaveScreenshot(
+    "version-detail-mobile-proof-publications.png",
+    {
+      animations: "disabled",
+      caret: "hide",
+      scale: "css",
+    },
+  );
+});
