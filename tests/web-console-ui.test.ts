@@ -669,6 +669,21 @@ function assertMarkupContainsLinkWithStrongLabel(
   );
 }
 
+function assertMarkupContainsLink(
+  markup: string,
+  link: {
+    href: string;
+    label: string;
+  },
+): void {
+  assert.match(
+    markup,
+    new RegExp(
+      `<a[^>]+href="${escapeRegExp(link.href)}"[^>]*>[\\s\\S]*?${escapeRegExp(link.label)}[\\s\\S]*?<\\/a>`,
+    ),
+  );
+}
+
 function assertNavContainsLink(
   navMarkup: string,
   link: {
@@ -820,6 +835,12 @@ function assertDashboardContract(
       label: string;
     }>;
     hiddenActionHrefs?: string[];
+    identityPanel?: {
+      access: string;
+      roleLabel: string;
+      subjectId: string;
+      tenantId: string;
+    };
     hiddenVersionLabels?: string[];
     includeActiveAgents: boolean;
     metrics: Array<{
@@ -852,10 +873,14 @@ function assertDashboardContract(
     expectedDashboardCards.length,
   );
 
+  const [primaryActionLink] = options.actionLinks;
   const heroMarkup = getDashboardCardMarkup(html, "dashboard-card--hero");
   const actionsMarkup = getDashboardCardMarkup(html, "dashboard-card--actions");
   const versionsMarkup = getDashboardCardMarkup(html, "dashboard-card--versions");
 
+  assertHasDataHook(heroMarkup, "data-dashboard-panel", "primary-feature");
+  assertHasDataHook(actionsMarkup, "data-dashboard-panel", "supporting-actions");
+  assertHasDataHook(versionsMarkup, "data-dashboard-panel", "version-register");
   assert.match(html, /Signed-In Identity/);
   assert.match(html, /Tenant Context/);
   assert.match(actionsMarkup, /Workspace Actions/);
@@ -870,6 +895,37 @@ function assertDashboardContract(
       heroMarkup,
       new RegExp(
         `<div class="dashboard-metric">[\\s\\S]*?<span class="shell-eyebrow">${escapeRegExp(metric.label)}<\\/span>[\\s\\S]*?<strong>${escapeRegExp(metric.value)}<\\/strong>[\\s\\S]*?<\\/div>`,
+      ),
+    );
+  }
+
+  assert.notEqual(primaryActionLink, undefined, "Expected a primary dashboard action link");
+  assert.match(heroMarkup, /class="[^"]*dashboard-feature__cta[^"]*"/);
+  assertMarkupContainsLink(heroMarkup, primaryActionLink);
+
+  if (options.identityPanel !== undefined) {
+    const identityMarkup = getDashboardCardMarkup(html, "dashboard-card--identity");
+
+    assertHasDataHook(identityMarkup, "data-dashboard-panel", "identity");
+    assertHasDataHook(identityMarkup, "data-visual-dynamic", "dashboard-identity");
+    assert.match(
+      identityMarkup,
+      new RegExp(`<h2>${escapeRegExp(options.identityPanel.subjectId)}<\\/h2>`),
+    );
+    assert.match(
+      identityMarkup,
+      new RegExp(`<p class="meta">${escapeRegExp(options.identityPanel.roleLabel)}<\\/p>`),
+    );
+    assert.match(
+      identityMarkup,
+      new RegExp(
+        `<dt>Tenant<\\/dt>[\\s\\S]*?<dd>${escapeRegExp(options.identityPanel.tenantId)}<\\/dd>`,
+      ),
+    );
+    assert.match(
+      identityMarkup,
+      new RegExp(
+        `<dt>Access<\\/dt>[\\s\\S]*?<dd>${escapeRegExp(options.identityPanel.access)}<\\/dd>`,
       ),
     );
   }
@@ -892,6 +948,7 @@ function assertDashboardContract(
     const activeAgentsMarkup = getDashboardCardMarkup(html, "dashboard-card--active-agents");
     const activeAgentLinks = options.activeAgentLinks ?? [];
 
+    assertHasDataHook(activeAgentsMarkup, "data-dashboard-panel", "active-agents");
     assert.match(activeAgentsMarkup, /Active Agents/);
     assert.deepEqual(
       listMarkupHrefs(activeAgentsMarkup),
@@ -2385,6 +2442,12 @@ test("console dashboard keeps version visibility scoped to publisher ownership w
         },
       ],
       hiddenActionHrefs: ["/tenants/tenant-alpha/environments", "/tenants/tenant-alpha/review"],
+      identityPanel: {
+        access: "Publisher workflow access",
+        roleLabel: "publisher",
+        subjectId: "publisher-alpha",
+        tenantId: "tenant-alpha",
+      },
       hiddenVersionLabels: ["Bravo Router"],
       includeActiveAgents: false,
       metrics: [
@@ -2432,6 +2495,12 @@ test("console dashboard keeps version visibility scoped to publisher ownership w
         },
       ],
       activeAgentEmptyState: "No active agents are published in this tenant yet.",
+      identityPanel: {
+        access: "Tenant administration and publishing",
+        roleLabel: "tenant-admin",
+        subjectId: "admin-alpha",
+        tenantId: "tenant-alpha",
+      },
       includeActiveAgents: true,
       metrics: [
         {

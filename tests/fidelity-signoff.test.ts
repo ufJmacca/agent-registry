@@ -685,6 +685,115 @@ test(
 );
 
 test(
+  "implementation notes record the /console dashboard fidelity pass, truthful substitutions, and remaining deltas",
+  async () => {
+    // Arrange
+    const implementationNotesPath = path.join(
+      repositoryRoot,
+      "design-reference",
+      "IMPLEMENTATION_NOTES.md",
+    );
+
+    // Act
+    const notes = await readFile(implementationNotesPath, "utf8");
+    const consoleSection = extractSection(notes, "### `/console`");
+    const residualDeltaRows = parseMarkdownTable(
+      notes,
+      "## Reference Audit Residual Delta Log",
+      [...expectedReferenceAuditResidualDeltaHeaders],
+    );
+    const omissionRows = parseMarkdownTable(notes, "## Omissions and Truthful Substitutions", [
+      "Route",
+      "Reference asset",
+      "Mock-only content or unsupported control",
+      "Truthful implementation replacement or omission",
+      "Reason",
+    ]);
+    const consoleResidualDeltaRow = residualDeltaRows.find(
+      (row) => row["Current route"] === "/console",
+    );
+    const consoleOmissionRow = omissionRows.find(
+      (row) => row.Route === "/console" && row["Reference asset"] === "console_dashboard",
+    );
+
+    // Assert
+    assert.ok(consoleResidualDeltaRow, "Expected a residual-delta row for /console");
+    assert.match(
+      consoleResidualDeltaRow["Audit pass"],
+      /Dashboard fidelity pass completed on \d{4}-\d{2}-\d{2} UTC\./,
+      "Expected /console to record the completed dashboard fidelity pass",
+    );
+    assert.doesNotMatch(
+      consoleResidualDeltaRow["Audit pass"],
+      /Phase 0 reference audit/i,
+      "Expected /console to move beyond the Phase 0 audit state",
+    );
+    assert.match(
+      consoleResidualDeltaRow["Highest-value unresolved fidelity delta"],
+      /recent-activity strip.*profile portrait.*intentionally absent/i,
+      "Expected /console residual delta to capture the intentionally omitted mock activity and portrait elements",
+    );
+    assert.match(
+      consoleResidualDeltaRow["Truthful constraint to preserve"],
+      /role-sensitive navigation.*publisher-versus-admin visibility rules.*version or active-agent counts/i,
+      "Expected /console residual delta to preserve truthful role gating and dashboard counts",
+    );
+    assert.match(
+      consoleResidualDeltaRow["Next implementation target"],
+      /shell spacing/i,
+      "Expected /console residual delta to keep the remaining shell-spacing follow-up explicit",
+    );
+
+    assert.ok(
+      consoleOmissionRow,
+      "Expected an omissions and truthful substitutions row for /console",
+    );
+    assert.match(
+      consoleOmissionRow["Mock-only content or unsupported control"],
+      /Synthetic activity feed.*utilization gauges.*profile portrait media.*settings-style destinations/i,
+      "Expected /console omissions row to list the unsupported mock dashboard analytics and destinations",
+    );
+    assert.match(
+      consoleOmissionRow["Truthful implementation replacement or omission"],
+      /Signed-in identity.*tenant context.*draft-registration feature card.*role-sensitive workspace actions.*visible versions.*admin-only active agents/i,
+      "Expected /console omissions row to document the truthful dashboard replacements",
+    );
+
+    const informationDensity = extractBulletValue(consoleSection, "Information density and grouping");
+    assert.match(
+      informationDensity,
+      /Signed-in identity.*tenant context.*workspace actions.*visible versions.*admin-only active agents/i,
+      "Expected /console review notes to map truthful dashboard regions into the new layout",
+    );
+
+    const functionalConstraints = extractBulletValue(
+      consoleSection,
+      "Functional constraints to preserve",
+    );
+    assert.match(
+      functionalConstraints,
+      /role-sensitive entry points.*publishers do not see admin-only controls.*draft registration.*review.*environments.*active agents.*version detail/i,
+      "Expected /console review notes to keep the dashboard's role-sensitive route access explicit",
+    );
+
+    const intentionalDeviations = extractBulletValue(
+      consoleSection,
+      "Intentional deviations and truthful substitutions",
+    );
+    assert.match(
+      intentionalDeviations,
+      /Synthetic activity rows.*utilization gauges.*urgent-count badges.*profile portrait media/i,
+      "Expected /console review notes to cite the omitted mock dashboard-only controls",
+    );
+    assert.match(
+      intentionalDeviations,
+      /truthful counts.*route links.*active-agent inventory/i,
+      "Expected /console review notes to document the truthful dashboard replacements",
+    );
+  },
+);
+
+test(
   "implementation notes include a completed omissions and truthful substitutions row for each in-scope route",
   async () => {
     // Arrange
