@@ -327,97 +327,182 @@
 
 @layer shell {
   .app-shell {
-  min-height: 100vh;
+    min-height: 100vh;
   }
 
   .public-topbar,
   .shell-topbar {
-  position: sticky;
-  top: 0;
-  z-index: 30;
+    position: sticky;
+    top: 0;
+    z-index: 30;
   }
 
   .public-topbar {
-  padding: 1rem 1rem 0;
+    padding: 1rem 1rem 0;
   }
 
   .public-topbar__inner {
-  max-width: var(--canvas-max);
-  margin: 0 auto;
-  padding: 1rem 1.25rem;
-  border-radius: 1.35rem;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  box-shadow: var(--shadow-soft);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+    max-width: var(--canvas-max);
+    margin: 0 auto;
+    padding: 1rem 1.25rem;
+    border-radius: 1.35rem;
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .public-topbar__brand {
+    display: grid;
+    gap: 0.18rem;
   }
 
   .public-topbar__copy {
-  max-width: 34rem;
-  color: var(--ink-muted);
+    max-width: 34rem;
+    color: var(--ink-muted);
+  }
+
+  .public-topbar__nav,
+  .public-topbar__actions,
+  .public-footer__links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .public-topbar__nav {
+    justify-content: center;
+  }
+
+  .public-topbar__nav-link,
+  .public-topbar__action,
+  .public-footer__link {
+    color: var(--ink-muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-decoration: none;
+    text-transform: uppercase;
+  }
+
+  .public-topbar__nav-link:hover,
+  .public-topbar__action:hover,
+  .public-footer__link:hover {
+    color: var(--accent-strong);
+  }
+
+  .public-topbar__cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 7.4rem;
+    padding: 0.92rem 1.3rem;
+    border-radius: 1rem;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+    box-shadow:
+      0 18px 32px rgba(74, 82, 104, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.24);
+    color: white;
+    font-family: "Manrope", "Inter", sans-serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+
+  .public-topbar__cta:hover {
+    transform: translateY(-1px);
   }
 
   .public-canvas {
-  max-width: var(--canvas-max);
-  margin: 0 auto;
-  padding: 2.2rem 1rem 4rem;
-  display: grid;
-  gap: 1.5rem;
+    max-width: var(--canvas-max);
+    margin: 0 auto;
+    padding: 2.2rem 1rem 4rem;
+    display: grid;
+    gap: 1.5rem;
   }
 
   .public-hero {
-  padding: clamp(1.6rem, 3vw, 2.6rem);
+    padding: clamp(1.6rem, 3vw, 2.6rem);
+  }
+
+  .public-footer {
+    padding: 0 1rem 1.4rem;
+  }
+
+  .public-footer__inner {
+    max-width: var(--canvas-max);
+    margin: 0 auto;
+    padding: 1.35rem 1.25rem;
+    border-radius: 1.35rem;
+    background: rgba(255, 255, 255, 0.64);
+    box-shadow: var(--shadow-soft);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .public-footer__copy {
+    color: var(--ink-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
   }
 }
 
 @layer pages {
   .sign-in-landing {
-  display: grid;
-  gap: clamp(1.5rem, 3vw, 2.5rem);
+    display: grid;
+    gap: clamp(1.5rem, 3vw, 2.5rem);
   }
 
   .sign-in-hero {
-  min-height: clamp(220px, 30vw, 320px);
-  align-content: end;
-  padding: clamp(2rem, 4vw, 4rem);
-  background:
-    radial-gradient(circle at top right, rgba(86, 94, 116, 0.16), transparent 32%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(240, 244, 247, 0.88));
+    min-height: clamp(220px, 30vw, 320px);
+    align-content: end;
+    padding: clamp(2rem, 4vw, 4rem);
+    background:
+      radial-gradient(circle at top right, rgba(86, 94, 116, 0.16), transparent 32%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(240, 244, 247, 0.88));
+    scroll-margin-top: 6rem;
   }
 
   .sign-in-hero p {
-  max-width: 48rem;
-  font-size: 1.02rem;
+    max-width: 48rem;
+    font-size: 1.02rem;
   }
 
   .public-grid {
-  display: grid;
-  gap: 1.5rem;
-  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.92fr);
-  align-items: start;
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.92fr);
+    align-items: start;
   }
 
   .sign-in-stage {
-  align-items: stretch;
+    align-items: stretch;
   }
 
   .sign-in-stage__secondary {
-  padding-top: clamp(1rem, 4vw, 4.5rem);
+    padding-top: clamp(1rem, 4vw, 4.5rem);
   }
 
   .sign-in-access,
   .sign-in-companion {
-  min-height: 100%;
-  padding: clamp(1.6rem, 2.4vw, 2.25rem);
+    min-height: 100%;
+    padding: clamp(1.6rem, 2.4vw, 2.25rem);
+    scroll-margin-top: 6rem;
   }
 
   .sign-in-access {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 249, 251, 0.92)),
-    rgba(255, 255, 255, 0.98);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 249, 251, 0.92)),
+      rgba(255, 255, 255, 0.98);
   }
 
   .sign-in-access--pending {
@@ -530,7 +615,7 @@
 
 @layer shell {
   .shell-topbar {
-  padding: 1rem 1rem 0;
+    padding: 1rem 1rem 0;
   }
 
   .shell-topbar__inner {
@@ -1505,16 +1590,34 @@
   .public-canvas,
   .shell-frame,
   .public-topbar,
-  .shell-topbar {
+  .shell-topbar,
+  .public-footer {
     padding-inline: 0.9rem;
   }
 
   .public-topbar__inner,
-  .shell-topbar__inner {
+  .shell-topbar__inner,
+  .public-footer__inner {
     padding: 0.95rem 1rem;
   }
 
   .public-topbar__inner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .public-topbar__nav,
+  .public-topbar__actions,
+  .public-footer__links {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .public-topbar__cta {
+    width: 100%;
+  }
+
+  .public-footer__inner {
     align-items: flex-start;
     flex-direction: column;
   }
