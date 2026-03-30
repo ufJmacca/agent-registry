@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -397,6 +397,73 @@ test(
       /^### `\/[^`]*`$/m,
       "Expected route-level ### headings to remain confined to the fidelity review ledger",
     );
+  },
+);
+
+test(
+  "web http delegates environment, review, and agent detail markup to dedicated page modules",
+  async () => {
+    // Arrange
+    const environmentManagementPagePath = path.join(
+      repositoryRoot,
+      "apps",
+      "web",
+      "src",
+      "ui",
+      "pages",
+      "environment-management.ts",
+    );
+    const reviewQueuePagePath = path.join(
+      repositoryRoot,
+      "apps",
+      "web",
+      "src",
+      "ui",
+      "pages",
+      "review-queue.ts",
+    );
+    const agentDetailPagePath = path.join(
+      repositoryRoot,
+      "apps",
+      "web",
+      "src",
+      "ui",
+      "pages",
+      "agent-detail.ts",
+    );
+    const webHttpPath = path.join(repositoryRoot, "apps", "web", "src", "http.ts");
+
+    // Act
+    await Promise.all([
+      access(environmentManagementPagePath),
+      access(reviewQueuePagePath),
+      access(agentDetailPagePath),
+    ]);
+    const webHttpSource = await readFile(webHttpPath, "utf8");
+
+    // Assert
+    for (const importPath of [
+      "./ui/pages/sign-in.js",
+      "./ui/pages/dashboard.js",
+      "./ui/pages/environment-management.js",
+      "./ui/pages/draft-registration.js",
+      "./ui/pages/review-queue.js",
+      "./ui/pages/agent-detail.js",
+      "./ui/pages/version-detail.js",
+    ]) {
+      assert.match(
+        webHttpSource,
+        new RegExp(`from "${escapeRegExp(importPath)}"`),
+        `Expected http.ts to import ${importPath}`,
+      );
+    }
+
+    assert.match(webHttpSource, /renderEnvironmentManagementPage\(/);
+    assert.match(webHttpSource, /renderReviewQueuePage\(/);
+    assert.match(webHttpSource, /renderAgentDetailPage\(/);
+    assert.doesNotMatch(webHttpSource, /data-environment-panel="inventory"/);
+    assert.doesNotMatch(webHttpSource, /class="review-queue-item card"/);
+    assert.doesNotMatch(webHttpSource, /agent-detail-overlay-card stack/);
   },
 );
 
