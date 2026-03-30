@@ -8,6 +8,7 @@ import test from "node:test";
 
 import pg from "pg";
 
+import type { PublicationHealthDetailResponse } from "../packages/contracts/src/index.ts";
 import { PrincipalResolver } from "../packages/auth/src/index.ts";
 import { loadRegistryConfig, type RegistryConfig } from "../packages/config/src/index.ts";
 import {
@@ -24,11 +25,17 @@ import {
   destroyKyselyDb,
   migrateToLatest,
   type AgentRegistryDb,
+  type VersionAdminDetailRecord,
 } from "../packages/db/src/index.ts";
 import { bootstrapFromConfig } from "../apps/api/src/bootstrap/index.ts";
 import { AgentDraftRegistrationService } from "../apps/api/src/modules/agents/service.ts";
 import { AgentVersionReviewService } from "../apps/api/src/modules/review/service.ts";
 import { createWebRequestListener } from "../apps/web/src/http.ts";
+import { renderVersionDetailPageBody } from "../apps/web/src/ui/pages/version-detail.ts";
+import {
+  installPrimitiveTestOverrides,
+  resetPrimitiveTestOverrides,
+} from "../apps/web/src/ui/primitives/index.ts";
 
 const { Pool } = pg;
 
@@ -244,6 +251,103 @@ function createMembershipRow(
     tenant_id: "tenant-alpha",
     user_context: {},
     ...overrides,
+  };
+}
+
+function createVersionAdminDetailRecordFixture(
+  overrides: Partial<VersionAdminDetailRecord> = {},
+): VersionAdminDetailRecord {
+  return {
+    active: true,
+    agentId: "agent-neural-flow-01",
+    approvalState: "approved",
+    capabilities: ["case-routing", "triage"],
+    cardProfileId: "card-profile-default",
+    contextContract: [
+      {
+        key: "client_id",
+        required: true,
+        type: "string",
+      },
+    ],
+    displayName: "Neural Flow",
+    headerContract: [
+      {
+        key: "x-user-id",
+        required: true,
+        type: "string",
+      },
+    ],
+    publications: [
+      {
+        environmentKey: "prod",
+        healthEndpointUrl: "https://prod.health.example.com/status",
+        healthStatus: "healthy",
+        invocationEndpoint: "https://prod.invoke.example.com",
+        normalizedMetadata: {
+          environment: "prod",
+        },
+        publicationId: "publication-prod",
+        rawCard: createRawCard({
+          capabilities: ["triage"],
+          name: "Neural Flow",
+          tags: ["prod"],
+        }),
+        telemetry: [
+          {
+            errorCount: 1,
+            invocationCount: 24,
+            p50LatencyMs: 120,
+            p95LatencyMs: 280,
+            recordedAt: "2026-03-13T10:02:00Z",
+            successCount: 23,
+            windowEndedAt: "2026-03-13T10:00:00Z",
+            windowStartedAt: "2026-03-13T09:00:00Z",
+          },
+        ],
+      },
+    ],
+    publisherId: "publisher-alpha",
+    requiredRoles: ["reviewer"],
+    requiredScopes: ["cases.read"],
+    review: {
+      approvedAt: "2026-03-13T10:05:00Z",
+      approvedBy: "admin-alpha",
+      rejectedAt: null,
+      rejectedBy: null,
+      rejectedReason: null,
+      submittedAt: "2026-03-12T08:15:00Z",
+      submittedBy: "publisher-alpha",
+    },
+    summary: "Routes complex support cases through the approved dossier pipeline.",
+    tags: ["support", "triage"],
+    versionId: "version-v1",
+    versionLabel: "v1",
+    versionSequence: 1,
+    ...overrides,
+  };
+}
+
+function createPublicationHealthDetailFixture(): PublicationHealthDetailResponse {
+  return {
+    current: {
+      consecutiveFailures: 1,
+      healthStatus: "degraded",
+      lastCheckedAt: "2026-03-13T10:01:00Z",
+      lastError: "upstream timeout",
+      lastSuccessAt: "2026-03-13T09:55:00Z",
+      recentFailures: 2,
+    },
+    environmentKey: "prod",
+    history: [
+      {
+        checkedAt: "2026-03-13T10:01:00Z",
+        error: "upstream timeout",
+        ok: false,
+        statusCode: 503,
+      },
+    ],
+    publicationId: "publication-prod",
   };
 }
 
@@ -666,6 +770,27 @@ function assertPublicationDossierMarkup(
       new RegExp(`<span class="shell-eyebrow">Raw Card<\\/span>[\\s\\S]*?${escapeRegExp(dossier.rawCardValue)}`),
     );
   }
+}
+
+function assertVersionDetailDossierLayout(html: string): void {
+  assert.match(html, /data-version-detail-layout="dossier"/);
+  assert.match(html, /data-version-detail-side="stack"/);
+  assert.match(html, /class="[^"]*\bpage-hero--dossier\b[^"]*"/);
+  assert.match(html, /class="[^"]*\bside-panel\b[^"]*\bversion-detail-side\b[^"]*"/);
+
+  const reviewStateMarkup = getVisualDynamicSectionMarkup(html, "version-metadata");
+  const auditHistoryMarkup = getVisualDynamicSectionMarkup(html, "version-audit-history");
+  const supportingMetadataMarkup = getVisualDynamicSectionMarkup(
+    html,
+    "version-supporting-metadata",
+  );
+
+  assert.match(reviewStateMarkup, /Review State/);
+  assert.match(auditHistoryMarkup, /Audit History/);
+  assert.match(supportingMetadataMarkup, /Supporting Metadata/);
+  assert.match(supportingMetadataMarkup, /Publisher/);
+  assert.match(supportingMetadataMarkup, /Card Profile/);
+  assert.match(supportingMetadataMarkup, /Version ID/);
 }
 
 function getEnvironmentPanelMarkup(html: string, panel: "inventory" | "creation"): string {
@@ -1471,6 +1596,110 @@ async function seedHealthAndTelemetry(
     windowStartedAt: "2026-03-13T10:00:00Z",
   });
 }
+
+test("version detail page delegates dossier framing and formatting to shared primitives", () => {
+  // Arrange
+  const detail = createVersionAdminDetailRecordFixture();
+  const healthByEnvironment = new Map<string, PublicationHealthDetailResponse>([
+    ["prod", createPublicationHealthDetailFixture()],
+  ]);
+  const primitiveCalls: string[] = [];
+
+  installPrimitiveTestOverrides({
+    formatConsoleState(value) {
+      primitiveCalls.push(`formatConsoleState:${value}`);
+      return `state:${value}`;
+    },
+    formatConsoleTimestamp(value) {
+      primitiveCalls.push(`formatConsoleTimestamp:${String(value)}`);
+      return `timestamp:${String(value)}`;
+    },
+    renderActionCluster(options) {
+      primitiveCalls.push(`renderActionCluster:${options.actions.length}`);
+      return `<div data-test-primitive="action-cluster">${options.actions.join("")}</div>`;
+    },
+    renderPageHero(options) {
+      primitiveCalls.push("renderPageHero");
+      return `<section data-test-primitive="page-hero">${options.body}</section>`;
+    },
+    renderRecordList(options) {
+      primitiveCalls.push(`renderRecordList:${options.listClassName ?? "default"}`);
+      return `<div data-test-primitive="record-list">${
+        options.items.length === 0 ? (options.emptyState ?? "") : options.items.join("")
+      }</div>`;
+    },
+    renderSectionFrame(options) {
+      primitiveCalls.push(
+        `renderSectionFrame:${String(options.attributes?.["data-visual-dynamic"] ?? "none")}`,
+      );
+      return `<section data-test-primitive="section-frame" data-test-hook="${String(
+        options.attributes?.["data-visual-dynamic"] ?? "none",
+      )}">${options.body}</section>`;
+    },
+    renderSidePanel(options) {
+      primitiveCalls.push("renderSidePanel");
+      return `<aside data-test-primitive="side-panel">${options.sections.join("")}</aside>`;
+    },
+  });
+
+  try {
+    // Act
+    const html = renderVersionDetailPageBody({
+      actions: [
+        '<form action="/tenants/tenant-alpha/agents/agent-neural-flow-01/versions/version-v1/approve" method="post"><button type="submit">Approve</button></form>',
+      ],
+      detail,
+      healthByEnvironment,
+      isTenantAdmin: true,
+      tenantId: "tenant-alpha",
+    });
+
+    // Assert
+    assert.match(html, /data-test-primitive="page-hero"/);
+    assert.match(html, /data-test-primitive="side-panel"/);
+    assert.ok(primitiveCalls.includes("renderPageHero"));
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:version-publication-contracts"),
+      "Expected publication contracts to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:version-manifest"),
+      "Expected the manifest panel to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:publication-detail-list"),
+      "Expected environment dossiers to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:version-metadata"),
+      "Expected the review sidebar to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:version-actions"),
+      "Expected version actions to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:version-audit-history"),
+      "Expected audit history to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.includes("renderSectionFrame:version-supporting-metadata"),
+      "Expected supporting metadata to delegate to the shared section-frame primitive",
+    );
+    assert.ok(
+      primitiveCalls.some((call) => call.startsWith("renderRecordList:")),
+      "Expected dossier lists to delegate to the shared record-list primitive",
+    );
+    assert.ok(primitiveCalls.includes("renderActionCluster:1"));
+    assert.ok(primitiveCalls.includes("formatConsoleState:approved"));
+    assert.ok(
+      primitiveCalls.some((call) => call.startsWith("formatConsoleTimestamp:")),
+      "Expected lifecycle, telemetry, or health timestamps to use the shared formatter",
+    );
+  } finally {
+    resetPrimitiveTestOverrides();
+  }
+});
 
 test("console root renders a setup-pending public landing before schema bootstrap", async () => {
   const config = loadRegistryConfig(
@@ -2329,7 +2558,7 @@ test("publisher console creates a multi-environment draft and submits it for rev
       page: "version-detail",
     });
     assert.match(draftDetailHtml, /Approval state: draft/);
-    assert.match(draftDetailHtml, /Release Metadata/);
+    assert.match(draftDetailHtml, /Review State/);
     assert.match(draftDetailHtml, /Publication Contracts/);
     assert.match(draftDetailHtml, /Technical Manifest/);
     assert.match(draftDetailHtml, /Environment Dossiers/);
@@ -2339,6 +2568,7 @@ test("publisher console creates a multi-environment draft and submits it for rev
     assert.match(draftDetailHtml, /https:\/\/prod\.invoke\.example\.com/);
     assert.match(draftDetailHtml, /X-User-Id/);
     assert.match(draftDetailHtml, /client_id/);
+    assertVersionDetailDossierLayout(draftDetailHtml);
     assertPublicationDossierMarkup(draftDetailHtml, [
       {
         environmentKey: "dev",
@@ -2372,6 +2602,7 @@ test("publisher console creates a multi-environment draft and submits it for rev
     });
     assert.match(submittedDetailHtml, /Approval state: pending_review/);
     assert.match(submittedDetailHtml, /Technical Manifest/);
+    assertVersionDetailDossierLayout(submittedDetailHtml);
     assert.doesNotMatch(submittedDetailHtml, /Submit for Review/);
     assert.doesNotMatch(submittedDetailHtml, /Approve<\/button>/);
     assert.doesNotMatch(submittedDetailHtml, /Reject<\/button>/);
@@ -3410,6 +3641,7 @@ test("admin console manages environments, reviews pending versions, edits overla
     assert.match(pendingRejectVersionHtml, /name="reason"/);
     assert.doesNotMatch(pendingRejectVersionHtml, /Rejected reason:/);
     assert.doesNotMatch(pendingRejectVersionHtml, /data-visual-dynamic="publication-health-history"/);
+    assertVersionDetailDossierLayout(pendingRejectVersionHtml);
     const pendingTelemetryMarkup = getVisualDynamicSectionMarkup(
       pendingRejectVersionHtml,
       "publication-telemetry",
@@ -3432,10 +3664,11 @@ test("admin console manages environments, reviews pending versions, edits overla
       navLinks: adminNavLinks,
       page: "version-detail",
     });
-    assert.match(approvedVersionHtml, /Release Metadata/);
+    assert.match(approvedVersionHtml, /Review State/);
     assert.match(approvedVersionHtml, /Publication Contracts/);
     assert.match(approvedVersionHtml, /Technical Manifest/);
     assert.match(approvedVersionHtml, /Environment Dossiers/);
+    assertVersionDetailDossierLayout(approvedVersionHtml);
     assertPublicationDossierMarkup(approvedVersionHtml, [
       {
         environmentKey: "dev",
@@ -3577,6 +3810,7 @@ test("admin console manages environments, reviews pending versions, edits overla
     });
     assert.match(rejectedVersionHtml, /Approval state: rejected/);
     assert.match(rejectedVersionHtml, /Rejected reason: Needs clearer scopes\./);
+    assertVersionDetailDossierLayout(rejectedVersionHtml);
     assert.doesNotMatch(rejectedVersionHtml, /Submit for Review/);
     assert.doesNotMatch(rejectedVersionHtml, /Approve<\/button>/);
     assert.doesNotMatch(rejectedVersionHtml, /Reject<\/button>/);

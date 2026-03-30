@@ -21,6 +21,8 @@ const expectedScreenshots = [
   "active-agent-detail-desktop.png",
   "active-agent-detail-mobile.png",
   "version-detail-desktop.png",
+  "version-detail-mobile-proof-manifest.png",
+  "version-detail-mobile-proof-publications.png",
   "version-detail-mobile.png",
 ] as const;
 

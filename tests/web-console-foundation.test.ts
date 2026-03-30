@@ -1044,7 +1044,7 @@ test(
   assertContainsMarkup(
     markup,
     '<sentinel-version-stat data-eyebrow="Approval State"></sentinel-version-stat>',
-    "Expected the release metadata panel to emit the shared stat-tile sentinel.",
+    "Expected the dossier hero to emit the shared stat-tile sentinel.",
   );
   assertContainsMarkup(
     markup,
@@ -1058,18 +1058,33 @@ test(
   );
   assertContainsMarkup(
     markup,
-    '<sentinel-side-panel data-sections="3">',
+    '<sentinel-side-panel data-sections="4">',
     "Expected the right-column dossier rail to emit the shared side-panel sentinel.",
   );
   assertContainsMarkup(
     markup,
-    '<sentinel-card-head data-title="Release Metadata">',
-    "Expected the release metadata rail to emit the shared card-head sentinel.",
+    "Supporting Metadata",
+    "Expected the right-column dossier rail to render the supporting metadata section.",
+  );
+  assertContainsMarkup(
+    markup,
+    "Audit History",
+    "Expected the right-column dossier rail to render the audit history section.",
+  );
+  assertContainsMarkup(
+    markup,
+    "Review State",
+    "Expected the right-column dossier rail to render the review state section.",
+  );
+  assertContainsMarkup(
+    markup,
+    "Version Actions",
+    "Expected the right-column dossier rail to render the action cluster section.",
   );
   assert.equal(
     markup.match(/sentinel-state:approved/g)?.length ?? 0,
     2,
-    "Expected the hero and release metadata panels to render state text through the shared formatter.",
+    "Expected the rendered dossier hero content to keep using the shared state formatter.",
   );
   assertContainsMarkup(
     markup,
@@ -1092,13 +1107,14 @@ test(
     "Expected the health history timeline to render probe timestamps through the shared formatter.",
   );
   assert.ok(cardHeadCalls.includes("production"));
-  assert.ok(cardHeadCalls.includes("Release Metadata"));
   assert.deepEqual(actionClusterCalls, [2]);
   assert.deepEqual(pillListCalls, [2, 2]);
-  assert.deepEqual(sidePanelCalls, [3]);
-  assert.deepEqual(stateFormatCalls, ["approved", "approved"]);
+  assert.deepEqual(sidePanelCalls, [4]);
+  assert.deepEqual(stateFormatCalls, ["approved", "approved", "approved"]);
   assert.ok(statTileCalls.includes("Approval State"));
   assert.deepEqual(timestampFormatCalls, [
+    "2026-03-13T10:20:00.000Z",
+    "2026-03-13T10:46:00.000Z",
     "2026-03-13T10:20:00.000Z",
     "2026-03-13T10:46:00.000Z",
     "2026-03-13T10:00:00.000Z",

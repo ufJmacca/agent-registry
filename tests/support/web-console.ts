@@ -7,6 +7,11 @@ import path from "node:path";
 import pg from "pg";
 
 import { PrincipalResolver } from "../../packages/auth/src/index.ts";
+import type {
+  ContextContractEntry,
+  DraftEnvironmentPublicationRequest,
+  HeaderContractEntry,
+} from "../../packages/contracts/src/index.ts";
 import { loadRegistryConfig, type RegistryConfig } from "../../packages/config/src/index.ts";
 import {
   KyselyAgentDraftRegistrationRepository,
@@ -335,10 +340,17 @@ async function resolvePrincipal(
 export async function createPendingVersion(
   context: WebConsoleContext,
   input: {
+    capabilities?: string[];
+    contextContract?: ContextContractEntry[];
     displayName: string;
     environments: string[];
+    headerContract?: HeaderContractEntry[];
     publisherId: string;
+    publications?: DraftEnvironmentPublicationRequest[];
+    requiredRoles?: string[];
+    requiredScopes?: string[];
     summary: string;
+    tags?: string[];
     versionLabel: string;
   },
 ): Promise<PendingVersionFixture> {
@@ -363,39 +375,43 @@ export async function createPendingVersion(
   );
 
   const draft = await draftService.createDraftAgent(principal, "tenant-alpha", {
-    capabilities: ["shared-capability"],
-    contextContract: [
-      {
-        description: "Selects the client partition.",
-        example: "client-123",
-        key: "client_id",
-        required: true,
-        type: "string",
-      },
-    ],
+    capabilities: input.capabilities ?? ["shared-capability"],
+    contextContract:
+      input.contextContract ?? [
+        {
+          description: "Selects the client partition.",
+          example: "client-123",
+          key: "client_id",
+          required: true,
+          type: "string",
+        },
+      ],
     displayName: input.displayName,
-    headerContract: [
-      {
-        description: "Passes the calling user identifier.",
-        name: "X-User-Id",
-        required: true,
-        source: "user.id",
-      },
-    ],
-    publications: input.environments.map((environmentKey) => ({
-      environmentKey,
-      healthEndpointUrl: `https://${environmentKey}.health.example.com/status`,
-      rawCard: createRawCard({
-        capabilities: ["card-search", `${environmentKey}-capability`],
-        name: input.displayName,
-        summary: input.summary,
-        tags: ["card-tag", environmentKey],
-      }),
-    })),
-    requiredRoles: ["support-agent"],
-    requiredScopes: ["tickets.read"],
+    headerContract:
+      input.headerContract ?? [
+        {
+          description: "Passes the calling user identifier.",
+          name: "X-User-Id",
+          required: true,
+          source: "user.id",
+        },
+      ],
+    publications:
+      input.publications ??
+      input.environments.map((environmentKey) => ({
+        environmentKey,
+        healthEndpointUrl: `https://${environmentKey}.health.example.com/status`,
+        rawCard: createRawCard({
+          capabilities: ["card-search", `${environmentKey}-capability`],
+          name: input.displayName,
+          summary: input.summary,
+          tags: ["card-tag", environmentKey],
+        }),
+      })),
+    requiredRoles: input.requiredRoles ?? ["support-agent"],
+    requiredScopes: input.requiredScopes ?? ["tickets.read"],
     summary: input.summary,
-    tags: ["shared-tag"],
+    tags: input.tags ?? ["shared-tag"],
     versionLabel: input.versionLabel,
   });
 
